@@ -95,6 +95,39 @@ const faqItems: readonly FaqItem[] = [
   },
 ] as const;
 
+type SecurityPillar = {
+  body: string;
+  iconPath: string;
+  title: string;
+};
+
+const securityPillars: readonly SecurityPillar[] = [
+  {
+    title: "Encrypted at rest and in transit",
+    body: "Documents are stored with encryption on Cloudflare's infrastructure. All connections use HTTPS with HSTS enforcement.",
+    iconPath:
+      "M7 11V7a5 5 0 0110 0v4M5 11h14a2 2 0 012 2v7a2 2 0 01-2 2H5a2 2 0 01-2-2v-7a2 2 0 012-2z",
+  },
+  {
+    title: "Complete audit trail",
+    body: "Every view, signature, and decline is logged with timestamps and IP addresses. Download the certificate PDF as proof.",
+    iconPath:
+      "M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2M9 14l2 2 4-4",
+  },
+  {
+    title: "Secure signing links",
+    body: "Each signer gets a unique cryptographic token. Links expire after 7 days and can't be guessed or reused.",
+    iconPath:
+      "M10 13a5 5 0 007.54.54l3-3a5 5 0 00-7.07-7.07l-1.72 1.71M14 11a5 5 0 00-7.54-.54l-3 3a5 5 0 007.07 7.07l1.71-1.71",
+  },
+  {
+    title: "Open source",
+    body: "The entire codebase is public. Inspect the security model, audit the logic, or self-host on your own infrastructure.",
+    iconPath:
+      "M12 2a10 10 0 1010 10A10 10 0 0012 2zM2 12h20M12 2a15.3 15.3 0 014 10 15.3 15.3 0 01-4 10 15.3 15.3 0 01-4-10A15.3 15.3 0 0112 2z",
+  },
+] as const;
+
 export function resolveLandingShellState(
   value?: string | string[] | null,
 ): LandingShellState {
@@ -232,6 +265,35 @@ export function LandingShell({ initialState = "default" }: LandingShellProps) {
                   key={step.title}
                   monoClassName={monoClassName}
                   title={step.title}
+                />
+              ))}
+            </div>
+          </div>
+        </section>
+
+        <section className="border-b border-[#d4d4d4]" data-animate="enter">
+          <div className="mx-auto max-w-[1200px] px-6 py-20 sm:px-8 lg:px-10 lg:py-24">
+            <div className="mx-auto max-w-160 text-center">
+              <SectionMarker center monoClassName={monoClassName}>
+                Security
+              </SectionMarker>
+              <h2 className="text-[clamp(2rem,4vw,3.1rem)] font-extrabold leading-[1.06] tracking-[-0.03em] text-black">
+                Your documents stay safe.
+              </h2>
+              <p className="mx-auto mt-5 max-w-xl text-lg leading-relaxed text-[#71717a]">
+                Every PDF is encrypted, every action is logged, and every
+                signing link is cryptographically secured. The code is open
+                source so you can verify it yourself.
+              </p>
+            </div>
+
+            <div className="mx-auto mt-14 grid max-w-[880px] gap-4 sm:grid-cols-2">
+              {securityPillars.map((pillar) => (
+                <SecurityPillarCard
+                  body={pillar.body}
+                  iconPath={pillar.iconPath}
+                  key={pillar.title}
+                  title={pillar.title}
                 />
               ))}
             </div>
@@ -493,6 +555,30 @@ function WorkflowStepInline({
         </div>
       </div>
       <h3 className="mt-4 text-lg font-bold leading-tight tracking-[-0.02em] text-black">
+        {title}
+      </h3>
+      <p className="mt-2 text-[15px] leading-relaxed text-[#71717a]">{body}</p>
+    </div>
+  );
+}
+
+function SecurityPillarCard({ body, iconPath, title }: SecurityPillar) {
+  return (
+    <div className="border-2 border-[#d4d4d4] bg-white px-6 py-7 text-center">
+      <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center border border-[rgba(229,0,0,0.14)] bg-[#fff8f8]">
+        <svg
+          className="h-[22px] w-[22px]"
+          fill="none"
+          stroke="#e50000"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          strokeWidth="1.8"
+          viewBox="0 0 24 24"
+        >
+          <path d={iconPath} />
+        </svg>
+      </div>
+      <h3 className="text-base font-bold leading-tight tracking-[-0.02em] text-black">
         {title}
       </h3>
       <p className="mt-2 text-[15px] leading-relaxed text-[#71717a]">{body}</p>
