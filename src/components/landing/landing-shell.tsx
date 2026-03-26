@@ -170,7 +170,7 @@ export function LandingShell({ initialState = "default" }: LandingShellProps) {
                     className="mx-auto max-w-[22ch] text-[clamp(2.2rem,4.5vw,4.2rem)] font-extrabold leading-[1.08] tracking-[-0.035em] text-black sm:max-w-[23ch] lg:max-w-[24ch] lg:leading-[1.1] lg:tracking-[-0.03em]"
                     style={{ textWrap: "balance" }}
                   >
-                    Free e-signature software. No catch.
+                    Sign PDFs Online for Free. No catch.
                   </h1>
 
                   <p className="mx-auto mt-6 max-w-2xl text-lg leading-relaxed text-[#71717a] sm:text-[1.15rem]">
