@@ -1,0 +1,22 @@
+# OS
+.DS_Store
+
+# Dependencies
+node_modules/
+
+# Next.js
+.next/
+dist/
+
+# Environment
+.env
+.env.*
+!.env.example
+
+# TypeScript
+*.tsbuildinfo
+next-env.d.ts
+
+# Supabase local artifacts
+supabase/.branches/
+supabase/.temp/

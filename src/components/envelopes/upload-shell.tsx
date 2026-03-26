@@ -1,0 +1,472 @@
+"use client";
+
+import { useRouter } from "next/navigation";
+import {
+  startTransition,
+  useRef,
+  useState,
+  type ChangeEvent,
+  type DragEvent,
+  type KeyboardEvent,
+} from "react";
+
+import { FieldShell, ShellButton } from "@/components/shared/form-shell";
+import { PageHeader } from "@/components/shared/page-header";
+import { StepIndicator } from "@/components/shared/step-indicator";
+import { cacheDraftPdfBlob } from "@/lib/draft-pdf-cache";
+import { assertPdfPreviewRenderable } from "@/lib/pdfjs-client";
+import { type CreateEnvelopeResponse } from "@/lib/schemas/envelope";
+
+const envelopeSteps = ["Upload", "Signers", "Place fields", "Review"];
+const MAX_FILE_SIZE_BYTES = 20 * 1024 * 1024;
+
+type UploadErrorCode = "invalid-type" | "preview-unavailable" | "too-large";
+
+type UploadSummary = {
+  file: File;
+  fileName: string;
+  sizeLabel: string;
+};
+
+const errorMessageMap: Record<UploadErrorCode, string> = {
+  "invalid-type": "Only PDF files are supported. Please upload a valid PDF.",
+  "preview-unavailable":
+    "We couldn't render this PDF in the editor. Please export it as a standard PDF and try again.",
+  "too-large": "This file exceeds the 20 MB limit.",
+};
+
+const knownTitleSuggestions: Record<string, string> = {
+  "nda-clientbravo-2026.pdf": "NDA - Client Bravo",
+  "nda-client-bravo-2026.pdf": "NDA - Client Bravo",
+  "vendor-agreement-two-signer.pdf": "Vendor agreement - two signer flow",
+};
+
+function formatFileSize(sizeInBytes: number) {
+  const sizeInMegabytes = sizeInBytes / (1024 * 1024);
+
+  if (sizeInMegabytes >= 1) {
+    return `${sizeInMegabytes.toFixed(1)} MB`;
+  }
+
+  return `${Math.max(1, Math.round(sizeInBytes / 1024))} KB`;
+}
+
+function makeTitleSuggestion(fileName: string) {
+  return fileName
+    .replace(/\.pdf$/i, "")
+    .replace(/([a-z])([A-Z])/g, "$1 $2")
+    .replace(/[_-]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function getTitleSuggestion(fileName: string): string {
+  const normalizedName = fileName.toLowerCase();
+  const knownTitleSuggestion = knownTitleSuggestions[normalizedName];
+
+  if (knownTitleSuggestion) {
+    return knownTitleSuggestion;
+  }
+
+  return makeTitleSuggestion(fileName);
+}
+
+function isClientVisiblePdf(file: File): boolean {
+  const normalizedName = file.name.toLowerCase();
+
+  return (
+    normalizedName.endsWith(".pdf") &&
+    (file.type.length === 0 || file.type === "application/pdf")
+  );
+}
+
+function UploadShellLayout({
+  canContinue,
+  errorMessage,
+  isBusy,
+  isDragActive,
+  isSubmitting = false,
+  onDropzoneKeyDown,
+  onOpenFilePicker,
+  onRemoveFile,
+  onTitleChange,
+  onContinue,
+  summary,
+  title,
+}: {
+  canContinue: boolean;
+  errorMessage: string | null;
+  isBusy: boolean;
+  isDragActive: boolean;
+  isSubmitting?: boolean;
+  onContinue?: () => void;
+  onDropzoneKeyDown: (event: KeyboardEvent<HTMLDivElement>) => void;
+  onOpenFilePicker: () => void;
+  onRemoveFile: () => void;
+  onTitleChange: (event: ChangeEvent<HTMLInputElement>) => void;
+  summary: UploadSummary | null;
+  title: string;
+}) {
+  const dropzoneClasses = isBusy
+    ? "border-[rgba(37,99,235,0.35)] bg-[rgba(37,99,235,0.04)]"
+    : errorMessage
+      ? "border-[rgba(180,35,53,0.28)] bg-[rgba(180,35,53,0.03)]"
+      : isDragActive
+        ? "border-[rgba(180,35,53,0.36)] bg-[rgba(180,35,53,0.03)]"
+        : "border-(--border) bg-(--surface)";
+
+  return (
+    <div className="space-y-8">
+      <PageHeader
+        description="Step 1 of 4 - Upload document"
+        eyebrow="Envelope workflow"
+        title="New envelope"
+      />
+
+      <StepIndicator current={1} steps={envelopeSteps} />
+
+      <section
+        className="editorial-panel p-6 sm:p-8"
+        data-animate="enter"
+        data-animate-delay="2"
+      >
+        <div className="space-y-6">
+          <FieldShell
+            label="Envelope title"
+            onChange={onTitleChange}
+            placeholder="e.g., NDA - Client Bravo"
+            readOnly={false}
+            value={title}
+          />
+
+          <div
+            aria-busy={isBusy}
+            aria-label="Document upload dropzone"
+            className={`cursor-pointer border border-dashed px-6 py-10 text-center transition sm:px-10 sm:py-14 ${dropzoneClasses}`}
+            onClick={onOpenFilePicker}
+            onDragLeave={isBusy ? undefined : () => undefined}
+            onDragOver={undefined}
+            onDrop={undefined}
+            onKeyDown={onDropzoneKeyDown}
+            role="button"
+            tabIndex={0}
+          >
+            <div className="mx-auto flex max-w-xl flex-col items-center gap-4">
+              {isBusy ? (
+                <>
+                  <div
+                    aria-label="Upload progress"
+                    className="h-3 w-full overflow-hidden rounded-full bg-white"
+                    role="progressbar"
+                  >
+                    <div className="h-full w-2/3 animate-pulse rounded-full bg-chart-1" />
+                  </div>
+                  <div className="space-y-2">
+                    <p className="text-lg font-semibold tracking-[-0.03em] text-(--fg)">
+                      Uploading...
+                    </p>
+                    <p className="text-sm leading-6 text-muted-foreground">
+                      Validating the PDF before you continue to signer setup.
+                    </p>
+                  </div>
+                </>
+              ) : (
+                <>
+                  <div className="space-y-2">
+                    <p className="text-lg font-semibold tracking-[-0.03em] text-(--fg)">
+                      Drag and drop your PDF here
+                    </p>
+                    <p className="text-sm text-muted-foreground">
+                      or{" "}
+                      <span className="font-semibold text-(--fg) underline decoration-[rgba(17,17,17,0.3)] underline-offset-4">
+                        click to browse
+                      </span>
+                    </p>
+                  </div>
+                  <p className="text-xs font-semibold uppercase tracking-[0.22em] text-(--tertiary)">
+                    PDF only - 20 MB max
+                  </p>
+                </>
+              )}
+            </div>
+          </div>
+
+          {errorMessage ? (
+            <div
+              className="rounded-[24px] border border-[rgba(180,35,53,0.18)] bg-[rgba(180,35,53,0.04)] px-5 py-4"
+              role="alert"
+            >
+              <p className="text-sm font-semibold text-(--accent)">
+                {errorMessage}
+              </p>
+            </div>
+          ) : null}
+
+          {summary ? (
+            <section className="border border-(--border) bg-(--surface) px-5 py-4">
+              <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+                <div className="space-y-1">
+                  <p className="text-sm font-semibold text-(--fg)">
+                    {summary.fileName}
+                  </p>
+                  <p className="text-sm text-muted-foreground">
+                    {summary.sizeLabel}
+                  </p>
+                </div>
+                <button
+                  className="inline-flex min-h-11 items-center justify-center rounded-none border border-(--border) bg-white px-4 [font-family:var(--font-mono)] text-[0.72rem] font-semibold uppercase tracking-[0.18em] text-muted-foreground transition hover:border-black hover:text-(--fg)"
+                  onClick={onRemoveFile}
+                  type="button"
+                >
+                  Remove
+                </button>
+              </div>
+            </section>
+          ) : null}
+
+          <div className="flex justify-end">
+            <ShellButton
+              disabled={!canContinue}
+              loading={isSubmitting}
+              onClick={onContinue}
+            >
+              Next -&gt;
+            </ShellButton>
+          </div>
+        </div>
+      </section>
+    </div>
+  );
+}
+
+export function UploadShell() {
+  const router = useRouter();
+  const [title, setTitle] = useState("");
+  const [summary, setSummary] = useState<UploadSummary | null>(null);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [isCreatingDraft, setIsCreatingDraft] = useState(false);
+  const [autoFilledTitle, setAutoFilledTitle] = useState<string | null>(null);
+  const [isDragActive, setIsDragActive] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+
+  function resetSelection(clearTitle: boolean) {
+    setSummary(null);
+    setErrorMessage(null);
+    setIsCreatingDraft(false);
+
+    if (clearTitle) {
+      setTitle((currentTitle) =>
+        autoFilledTitle && currentTitle === autoFilledTitle ? "" : currentTitle,
+      );
+    }
+
+    setAutoFilledTitle(null);
+  }
+
+  async function parseResponse<T>(
+    response: Response,
+  ): Promise<{ data: T | null; error: string | null }> {
+    const payload = (await response.json().catch(() => null)) as
+      | { error?: string }
+      | T
+      | null;
+
+    if (!response.ok) {
+      return {
+        data: null,
+        error:
+          payload && typeof payload === "object" && "error" in payload
+            ? (payload.error ?? "Something went wrong. Please try again.")
+            : "Something went wrong. Please try again.",
+      };
+    }
+
+    return {
+      data: payload as T,
+      error: null,
+    };
+  }
+
+  function beginUpload(file: File) {
+    if (!isClientVisiblePdf(file)) {
+      setErrorMessage(errorMessageMap["invalid-type"]);
+      setSummary(null);
+      return;
+    }
+
+    if (file.size > MAX_FILE_SIZE_BYTES) {
+      setErrorMessage(errorMessageMap["too-large"]);
+      setSummary(null);
+      return;
+    }
+
+    const titleSuggestion = getTitleSuggestion(file.name);
+
+    setSummary({
+      file,
+      fileName: file.name,
+      sizeLabel: formatFileSize(file.size),
+    });
+    setErrorMessage(null);
+
+    if (title.trim().length === 0) {
+      setTitle(titleSuggestion);
+      setAutoFilledTitle(titleSuggestion);
+    }
+  }
+
+  function handleFileSelection(file: File | null) {
+    setIsDragActive(false);
+
+    if (!file) {
+      return;
+    }
+
+    beginUpload(file);
+  }
+
+  function handleInputChange(event: ChangeEvent<HTMLInputElement>) {
+    const selectedFile = event.target.files?.[0] ?? null;
+    handleFileSelection(selectedFile);
+    event.target.value = "";
+  }
+
+  function handleRemoveFile() {
+    resetSelection(true);
+  }
+
+  function handleTitleChange(event: ChangeEvent<HTMLInputElement>) {
+    const nextTitle = event.target.value;
+    setTitle(nextTitle);
+
+    if (autoFilledTitle && nextTitle !== autoFilledTitle) {
+      setAutoFilledTitle(null);
+    }
+  }
+
+  function openFilePicker() {
+    if (isCreatingDraft) {
+      return;
+    }
+
+    fileInputRef.current?.click();
+  }
+
+  function handleDropzoneKeyDown(event: KeyboardEvent<HTMLDivElement>) {
+    if (event.key === "Enter" || event.key === " ") {
+      event.preventDefault();
+      openFilePicker();
+    }
+  }
+
+  async function handleContinue() {
+    if (isCreatingDraft || !summary || title.trim().length === 0) {
+      return;
+    }
+
+    setIsCreatingDraft(true);
+    setErrorMessage(null);
+
+    try {
+      try {
+        await assertPdfPreviewRenderable(summary.file);
+      } catch (error) {
+        console.error(
+          "Failed to validate the PDF preview before draft creation.",
+          error,
+        );
+        setErrorMessage(errorMessageMap["preview-unavailable"]);
+        setIsCreatingDraft(false);
+        return;
+      }
+
+      const formData = new FormData();
+      formData.append("file", summary.file);
+      formData.append("title", title.trim());
+
+      const response = await fetch("/api/envelopes", {
+        body: formData,
+        method: "POST",
+      });
+      const payload = await parseResponse<CreateEnvelopeResponse>(response);
+
+      if (!payload.data || payload.error) {
+        setErrorMessage(
+          payload.error ?? "Something went wrong. Please try again.",
+        );
+
+        if (response.status === 400) {
+          setSummary(null);
+        }
+
+        setIsCreatingDraft(false);
+        return;
+      }
+
+      try {
+        await cacheDraftPdfBlob(payload.data.envelopeId, summary.file);
+      } catch (error) {
+        console.error(
+          "Failed to cache the uploaded PDF for local preview.",
+          error,
+        );
+      }
+
+      const redirectPath = payload.data.redirectPath;
+
+      startTransition(() => {
+        router.push(redirectPath);
+      });
+    } catch {
+      setErrorMessage("Something went wrong. Please try again.");
+      setIsCreatingDraft(false);
+    }
+  }
+
+  const canContinue =
+    !isCreatingDraft && summary != null && title.trim().length > 0;
+
+  return (
+    <div
+      onDragLeave={() => setIsDragActive(false)}
+      onDragOver={(event) => {
+        event.preventDefault();
+        if (!isCreatingDraft) {
+          setIsDragActive(true);
+        }
+      }}
+      onDrop={(event: DragEvent<HTMLDivElement>) => {
+        event.preventDefault();
+
+        if (isCreatingDraft) {
+          return;
+        }
+
+        handleFileSelection(event.dataTransfer.files?.[0] ?? null);
+      }}
+    >
+      <input
+        accept=".pdf,application/pdf"
+        aria-label="Upload PDF"
+        className="sr-only"
+        onChange={handleInputChange}
+        ref={fileInputRef}
+        type="file"
+      />
+      <UploadShellLayout
+        canContinue={canContinue}
+        errorMessage={errorMessage}
+        isBusy={isCreatingDraft}
+        isDragActive={isDragActive}
+        isSubmitting={isCreatingDraft}
+        onContinue={handleContinue}
+        onDropzoneKeyDown={handleDropzoneKeyDown}
+        onOpenFilePicker={openFilePicker}
+        onRemoveFile={handleRemoveFile}
+        onTitleChange={handleTitleChange}
+        summary={summary}
+        title={title}
+      />
+    </div>
+  );
+}
