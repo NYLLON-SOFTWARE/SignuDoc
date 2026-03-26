@@ -1,6 +1,8 @@
+import type { LucideIcon } from "lucide-react";
 import type { ReactNode } from "react";
 import Link from "next/link";
 import { Archivo, IBM_Plex_Mono } from "next/font/google";
+import { ClipboardCheck, Globe, Link2, ShieldCheck } from "lucide-react";
 
 import { PublicLegalFooter } from "@/components/layout/public-legal-links";
 import { LandingDashboardPreview } from "@/components/landing/dashboard-preview";
@@ -94,6 +96,35 @@ const faqItems: readonly FaqItem[] = [
       "You get the final signed PDF plus a tamper-proof certificate. Download both in one click.",
   },
 ] as const;
+
+type SecurityPillar = {
+  body: string;
+  icon: LucideIcon;
+  title: string;
+};
+
+const securityPillars: readonly SecurityPillar[] = [
+  {
+    title: "Encrypted at rest and in transit",
+    body: "Documents are stored with encryption on Cloudflare's infrastructure. All connections use HTTPS with HSTS enforcement.",
+    icon: ShieldCheck,
+  },
+  {
+    title: "Complete audit trail",
+    body: "Every view, signature, and decline is logged with timestamps and IP addresses. Download the certificate PDF as proof.",
+    icon: ClipboardCheck,
+  },
+  {
+    title: "Secure signing links",
+    body: "Each signer gets a unique cryptographic token. Links expire after 7 days and can't be guessed or reused.",
+    icon: Link2,
+  },
+  {
+    title: "Open source",
+    body: "The entire codebase is public. Inspect the security model, audit the logic, or self-host on your own infrastructure.",
+    icon: Globe,
+  },
+];
 
 export function resolveLandingShellState(
   value?: string | string[] | null,
@@ -232,6 +263,35 @@ export function LandingShell({ initialState = "default" }: LandingShellProps) {
                   key={step.title}
                   monoClassName={monoClassName}
                   title={step.title}
+                />
+              ))}
+            </div>
+          </div>
+        </section>
+
+        <section className="border-b border-[#d4d4d4]" data-animate="enter">
+          <div className="mx-auto max-w-[1200px] px-6 py-20 sm:px-8 lg:px-10 lg:py-24">
+            <div className="mx-auto max-w-160 text-center">
+              <SectionMarker center monoClassName={monoClassName}>
+                Security
+              </SectionMarker>
+              <h2 className="text-[clamp(2rem,4vw,3.1rem)] font-extrabold leading-[1.06] tracking-[-0.03em] text-black">
+                Your documents stay safe.
+              </h2>
+              <p className="mx-auto mt-5 max-w-xl text-lg leading-relaxed text-[#71717a]">
+                Every PDF is encrypted, every action is logged, and every
+                signing link is cryptographically secured. The code is open
+                source so you can verify it yourself.
+              </p>
+            </div>
+
+            <div className="mx-auto mt-14 grid max-w-[880px] gap-4 sm:grid-cols-2">
+              {securityPillars.map((pillar) => (
+                <SecurityPillarCard
+                  body={pillar.body}
+                  icon={pillar.icon}
+                  key={pillar.title}
+                  title={pillar.title}
                 />
               ))}
             </div>
@@ -493,6 +553,20 @@ function WorkflowStepInline({
         </div>
       </div>
       <h3 className="mt-4 text-lg font-bold leading-tight tracking-[-0.02em] text-black">
+        {title}
+      </h3>
+      <p className="mt-2 text-[15px] leading-relaxed text-[#71717a]">{body}</p>
+    </div>
+  );
+}
+
+function SecurityPillarCard({ body, icon: Icon, title }: SecurityPillar) {
+  return (
+    <div className="border-2 border-[#d4d4d4] bg-white px-6 py-7 text-center">
+      <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center border border-[rgba(229,0,0,0.14)] bg-[#fff8f8]">
+        <Icon className="h-[22px] w-[22px]" color="#e50000" strokeWidth={1.8} />
+      </div>
+      <h3 className="text-base font-bold leading-tight tracking-[-0.02em] text-black">
         {title}
       </h3>
       <p className="mt-2 text-[15px] leading-relaxed text-[#71717a]">{body}</p>
