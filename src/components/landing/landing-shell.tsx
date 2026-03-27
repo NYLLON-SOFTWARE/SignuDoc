@@ -2,7 +2,14 @@ import type { LucideIcon } from "lucide-react";
 import type { ReactNode } from "react";
 import Link from "next/link";
 import { Archivo, IBM_Plex_Mono } from "next/font/google";
-import { ClipboardCheck, Globe, Link2, Menu, ShieldCheck } from "lucide-react";
+import {
+  ClipboardCheck,
+  Globe,
+  Link2,
+  Menu,
+  ShieldCheck,
+  X,
+} from "lucide-react";
 
 import { PublicLegalFooter } from "@/components/layout/public-legal-links";
 import { LandingDashboardPreview } from "@/components/landing/dashboard-preview";
@@ -14,7 +21,6 @@ import {
   Sheet,
   SheetClose,
   SheetContent,
-  SheetDescription,
   SheetHeader,
   SheetTitle,
   SheetTrigger,
@@ -194,7 +200,6 @@ export function LandingShell({ initialState = "default" }: LandingShellProps) {
             monoClassName={monoClassName}
             primaryHref={primaryHref}
             primaryLabel={primaryLabel}
-            secondaryLabel={secondaryLabel}
           />
         </div>
       </header>
@@ -429,12 +434,24 @@ export function LandingShell({ initialState = "default" }: LandingShellProps) {
   );
 }
 
-function LandingWordmark() {
+function LandingWordmark({ asLink = true }: { asLink?: boolean }) {
+  const wordmark = (
+    <span className="text-[24px] font-extrabold tracking-[-0.035em] text-black sm:text-[27px]">
+      Signu<span className="text-[#e50000]">Doc</span>
+    </span>
+  );
+
+  if (!asLink) {
+    return (
+      <div aria-label="SignuDoc" className="flex items-center">
+        {wordmark}
+      </div>
+    );
+  }
+
   return (
     <Link aria-label="SignuDoc" className="flex items-center" href="/">
-      <span className="text-[24px] font-extrabold tracking-[-0.035em] text-black sm:text-[27px]">
-        Signu<span className="text-[#e50000]">Doc</span>
-      </span>
+      {wordmark}
     </Link>
   );
 }
@@ -484,13 +501,11 @@ function MobileNavigationMenu({
   monoClassName,
   primaryHref,
   primaryLabel,
-  secondaryLabel,
 }: {
   authenticated: boolean;
   monoClassName: string;
   primaryHref: string;
   primaryLabel: string;
-  secondaryLabel: string;
 }) {
   return (
     <Sheet>
@@ -505,18 +520,19 @@ function MobileNavigationMenu({
         </Button>
       </SheetTrigger>
       <SheetContent
-        className="w-[min(86vw,24rem)] border-l-2 border-[#d4d4d4] bg-white p-0 text-black"
+        className="border-l-2 border-[#d4d4d4] bg-white p-0 text-black"
         side="right"
+        showCloseButton={false}
       >
-        <SheetHeader className="border-b border-[#d4d4d4] px-5 py-4 text-left">
-          <SheetTitle className="text-xl font-bold tracking-[-0.03em] text-black">
-            Menu
-          </SheetTitle>
-          <SheetDescription
-            className={`${monoClassName} text-[11px] uppercase tracking-[0.18em] text-[#71717a]`}
+        <SheetHeader className="relative border-b border-[#d4d4d4] px-5 py-4 pr-18 text-left">
+          <SheetTitle className="sr-only">SignuDoc</SheetTitle>
+          <LandingWordmark asLink={false} />
+          <SheetClose
+            aria-label="Close"
+            className="absolute right-4 top-4 inline-flex h-10 w-10 items-center justify-center border-0 bg-transparent text-[#71717a] transition-colors hover:bg-transparent hover:text-black"
           >
-            Navigate SignuDoc from your phone.
-          </SheetDescription>
+            <X className="size-6" />
+          </SheetClose>
         </SheetHeader>
 
         <nav className="flex flex-col gap-3 px-5 py-5">
@@ -528,6 +544,7 @@ function MobileNavigationMenu({
                 variant: "primary",
               })}
               href={primaryHref}
+              style={{ color: "#fff" }}
             >
               {primaryLabel}
             </Link>
@@ -547,15 +564,6 @@ function MobileNavigationMenu({
               </Link>
             </SheetClose>
           ) : null}
-
-          <SheetClose asChild>
-            <Link
-              className={`${monoClassName} inline-flex items-center justify-center border border-[#d4d4d4] px-5 py-3 text-sm font-medium uppercase tracking-[0.16em] text-[#71717a] transition-colors hover:border-black hover:text-black`}
-              href="#workflow"
-            >
-              {secondaryLabel}
-            </Link>
-          </SheetClose>
         </nav>
       </SheetContent>
     </Sheet>
