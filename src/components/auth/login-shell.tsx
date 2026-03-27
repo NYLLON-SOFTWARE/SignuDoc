@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useState, type ChangeEvent, type FormEvent } from "react";
 
 import { FieldShell, ShellButton } from "@/components/shared/form-shell";
@@ -110,6 +111,7 @@ function LiveLoginShell({
   resetError = null,
   resetToken = null,
 }: LoginShellProps) {
+  const router = useRouter();
   const [values, setValues] = useState<LoginFormValues>(
     createLoginFormValues(),
   );
@@ -214,7 +216,6 @@ function LiveLoginShell({
     setIsSubmitting(true);
 
     const result = await authClient.signIn.email({
-      callbackURL: `${window.location.origin}/dashboard`,
       email: validationResult.data.email,
       password: validationResult.data.password,
     });
@@ -236,7 +237,7 @@ function LiveLoginShell({
       return;
     }
 
-    window.location.assign("/dashboard");
+    router.replace("/dashboard");
   }
 
   async function handleForgotPasswordSubmit(event: FormEvent<HTMLFormElement>) {

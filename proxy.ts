@@ -1,4 +1,5 @@
 import type { NextRequest } from "next/server";
+import { getCookieCache, getSessionCookie } from "better-auth/cookies";
 import { NextResponse } from "next/server";
 
 const DEFAULT_PERMISSIONS_POLICY = [
@@ -72,7 +73,56 @@ function applySecurityHeaders(response: NextResponse, pathname: string) {
   return response;
 }
 
-export function proxy(request: NextRequest) {
+async function hasOptimisticSession(request: NextRequest) {
+  if (process.env.BETTER_AUTH_SECRET) {
+    try {
+      const session = await getCookieCache(request, {
+        secret: process.env.BETTER_AUTH_SECRET,
+      });
+
+      if (session) {
+        return true;
+      }
+    } catch {
+      // Fall back to the session token check if cookie-cache parsing fails.
+    }
+  }
+
+  return getSessionCookie(request) !== null;
+}
+
+async function maybeRedirectAuthenticatedAuthRoute(request: NextRequest) {
+  const pathname = request.nextUrl.pathname;
+
+  if (pathname !== "/login" && pathname !== "/signup") {
+    return null;
+  }
+
+  if (pathname === "/login") {
+    const hasResetState =
+      request.nextUrl.searchParams.has("token") ||
+      request.nextUrl.searchParams.has("error");
+
+    if (hasResetState) {
+      return null;
+    }
+  }
+
+  const hasSession = await hasOptimisticSession(request);
+
+  if (!hasSession) {
+    return null;
+  }
+
+  const dashboardUrl = request.nextUrl.clone();
+
+  dashboardUrl.pathname = "/dashboard";
+  dashboardUrl.search = "";
+
+  return NextResponse.redirect(dashboardUrl);
+}
+
+export async function proxy(request: NextRequest) {
   const pathname = request.nextUrl.pathname;
   const forwardedProto = request.headers
     .get("x-forwarded-proto")
@@ -95,6 +145,12 @@ export function proxy(request: NextRequest) {
     httpsUrl.protocol = "https:";
 
     return applySecurityHeaders(NextResponse.redirect(httpsUrl), pathname);
+  }
+
+  const authRedirect = await maybeRedirectAuthenticatedAuthRoute(request);
+
+  if (authRedirect) {
+    return applySecurityHeaders(authRedirect, pathname);
   }
 
   return applySecurityHeaders(NextResponse.next(), pathname);

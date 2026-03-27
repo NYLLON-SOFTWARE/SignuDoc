@@ -6,6 +6,7 @@ import type { ReactNode } from "react";
 
 import { Brand } from "@/components/layout/brand";
 import { PublicLegalFooter } from "@/components/layout/public-legal-links";
+import { PublicSessionMenu } from "@/components/layout/public-session-menu";
 
 type AuthShellProps = {
   children: ReactNode;
@@ -43,12 +44,15 @@ export function AuthShell({ children }: AuthShellProps) {
             aria-label="Public navigation"
             className="flex items-center gap-3"
           >
-            <Link
-              className="editorial-meta transition-colors hover:text-(--fg)"
-              href={navAction.href}
-            >
-              {navAction.label}
-            </Link>
+            <PublicSessionMenu>
+              <Link
+                className="editorial-meta transition-colors hover:text-(--fg)"
+                href={navAction.href}
+                prefetch
+              >
+                {navAction.label}
+              </Link>
+            </PublicSessionMenu>
           </nav>
         </div>
       </header>

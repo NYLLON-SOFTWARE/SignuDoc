@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import {
   useState,
   type ComponentProps,
@@ -61,6 +61,7 @@ const sectionLabelMap: Record<ShellSection, string> = {
 
 export function AppShell({ children, user }: AppShellProps) {
   const pathname = usePathname() ?? "/dashboard";
+  const router = useRouter();
   const [isSigningOut, setIsSigningOut] = useState(false);
   const currentSection = resolveSection(pathname);
   const initials = getInitials(user.name);
@@ -72,14 +73,17 @@ export function AppShell({ children, user }: AppShellProps) {
 
     setIsSigningOut(true);
 
-    const result = await authClient.signOut();
+    const result = await authClient.signOut({
+      fetchOptions: {
+        onSuccess: () => {
+          router.replace("/login");
+        },
+      },
+    });
 
     if (result.error) {
       setIsSigningOut(false);
-      return;
     }
-
-    window.location.assign("/login");
   }
 
   return (

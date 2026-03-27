@@ -11,9 +11,13 @@ import {
   X,
 } from "lucide-react";
 
+import { PublicSessionMenu } from "@/components/layout/public-session-menu";
 import { PublicLegalFooter } from "@/components/layout/public-legal-links";
 import { LandingDashboardPreview } from "@/components/landing/dashboard-preview";
-import { resolveShellState } from "@/components/shared/shell-state";
+import {
+  LandingSessionLoginAction,
+  LandingSessionPrimaryAction,
+} from "@/components/landing/landing-session-actions";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
@@ -38,14 +42,6 @@ const ibmPlexMono = IBM_Plex_Mono({
   subsets: ["latin"],
   weight: ["400", "500", "600", "700"],
 });
-
-export const landingShellStates = ["default", "authenticated"] as const;
-
-export type LandingShellState = (typeof landingShellStates)[number];
-
-type LandingShellProps = {
-  initialState?: LandingShellState | string | string[] | null;
-};
 
 type WorkflowStep = {
   body: string;
@@ -145,18 +141,8 @@ const securityPillars: readonly SecurityPillar[] = [
   },
 ];
 
-export function resolveLandingShellState(
-  value?: string | string[] | null,
-): LandingShellState {
-  return resolveShellState(value, landingShellStates, "default");
-}
-
-export function LandingShell({ initialState = "default" }: LandingShellProps) {
-  const resolvedInitialState = resolveLandingShellState(initialState);
-  const authenticated = resolvedInitialState === "authenticated";
+export function LandingShell() {
   const monoClassName = ibmPlexMono.className;
-  const primaryHref = authenticated ? "/dashboard" : "/signup";
-  const primaryLabel = authenticated ? "Go to dashboard" : "Start free";
   const secondaryLabel = "See how it works";
 
   return (
@@ -177,30 +163,35 @@ export function LandingShell({ initialState = "default" }: LandingShellProps) {
         <div className="mx-auto flex max-w-[1200px] flex-wrap items-center justify-between gap-4 px-6 py-5 sm:px-8 lg:px-10">
           <LandingWordmark />
 
-          <nav className="hidden flex-wrap items-center gap-3 sm:flex">
-            {!authenticated ? (
+          <PublicSessionMenu
+            buttonClassName="hidden rounded-none border-[#d4d4d4] bg-white text-black hover:border-black hover:bg-white hover:text-black sm:inline-flex"
+            contentClassName="rounded-none border-[#d4d4d4] bg-white text-black"
+          >
+            <nav className="hidden flex-wrap items-center gap-3 sm:flex">
               <Link
                 className={`${monoClassName} text-sm font-medium text-[#71717a] transition-colors hover:text-black`}
                 href="/login"
+                prefetch
               >
                 Log in
               </Link>
-            ) : null}
-            <ActionLink
-              href={primaryHref}
-              monoClassName={monoClassName}
-              variant="primary"
-            >
-              {primaryLabel}
-            </ActionLink>
-          </nav>
+              <ActionLink
+                href="/signup"
+                monoClassName={monoClassName}
+                prefetch
+                variant="primary"
+              >
+                Start free
+              </ActionLink>
+            </nav>
+          </PublicSessionMenu>
 
-          <MobileNavigationMenu
-            authenticated={authenticated}
-            monoClassName={monoClassName}
-            primaryHref={primaryHref}
-            primaryLabel={primaryLabel}
-          />
+          <PublicSessionMenu
+            buttonClassName="rounded-none border-[#d4d4d4] bg-white text-black hover:border-black hover:bg-white hover:text-black sm:hidden"
+            contentClassName="rounded-none border-[#d4d4d4] bg-white text-black"
+          >
+            <MobileNavigationMenu monoClassName={monoClassName} />
+          </PublicSessionMenu>
         </div>
       </header>
 
@@ -236,13 +227,7 @@ export function LandingShell({ initialState = "default" }: LandingShellProps) {
                   </p>
 
                   <div className="mt-10 flex flex-wrap items-center justify-center gap-4">
-                    <ActionLink
-                      href={primaryHref}
-                      monoClassName={monoClassName}
-                      variant="primary"
-                    >
-                      {primaryLabel}
-                    </ActionLink>
+                    <LandingSessionPrimaryAction monoClassName={monoClassName} />
                     <ActionLink
                       href="#workflow"
                       monoClassName={monoClassName}
@@ -344,13 +329,7 @@ export function LandingShell({ initialState = "default" }: LandingShellProps) {
             </div>
 
             <div className="mt-10 flex flex-col items-center gap-4 text-center">
-              <ActionLink
-                href={primaryHref}
-                monoClassName={monoClassName}
-                variant="primary"
-              >
-                {primaryLabel}
-              </ActionLink>
+              <LandingSessionPrimaryAction monoClassName={monoClassName} />
               <p
                 className={`${monoClassName} text-[11px] uppercase tracking-[0.18em] text-[#71717a]`}
               >
@@ -400,22 +379,8 @@ export function LandingShell({ initialState = "default" }: LandingShellProps) {
               </p>
 
               <div className="mt-10 flex flex-wrap justify-center gap-4">
-                <ActionLink
-                  href={primaryHref}
-                  monoClassName={monoClassName}
-                  variant="primary"
-                >
-                  {primaryLabel}
-                </ActionLink>
-                {!authenticated ? (
-                  <ActionLink
-                    href="/login"
-                    monoClassName={monoClassName}
-                    variant="secondary"
-                  >
-                    Log in
-                  </ActionLink>
-                ) : null}
+                <LandingSessionPrimaryAction monoClassName={monoClassName} />
+                <LandingSessionLoginAction monoClassName={monoClassName} />
               </div>
 
               <p
@@ -460,17 +425,20 @@ function ActionLink({
   children,
   href,
   monoClassName,
+  prefetch,
   variant,
 }: {
   children: ReactNode;
   href: string;
   monoClassName: string;
+  prefetch?: boolean;
   variant: "primary" | "secondary";
 }) {
   return (
     <Link
       className={actionLinkClassName({ monoClassName, variant })}
       href={href}
+      prefetch={prefetch}
       style={variant === "primary" ? { color: "#fff" } : undefined}
     >
       {children}
@@ -496,17 +464,7 @@ function actionLinkClassName({
   );
 }
 
-function MobileNavigationMenu({
-  authenticated,
-  monoClassName,
-  primaryHref,
-  primaryLabel,
-}: {
-  authenticated: boolean;
-  monoClassName: string;
-  primaryHref: string;
-  primaryLabel: string;
-}) {
+function MobileNavigationMenu({ monoClassName }: { monoClassName: string }) {
   return (
     <Sheet>
       <SheetTrigger asChild>
@@ -543,27 +501,27 @@ function MobileNavigationMenu({
                 monoClassName,
                 variant: "primary",
               })}
-              href={primaryHref}
+              href="/signup"
+              prefetch
               style={{ color: "#fff" }}
             >
-              {primaryLabel}
+              Start free
             </Link>
           </SheetClose>
 
-          {!authenticated ? (
-            <SheetClose asChild>
-              <Link
-                className={actionLinkClassName({
-                  className: "w-full",
-                  monoClassName,
-                  variant: "secondary",
-                })}
-                href="/login"
-              >
-                Log in
-              </Link>
-            </SheetClose>
-          ) : null}
+          <SheetClose asChild>
+            <Link
+              className={actionLinkClassName({
+                className: "w-full",
+                monoClassName,
+                variant: "secondary",
+              })}
+              href="/login"
+              prefetch
+            >
+              Log in
+            </Link>
+          </SheetClose>
         </nav>
       </SheetContent>
     </Sheet>

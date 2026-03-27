@@ -2,6 +2,7 @@ import type { ReactNode } from "react";
 
 import { Brand } from "@/components/layout/brand";
 import { PublicLegalFooter } from "@/components/layout/public-legal-links";
+import { PublicSessionMenu } from "@/components/layout/public-session-menu";
 
 type PublicDocumentShellProps = {
   children: ReactNode;
@@ -19,8 +20,9 @@ export function PublicDocumentShell({
   return (
     <div className="flex min-h-screen flex-col bg-white text-(--fg)">
       <header className="border-b border-(--border) bg-white">
-        <div className="editorial-shell flex items-center px-0 py-5">
+        <div className="editorial-shell flex items-center justify-between gap-4 px-0 py-5">
           <Brand href="/" />
+          <PublicSessionMenu />
         </div>
       </header>
 

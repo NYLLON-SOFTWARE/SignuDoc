@@ -3,6 +3,7 @@ import { nextCookies } from "better-auth/next-js";
 import { haveIBeenPwned } from "better-auth/plugins";
 import { headers } from "next/headers";
 import type { Pool } from "pg";
+import { cache } from "react";
 
 import { getDb } from "../db/connection.ts";
 import {
@@ -146,7 +147,6 @@ export function createAppAuth({
   const authEnv = appEnv.auth;
   const emailService = createEmailService({ env });
   const plugins = [
-    ...(includeNextCookies ? [nextCookies()] : []),
     ...(env.NODE_ENV === "production"
       ? [
           haveIBeenPwned({
@@ -155,6 +155,7 @@ export function createAppAuth({
           }),
         ]
       : []),
+    ...(includeNextCookies ? [nextCookies()] : []),
   ];
   const secret = authEnv.betterAuthSecret!;
 
@@ -220,6 +221,13 @@ export function createAppAuth({
         });
       },
     },
+    session: {
+      cookieCache: {
+        enabled: true,
+        maxAge: 5 * 60,
+      },
+      deferSessionRefresh: true,
+    },
     plugins,
     secret,
     user: {
@@ -257,8 +265,12 @@ export async function getAuthSessionFromHeaders(requestHeaders: Headers) {
   });
 }
 
-export async function getAuthSession() {
+const getCachedAuthSession = cache(async () => {
   const requestHeaders = await headers();
 
   return getAuthSessionFromHeaders(requestHeaders);
+});
+
+export function getAuthSession() {
+  return getCachedAuthSession();
 }
