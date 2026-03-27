@@ -2,11 +2,24 @@ import type { LucideIcon } from "lucide-react";
 import type { ReactNode } from "react";
 import Link from "next/link";
 import { Archivo, IBM_Plex_Mono } from "next/font/google";
-import { ClipboardCheck, Globe, Link2, ShieldCheck } from "lucide-react";
+import { ClipboardCheck, Globe, Link2, Menu, ShieldCheck } from "lucide-react";
 
 import { PublicLegalFooter } from "@/components/layout/public-legal-links";
 import { LandingDashboardPreview } from "@/components/landing/dashboard-preview";
 import { resolveShellState } from "@/components/shared/shell-state";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Separator } from "@/components/ui/separator";
+import {
+  Sheet,
+  SheetClose,
+  SheetContent,
+  SheetDescription,
+  SheetHeader,
+  SheetTitle,
+  SheetTrigger,
+} from "@/components/ui/sheet";
+import { cn } from "@/lib/cn";
 
 const archivo = Archivo({
   display: "swap",
@@ -158,7 +171,7 @@ export function LandingShell({ initialState = "default" }: LandingShellProps) {
         <div className="mx-auto flex max-w-[1200px] flex-wrap items-center justify-between gap-4 px-6 py-5 sm:px-8 lg:px-10">
           <LandingWordmark />
 
-          <nav className="flex flex-wrap items-center gap-3">
+          <nav className="hidden flex-wrap items-center gap-3 sm:flex">
             {!authenticated ? (
               <Link
                 className={`${monoClassName} text-sm font-medium text-[#71717a] transition-colors hover:text-black`}
@@ -175,6 +188,14 @@ export function LandingShell({ initialState = "default" }: LandingShellProps) {
               {primaryLabel}
             </ActionLink>
           </nav>
+
+          <MobileNavigationMenu
+            authenticated={authenticated}
+            monoClassName={monoClassName}
+            primaryHref={primaryHref}
+            primaryLabel={primaryLabel}
+            secondaryLabel={secondaryLabel}
+          />
         </div>
       </header>
 
@@ -429,21 +450,115 @@ function ActionLink({
   monoClassName: string;
   variant: "primary" | "secondary";
 }) {
-  const sharedClassName = `${monoClassName} inline-flex items-center justify-center border-2 px-5 py-3 text-sm font-bold uppercase tracking-[0.16em] transition-colors`;
-  const variantClassName =
-    variant === "primary"
-      ? "border-[#e50000] bg-[#e50000] hover:border-[#c00000] hover:bg-[#c00000]"
-      : "border-[#d4d4d4] bg-transparent text-black hover:border-black";
-  const style = variant === "primary" ? { color: "#fff" } : undefined;
-
   return (
     <Link
-      className={`${sharedClassName} ${variantClassName}`}
+      className={actionLinkClassName({ monoClassName, variant })}
       href={href}
-      style={style}
+      style={variant === "primary" ? { color: "#fff" } : undefined}
     >
       {children}
     </Link>
+  );
+}
+
+function actionLinkClassName({
+  className,
+  monoClassName,
+  variant,
+}: {
+  className?: string;
+  monoClassName: string;
+  variant: "primary" | "secondary";
+}) {
+  return cn(
+    `${monoClassName} inline-flex items-center justify-center border-2 px-5 py-3 text-sm font-bold uppercase tracking-[0.16em] transition-colors`,
+    variant === "primary"
+      ? "border-[#e50000] bg-[#e50000] text-white hover:border-[#c00000] hover:bg-[#c00000]"
+      : "border-[#d4d4d4] bg-transparent text-black hover:border-black",
+    className,
+  );
+}
+
+function MobileNavigationMenu({
+  authenticated,
+  monoClassName,
+  primaryHref,
+  primaryLabel,
+  secondaryLabel,
+}: {
+  authenticated: boolean;
+  monoClassName: string;
+  primaryHref: string;
+  primaryLabel: string;
+  secondaryLabel: string;
+}) {
+  return (
+    <Sheet>
+      <SheetTrigger asChild>
+        <Button
+          aria-label="Open navigation menu"
+          className="rounded-none border-0 bg-transparent text-black shadow-none hover:bg-transparent hover:text-black focus-visible:border-transparent sm:hidden"
+          size="icon-sm"
+          variant="ghost"
+        >
+          <Menu className="size-5" />
+        </Button>
+      </SheetTrigger>
+      <SheetContent
+        className="w-[min(86vw,24rem)] border-l-2 border-[#d4d4d4] bg-white p-0 text-black"
+        side="right"
+      >
+        <SheetHeader className="border-b border-[#d4d4d4] px-5 py-4 text-left">
+          <SheetTitle className="text-xl font-bold tracking-[-0.03em] text-black">
+            Menu
+          </SheetTitle>
+          <SheetDescription
+            className={`${monoClassName} text-[11px] uppercase tracking-[0.18em] text-[#71717a]`}
+          >
+            Navigate SignuDoc from your phone.
+          </SheetDescription>
+        </SheetHeader>
+
+        <nav className="flex flex-col gap-3 px-5 py-5">
+          <SheetClose asChild>
+            <Link
+              className={actionLinkClassName({
+                className: "w-full",
+                monoClassName,
+                variant: "primary",
+              })}
+              href={primaryHref}
+            >
+              {primaryLabel}
+            </Link>
+          </SheetClose>
+
+          {!authenticated ? (
+            <SheetClose asChild>
+              <Link
+                className={actionLinkClassName({
+                  className: "w-full",
+                  monoClassName,
+                  variant: "secondary",
+                })}
+                href="/login"
+              >
+                Log in
+              </Link>
+            </SheetClose>
+          ) : null}
+
+          <SheetClose asChild>
+            <Link
+              className={`${monoClassName} inline-flex items-center justify-center border border-[#d4d4d4] px-5 py-3 text-sm font-medium uppercase tracking-[0.16em] text-[#71717a] transition-colors hover:border-black hover:text-black`}
+              href="#workflow"
+            >
+              {secondaryLabel}
+            </Link>
+          </SheetClose>
+        </nav>
+      </SheetContent>
+    </Sheet>
   );
 }
 
@@ -633,36 +748,74 @@ function ComparisonTable({ monoClassName }: { monoClassName: string }) {
       </div>
 
       {/* Mobile stacked layout */}
-      <div className="lg:hidden">
-        <div className="grid grid-cols-2 border-b-2 border-[#d4d4d4]">
-          <div className="border-r border-[#d4d4d4] bg-[#fff8f8] px-4 py-4 text-center">
-            <span className="text-[15px] font-bold tracking-tight text-black">
-              Signu<span className="text-[#e50000]">Doc</span>
-            </span>
-          </div>
-          <div className="px-4 py-4 text-center">
-            <span className="text-[15px] font-bold tracking-tight text-[#71717a]">
-              DocuSign
-            </span>
-          </div>
-        </div>
+      <div className="space-y-4 p-4 lg:hidden sm:p-5">
         {comparisonRows.map((row) => (
-          <div className="border-t border-[#d4d4d4]" key={row.feature}>
-            <div
-              className={`${monoClassName} px-4 pb-2 pt-4 text-[10px] font-semibold uppercase tracking-[0.2em] text-[#71717a]`}
-            >
-              {row.feature}
+          <div
+            className="border border-[#d4d4d4] bg-[#fcfcfc]"
+            key={row.feature}
+          >
+            <div className="border-b border-[#d4d4d4] px-4 py-3">
+              <p
+                className={`${monoClassName} text-[10px] font-semibold uppercase tracking-[0.2em] text-[#71717a]`}
+              >
+                {row.feature}
+              </p>
             </div>
-            <div className="grid grid-cols-2">
-              <div className="border-r border-[#d4d4d4] bg-[#fff8f8] px-4 pb-4 text-center">
-                <ComparisonValue advantage value={row.signudoc} />
-              </div>
-              <div className="px-4 pb-4 text-center text-[#71717a]">
-                <ComparisonValue value={row.docusign} />
-              </div>
+            <div className="bg-[#fff8f8]">
+              <ComparisonMobileRow
+                advantage
+                label="SignuDoc"
+                monoClassName={monoClassName}
+                value={row.signudoc}
+              />
             </div>
+            <Separator className="bg-[#d4d4d4]" />
+            <ComparisonMobileRow
+              label="DocuSign"
+              monoClassName={monoClassName}
+              value={row.docusign}
+            />
           </div>
         ))}
+      </div>
+    </div>
+  );
+}
+
+function ComparisonMobileRow({
+  advantage = false,
+  label,
+  monoClassName,
+  value,
+}: {
+  advantage?: boolean;
+  label: string;
+  monoClassName: string;
+  value: string | boolean;
+}) {
+  return (
+    <div className="flex items-center justify-between gap-4 px-4 py-3">
+      <Badge
+        className={cn(
+          `${monoClassName} w-[5.5rem] justify-center rounded-none border px-2.5 py-1 text-[10px] font-semibold normal-case tracking-tight shadow-none`,
+          advantage
+            ? "border-[#e50000]/20 bg-[#fff8f8] text-black"
+            : "border-[#d4d4d4] bg-white text-[#71717a]",
+        )}
+        variant="outline"
+      >
+        {advantage ? (
+          <span>
+            Signu<span className="text-[#e50000]">Doc</span>
+          </span>
+        ) : (
+          label
+        )}
+      </Badge>
+      <div
+        className={cn("max-w-[58%] text-right", !advantage && "text-[#71717a]")}
+      >
+        <ComparisonValue advantage={advantage} value={value} />
       </div>
     </div>
   );
