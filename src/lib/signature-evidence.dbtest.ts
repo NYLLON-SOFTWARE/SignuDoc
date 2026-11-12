@@ -220,13 +220,26 @@ test("the retention period warns the sender, then deletes", async () => {
   });
 
   assert.ok(first.finishedEnvelopeWarningsSent >= 1);
+
+  // A shorter period set after the warning does not bring the date forward.
+  await database.query(`update app_settings set retention_days = 30`);
+
+  const tooSoon = await runRetentionSweep({
+    database,
+    emailService,
+    now: now + 8 * day,
+    storageService: storage(),
+  });
+
+  assert.equal(tooSoon.finishedEnvelopesDeleted, 0);
+  assert.equal(await envelopeOwner(old), owner);
   assert.ok(sent.includes(`${owner}@example.test`));
   assert.equal(await envelopeOwner(old), owner);
 
   const later = await runRetentionSweep({
     database,
     emailService,
-    now: now + 8 * day,
+    now: now + 31 * day,
     storageService: storage(),
   });
 

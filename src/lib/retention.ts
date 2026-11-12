@@ -62,7 +62,10 @@ export type RetentionSweepSummary = {
 
 /** How long before deletion a sender is told, and the shortest notice. */
 export const RETENTION_WARNING_DAYS = 30;
-const RETENTION_MIN_NOTICE_DAYS = 7;
+// Nothing is deleted until this long after its warning, whatever the
+// setting says by then: the date in the warning is never brought forward,
+// even when an administrator shortens the period afterwards.
+const RETENTION_MIN_NOTICE_DAYS = RETENTION_WARNING_DAYS;
 
 function getCurrentUnixTimestamp() {
   return Math.floor(Date.now() / 1000);
@@ -550,7 +553,7 @@ async function warnBeforeRetentionDeletion(
 /**
  * Applies the install's retention period to finished envelopes: a warning to
  * the sender first, deletion once the period has passed and the warning is
- * at least a week old.
+ * at least RETENTION_MIN_NOTICE_DAYS old.
  */
 async function applyRetentionPeriod(
   retentionDays: number,
