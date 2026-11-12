@@ -23,6 +23,7 @@ import {
 } from "./services/pdf-finalize.ts";
 import {
   createStorageService,
+  StorageObjectNotFoundError,
   type StorageService,
 } from "./services/storage.ts";
 import { getRecipientCertificateKey } from "./services/storage-keys.ts";
@@ -516,19 +517,31 @@ async function buildSignedPdfDownload(
     listFieldsForEnvelope(envelope.id, database),
     listSignersForEnvelope(envelope.id, database),
   ]);
-  const body = await renderFinalizedEnvelopePdf(
-    {
-      auditEvents,
-      completedAt: envelope.completedAt,
-      envelope,
-      fields,
-      signers,
-      sourcePdfKey: envelope.sourcePdfKey,
-    },
-    {
-      storageService,
-    },
-  );
+  let body: Uint8Array;
+
+  try {
+    body = await renderFinalizedEnvelopePdf(
+      {
+        auditEvents,
+        completedAt: envelope.completedAt,
+        envelope,
+        fields,
+        signers,
+        sourcePdfKey: envelope.sourcePdfKey,
+      },
+      {
+        storageService,
+      },
+    );
+  } catch (error) {
+    // The signed PDF is gone and so is the source it would be rebuilt from,
+    // for example after the retention period removed both.
+    if (error instanceof StorageObjectNotFoundError) {
+      throw new DownloadAccessError("Signed PDF is unavailable.", 404);
+    }
+
+    throw error;
+  }
 
   if (envelope.signedPdfKey) {
     await storageService.putObject({
