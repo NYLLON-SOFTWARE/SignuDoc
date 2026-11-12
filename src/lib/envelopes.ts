@@ -62,6 +62,7 @@ import {
   createStorageService,
   StorageObjectNotFoundError,
   type StorageObjectStream,
+  type StorageService,
 } from "./services/storage.ts";
 import {
   assertThumbnailImage,
@@ -1284,8 +1285,10 @@ export async function saveEnvelopeThumbnailForUser(
   body: Uint8Array,
   {
     database = getDb(),
+    storageService = createStorageService(),
   }: {
     database?: DbExecutor;
+    storageService?: StorageService;
   } = {},
 ): Promise<void> {
   assertThumbnailImage(body);
@@ -1296,11 +1299,31 @@ export async function saveEnvelopeThumbnailForUser(
     throw new EnvelopeDocumentAccessError("Envelope not found.", 404);
   }
 
-  await createStorageService().putObject({
+  const key = buildEnvelopeThumbnailKey({ envelopeId: envelope.id, userId });
+
+  await storageService.putObject({
     body,
     contentType: THUMBNAIL_CONTENT_TYPE,
-    key: buildEnvelopeThumbnailKey({ envelopeId: envelope.id, userId }),
+    key,
   });
+
+  // The envelope may have been deleted while the picture was being written:
+  // by its owner, by the cleanup job or with the whole account. Each of
+  // those removes the row first and the files after, so a row that is still
+  // here now will have this picture removed with it. A row that is gone has
+  // already had its files removed, and nothing would ever come back for this
+  // one.
+  const envelopeAfterWrite = await getEnvelopeByIdForUser(
+    userId,
+    envelopeId,
+    database,
+  );
+
+  if (!envelopeAfterWrite) {
+    await storageService.deleteObject(key);
+
+    throw new EnvelopeDocumentAccessError("Envelope not found.", 404);
+  }
 }
 
 /** Streams the stored first-page picture, or says there is none (404). */
@@ -1309,8 +1332,10 @@ export async function getEnvelopeThumbnailForUser(
   envelopeId: string,
   {
     database = getDb(),
+    storageService = createStorageService(),
   }: {
     database?: DbExecutor;
+    storageService?: StorageService;
   } = {},
 ): Promise<StorageObjectStream> {
   const envelope = await getEnvelopeByIdForUser(userId, envelopeId, database);
@@ -1320,7 +1345,7 @@ export async function getEnvelopeThumbnailForUser(
   }
 
   try {
-    return await createStorageService().getObjectStream(
+    return await storageService.getObjectStream(
       buildEnvelopeThumbnailKey({ envelopeId: envelope.id, userId }),
     );
   } catch (error) {
@@ -2203,8 +2228,10 @@ export async function deleteDraftEnvelope(
   envelopeId: string,
   {
     database = getDb(),
+    storageService = createStorageService(),
   }: {
     database?: DbExecutor;
+    storageService?: StorageService;
   } = {},
 ): Promise<EnvelopeRecord> {
   const envelope = await getEnvelopeByIdForUser(userId, envelopeId, database);
@@ -2220,7 +2247,6 @@ export async function deleteDraftEnvelope(
     );
   }
 
-  const storageService = createStorageService();
   const deleteResult = await database.query(
     `
       DELETE FROM envelopes

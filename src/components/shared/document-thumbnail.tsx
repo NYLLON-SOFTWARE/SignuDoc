@@ -35,12 +35,16 @@ export function DocumentThumbnail({
   const [drawnUrl, setDrawnUrl] = useState<string | null>(null);
   const imageRef = useRef<HTMLImageElement | null>(null);
   const isMountedRef = useRef(true);
+  const releaseBackfillRef = useRef<(() => void) | null>(null);
 
   useEffect(() => {
     isMountedRef.current = true;
 
     return () => {
       isMountedRef.current = false;
+      // A card that is gone must not keep its place in the drawing queue.
+      releaseBackfillRef.current?.();
+      releaseBackfillRef.current = null;
     };
   }, []);
 
@@ -71,11 +75,20 @@ export function DocumentThumbnail({
   }, []);
 
   function handleStoredThumbnailMissing() {
-    if (!envelopeId || state !== "loading" || drawnUrl) {
+    if (
+      !envelopeId ||
+      state !== "loading" ||
+      drawnUrl ||
+      releaseBackfillRef.current
+    ) {
       return;
     }
 
-    backfillEnvelopeThumbnail(envelopeId)
+    const backfill = backfillEnvelopeThumbnail(envelopeId);
+
+    releaseBackfillRef.current = backfill.release;
+
+    backfill.result
       .then((thumbnail) => {
         if (!isMountedRef.current) {
           return;

@@ -1,4 +1,8 @@
 import { loadPdfJsModule, PDF_JS_STANDARD_FONT_DATA_URL } from "./pdfjs-client";
+import {
+  createSharedSerialQueue,
+  type SharedQueueRequest,
+} from "./shared-serial-queue.ts";
 
 // Draws the first page of a PDF as a small JPEG, in the browser. The server
 // never renders PDFs, so this is where a document's dashboard thumbnail
@@ -94,25 +98,26 @@ export async function uploadEnvelopeThumbnail(
 }
 
 // A dashboard full of envelopes without thumbnails would otherwise download
-// and draw every PDF at once.
-let backfillQueue: Promise<unknown> = Promise.resolve();
+// and draw every PDF at once. The queue draws one at a time, draws each
+// envelope once however many cards ask for it, and skips an envelope whose
+// cards have all gone (a changed filter, another page) before its turn.
+const backfillQueue = createSharedSerialQueue(async (envelopeId: string) => {
+  const thumbnail = await renderPdfThumbnail({
+    url: `/api/envelopes/${encodeURIComponent(envelopeId)}/document`,
+  });
+
+  void uploadEnvelopeThumbnail(envelopeId, thumbnail);
+
+  return thumbnail;
+});
 
 /**
  * Makes the thumbnail for an envelope that has none, from its stored PDF,
- * and saves it for next time. One document at a time.
+ * and saves it for next time. Call `release` when the result is no longer
+ * wanted, such as when the card that asked for it is removed.
  */
-export function backfillEnvelopeThumbnail(envelopeId: string): Promise<Blob> {
-  const result = backfillQueue.then(async () => {
-    const thumbnail = await renderPdfThumbnail({
-      url: `/api/envelopes/${encodeURIComponent(envelopeId)}/document`,
-    });
-
-    void uploadEnvelopeThumbnail(envelopeId, thumbnail);
-
-    return thumbnail;
-  });
-
-  backfillQueue = result.catch(() => undefined);
-
-  return result;
+export function backfillEnvelopeThumbnail(
+  envelopeId: string,
+): SharedQueueRequest<Blob> {
+  return backfillQueue.request(envelopeId);
 }
