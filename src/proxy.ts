@@ -2,6 +2,7 @@ import type { NextRequest } from "next/server";
 import { getCookieCache, getSessionCookie } from "better-auth/cookies";
 import { NextResponse } from "next/server";
 
+import { supportsDirectUploads } from "@/lib/services/storage/driver";
 import { resolveAuthSecret, resolveAuthUrl } from "@/lib/utils/env";
 
 const DEFAULT_PERMISSIONS_POLICY = [
@@ -25,6 +26,28 @@ function isProductionEnvironment() {
 // https://vercel.com/docs/vercel-toolbar/managing-toolbar
 function isVercelPreview() {
   return process.env.VERCEL === "1" && process.env.VERCEL_ENV === "preview";
+}
+
+// With Vercel Blob the upload page sends the PDF straight to the Blob API,
+// so the browser must be allowed to connect to it. The address is the one
+// the Blob SDK uses, including its override for a stand-in API.
+// https://vercel.com/docs/vercel-blob/vercel-signed-urls#presigned-uploads
+const DEFAULT_BLOB_API_URL = "https://vercel.com/api/blob";
+
+function resolveBlobUploadSource() {
+  try {
+    if (!supportsDirectUploads()) {
+      return false;
+    }
+  } catch {
+    return false;
+  }
+
+  const apiUrl =
+    process.env.NEXT_PUBLIC_VERCEL_BLOB_API_URL?.trim() || DEFAULT_BLOB_API_URL;
+
+  // The trailing slash limits the allowance to this path and below.
+  return `${apiUrl.replace(/\/+$/, "")}/`;
 }
 
 function buildContentSecurityPolicy() {
@@ -58,6 +81,7 @@ function buildContentSecurityPolicy() {
         "'self'",
         // The field editor reads the just-uploaded PDF back from a blob: URL.
         "blob:",
+        resolveBlobUploadSource(),
         preview && "https://vercel.live wss://ws-us3.pusher.com",
       ],
     ],

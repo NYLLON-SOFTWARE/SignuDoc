@@ -59,7 +59,10 @@ export default defineConfig({
       NEXT_TELEMETRY_DISABLED: "1",
       // The breach check calls an outside service; the test must not.
       PASSWORD_BREACH_CHECK: "off",
-      STORAGE_DRIVER: "local",
+      // "local" unless E2E_STORAGE_DRIVER says otherwise. With "blob" and a
+      // BLOB_READ_WRITE_TOKEN in the environment, the same test runs against
+      // a real Vercel Blob store, direct browser upload included.
+      STORAGE_DRIVER: process.env.E2E_STORAGE_DRIVER ?? "local",
       STORAGE_LOCAL_DIR: path.join(e2eDataDir, "storage"),
       SUPPORT_EMAIL: "support@signudoc.localhost",
     },

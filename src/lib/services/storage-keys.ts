@@ -8,12 +8,38 @@ const RECIPIENT_CERTIFICATE_FILE_NAME = "recipient.pdf";
 const LEGACY_INTERNAL_EVIDENCE_FILE_NAME = "internal.json";
 const LEGACY_RECIPIENT_EVIDENCE_FILE_NAME = "recipient.json";
 
+const PENDING_UPLOAD_ROOT_SEGMENT = "uploads";
+const PENDING_UPLOAD_NAME_PATTERN =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.pdf$/;
+
 export type CertificateAudience = "internal" | "recipient";
 
 type EnvelopeStorageIdentity = {
   envelopeId: string;
   userId: string;
 };
+
+/**
+ * Where a user's browser may put a PDF before the app has looked at it.
+ * Ends with a slash; the browser adds "<uuid>.pdf". Nothing under this
+ * prefix is trusted: the app reads the file, validates it, and stores its
+ * own copy under the envelope's key.
+ */
+export function buildPendingUploadPrefix(userId: string): string {
+  return `${PENDING_UPLOAD_ROOT_SEGMENT}/${userId}/`;
+}
+
+/** True only for a pending upload key that belongs to this user. */
+export function isPendingUploadKey(key: string, userId: string): boolean {
+  const prefix = buildPendingUploadPrefix(userId);
+
+  return (
+    userId.length > 0 &&
+    !userId.includes("/") &&
+    key.startsWith(prefix) &&
+    PENDING_UPLOAD_NAME_PATTERN.test(key.slice(prefix.length))
+  );
+}
 
 export function buildEnvelopePrefix(input: EnvelopeStorageIdentity): string {
   return path.posix.join(

@@ -239,7 +239,54 @@ function UploadShellLayout({
   );
 }
 
-export function UploadShell() {
+// Sends the PDF straight to Vercel Blob with a signed URL from /api/uploads,
+// then tells the app where it is. The Blob SDK is loaded only when used.
+async function createDraftFromDirectUpload(input: {
+  file: File;
+  title: string;
+  uploadPrefix: string;
+}) {
+  const { uploadPresigned } = await import("@vercel/blob/client");
+  const uploadKey = `${input.uploadPrefix}${crypto.randomUUID()}.pdf`;
+
+  await uploadPresigned(uploadKey, input.file, {
+    access: "private",
+    contentType: "application/pdf",
+    handleUploadUrl: "/api/uploads",
+  });
+
+  return fetch("/api/envelopes", {
+    body: JSON.stringify({
+      filename: input.file.name,
+      title: input.title,
+      uploadKey,
+    }),
+    headers: { "content-type": "application/json" },
+    method: "POST",
+  });
+}
+
+async function createDraftFromForm(input: { file: File; title: string }) {
+  const formData = new FormData();
+
+  formData.append("file", input.file);
+  formData.append("title", input.title);
+
+  return fetch("/api/envelopes", {
+    body: formData,
+    method: "POST",
+  });
+}
+
+type UploadShellProps = {
+  /**
+   * Where this user's browser may upload directly, ending in a slash, or
+   * null when uploads go through the app.
+   */
+  directUploadPrefix?: string | null;
+};
+
+export function UploadShell({ directUploadPrefix = null }: UploadShellProps) {
   const router = useRouter();
   const [title, setTitle] = useState("");
   const [summary, setSummary] = useState<UploadSummary | null>(null);
@@ -267,9 +314,7 @@ export function UploadShell() {
     response: Response,
   ): Promise<{ data: T | null; error: string | null }> {
     const payload = (await response.json().catch(() => null)) as
-      | { error?: string }
-      | T
-      | null;
+      { error?: string } | T | null;
 
     if (!response.ok) {
       return {
@@ -380,14 +425,13 @@ export function UploadShell() {
         return;
       }
 
-      const formData = new FormData();
-      formData.append("file", summary.file);
-      formData.append("title", title.trim());
-
-      const response = await fetch("/api/envelopes", {
-        body: formData,
-        method: "POST",
-      });
+      const draftInput = { file: summary.file, title: title.trim() };
+      const response = directUploadPrefix
+        ? await createDraftFromDirectUpload({
+            ...draftInput,
+            uploadPrefix: directUploadPrefix,
+          })
+        : await createDraftFromForm(draftInput);
       const payload = await parseResponse<CreateEnvelopeResponse>(response);
 
       if (!payload.data || payload.error) {
