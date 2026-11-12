@@ -14,6 +14,7 @@ import {
   getEnvelopeThumbnailForUser,
   saveEnvelopeThumbnailForUser,
 } from "./envelopes.ts";
+import { deleteEnvelopesAndFiles } from "./retention.ts";
 import { buildEnvelopeThumbnailKey } from "./services/storage-keys.ts";
 import {
   createStorageService,
@@ -66,13 +67,19 @@ async function insertDraft(): Promise<{ envelopeId: string; userId: string }> {
   return { envelopeId, userId };
 }
 
+// Where insertDraft says the original is: under the user who created it.
+function thumbnailKey(input: { envelopeId: string; userId: string }): string {
+  return buildEnvelopeThumbnailKey({
+    ...input,
+    sourcePdfKey: `users/${input.userId}/envelopes/${input.envelopeId}/original.pdf`,
+  });
+}
+
 async function thumbnailExists(input: {
   envelopeId: string;
   userId: string;
 }): Promise<boolean> {
-  const head = await storageService.headObject(
-    buildEnvelopeThumbnailKey(input),
-  );
+  const head = await storageService.headObject(thumbnailKey(input));
 
   return head.exists;
 }
@@ -190,4 +197,98 @@ test("deleting a draft removes its picture", async () => {
     }),
     assertNotFound,
   );
+});
+
+test("a picture stays with an envelope that is handed to another account", async () => {
+  const draft = await insertDraft();
+  const keeper = await insertDraft();
+
+  await saveEnvelopeThumbnailForUser(
+    draft.userId,
+    draft.envelopeId,
+    THUMBNAIL,
+    { database, storageService },
+  );
+
+  // What closing an account does to its finished envelopes: the row moves,
+  // the files stay where they were stored.
+  await database.query(
+    "update public.envelopes set status = 'completed', user_id = $1 where id = $2",
+    [keeper.userId, draft.envelopeId],
+  );
+
+  const picture = await getEnvelopeThumbnailForUser(
+    keeper.userId,
+    draft.envelopeId,
+    { database, storageService },
+  );
+
+  await picture.stream.cancel();
+  await assert.rejects(
+    getEnvelopeThumbnailForUser(draft.userId, draft.envelopeId, {
+      database,
+      storageService,
+    }),
+    assertNotFound,
+  );
+
+  // Deleting it later removes the picture from where it really is, and
+  // leaves nothing under the new owner either.
+  assert.equal(
+    await deleteEnvelopesAndFiles([draft.envelopeId], database, storageService),
+    1,
+  );
+  assert.equal(await thumbnailExists(draft), false);
+  assert.equal(
+    await thumbnailExists({
+      envelopeId: draft.envelopeId,
+      userId: keeper.userId,
+    }),
+    false,
+  );
+});
+
+test("a picture stored while a finished envelope is being deleted does not stay behind", async () => {
+  const draft = await insertDraft();
+
+  await database.query(
+    "update public.envelopes set status = 'completed' where id = $1",
+    [draft.envelopeId],
+  );
+
+  // Finished envelopes lose their files first and their row after. The
+  // upload lands between the two: it finds the row and keeps its picture.
+  let stored = false;
+  const storageWithLateUpload: StorageService = {
+    ...storageService,
+    async deleteObject(key) {
+      await storageService.deleteObject(key);
+
+      if (!stored && key === thumbnailKey(draft)) {
+        stored = true;
+        await saveEnvelopeThumbnailForUser(
+          draft.userId,
+          draft.envelopeId,
+          THUMBNAIL,
+          { database, storageService },
+        );
+      }
+    },
+    getObject: (key) => storageService.getObject(key),
+    getObjectStream: (key) => storageService.getObjectStream(key),
+    headObject: (key) => storageService.headObject(key),
+    putObject: (input) => storageService.putObject(input),
+  };
+
+  assert.equal(
+    await deleteEnvelopesAndFiles(
+      [draft.envelopeId],
+      database,
+      storageWithLateUpload,
+    ),
+    1,
+  );
+
+  assert.equal(stored, true);
+  assert.equal(await thumbnailExists(draft), false);
 });

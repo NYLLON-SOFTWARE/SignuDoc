@@ -197,6 +197,35 @@ async function listFieldImagesForEnvelopeIds(
   return keysByEnvelopeId;
 }
 
+function thumbnailKeyOf(
+  envelope: Pick<EnvelopeArtifactRow, "id" | "sourcePdfKey" | "userId">,
+): string {
+  return buildEnvelopeThumbnailKey({
+    envelopeId: envelope.id,
+    sourcePdfKey: envelope.sourcePdfKey,
+    userId: envelope.userId,
+  });
+}
+
+/**
+ * The sender's browser can store a first-page picture while its envelope is
+ * being deleted. The upload keeps the picture when the envelope's row is
+ * still there, so anything that deletes files before the row has to look
+ * once more after the row has gone. An upload that finishes later than this
+ * finds no row and removes its own picture.
+ */
+async function deleteThumbnailStoredMeanwhile(
+  envelope: Pick<EnvelopeArtifactRow, "id" | "sourcePdfKey" | "userId">,
+  storageService: StorageService,
+) {
+  await storageService.deleteObject(thumbnailKeyOf(envelope)).catch((error) => {
+    console.error(
+      `Failed to delete a late thumbnail for deleted envelope ${envelope.id}:`,
+      error,
+    );
+  });
+}
+
 function buildEnvelopeStorageKeys(
   envelope: Pick<
     EnvelopeArtifactRow,
@@ -208,12 +237,7 @@ function buildEnvelopeStorageKeys(
 
   keys.add(envelope.sourcePdfKey);
   // A picture of the first page is as private as the document itself.
-  keys.add(
-    buildEnvelopeThumbnailKey({
-      envelopeId: envelope.id,
-      userId: envelope.userId,
-    }),
-  );
+  keys.add(thumbnailKeyOf(envelope));
 
   if (envelope.signedPdfKey) {
     keys.add(envelope.signedPdfKey);
@@ -631,6 +655,7 @@ async function applyRetentionPeriod(
 
       if (deleted.rowCount === 1) {
         summary.finishedEnvelopesDeleted += 1;
+        await deleteThumbnailStoredMeanwhile(envelope, storageService);
       }
     } catch (error) {
       summary.finishedEnvelopeDeletionFailures.push(envelope.id);
@@ -689,6 +714,10 @@ export async function deleteEnvelopesAndFiles(
     `DELETE FROM envelopes WHERE id = ANY($1::text[])`,
     [envelopes.map((envelope) => envelope.id)],
   );
+
+  for (const envelope of envelopes) {
+    await deleteThumbnailStoredMeanwhile(envelope, storageService);
+  }
 
   return deleted.rowCount ?? 0;
 }

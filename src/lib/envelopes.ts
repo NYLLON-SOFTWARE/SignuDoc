@@ -1352,7 +1352,11 @@ export async function saveEnvelopeThumbnailForUser(
     throw new EnvelopeDocumentAccessError("Envelope not found.", 404);
   }
 
-  const key = buildEnvelopeThumbnailKey({ envelopeId: envelope.id, userId });
+  const key = buildEnvelopeThumbnailKey({
+    envelopeId: envelope.id,
+    sourcePdfKey: envelope.sourcePdfKey,
+    userId,
+  });
 
   await storageService.putObject({
     body,
@@ -1399,7 +1403,11 @@ export async function getEnvelopeThumbnailForUser(
 
   try {
     return await storageService.getObjectStream(
-      buildEnvelopeThumbnailKey({ envelopeId: envelope.id, userId }),
+      buildEnvelopeThumbnailKey({
+        envelopeId: envelope.id,
+        sourcePdfKey: envelope.sourcePdfKey,
+        userId,
+      }),
     );
   } catch (error) {
     if (error instanceof StorageObjectNotFoundError) {
@@ -2394,7 +2402,13 @@ export async function deleteDraftEnvelope(
     );
   });
   await storageService
-    .deleteObject(buildEnvelopeThumbnailKey({ envelopeId, userId }))
+    .deleteObject(
+      buildEnvelopeThumbnailKey({
+        envelopeId,
+        sourcePdfKey: envelope.sourcePdfKey,
+        userId,
+      }),
+    )
     .catch((error) => {
       console.error(
         `Failed to delete the thumbnail for draft envelope ${envelopeId}:`,

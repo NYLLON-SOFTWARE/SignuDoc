@@ -60,11 +60,27 @@ export function buildEnvelopeOriginalPdfKey(
  * The picture of the first page shown on the dashboard. It sits beside the
  * original so that whatever removes an envelope's files can find it without
  * a database column: it may or may not exist.
+ *
+ * The folder comes from where the original is stored, not from who owns the
+ * envelope now. An envelope handed to another account keeps its files where
+ * they were, and its picture has to be found, and removed, there too. An
+ * original that is not in a folder named after its envelope shares that
+ * folder with other files, so its picture goes under the owner instead.
  */
 export function buildEnvelopeThumbnailKey(
-  input: EnvelopeStorageIdentity,
+  input: EnvelopeStorageIdentity & {
+    sourcePdfKey: string;
+  },
 ): string {
-  return path.posix.join(buildEnvelopePrefix(input), "thumbnail.jpg");
+  const sourceFolder = path.posix.dirname(
+    input.sourcePdfKey.trim().replaceAll("\\", "/"),
+  );
+  const folder =
+    path.posix.basename(sourceFolder) === input.envelopeId
+      ? sourceFolder
+      : buildEnvelopePrefix(input);
+
+  return path.posix.join(folder, "thumbnail.jpg");
 }
 
 export function buildEnvelopeSignedPdfKey(
