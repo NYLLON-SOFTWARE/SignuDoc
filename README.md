@@ -60,13 +60,14 @@ For production deployments:
 - `APP_URL` and `BETTER_AUTH_URL` must be absolute HTTPS URLs.
 - `APP_URL` and `BETTER_AUTH_URL` must not point at localhost.
 - `BETTER_AUTH_SECRET` must be a strong secret. The app enforces a minimum length of 32 characters in production.
-- Leave `EMAIL_DRIVER` and `STORAGE_DRIVER` unset, or set them to `resend` and `r2`. The local drivers are for development only.
+- Leave `EMAIL_DRIVER` unset, or set it to `resend`. The capture driver is for development only.
+- Leave `STORAGE_DRIVER` unset. On Vercel, files go to the Blob store connected to the project. Anywhere else they are kept on the machine's disk, so that disk must persist between restarts.
 
 At a minimum, you should review these groups:
 
 - **App/Auth**: `APP_URL`, `BETTER_AUTH_SECRET`, `BETTER_AUTH_URL`
 - **Database**: `DATABASE_URL`
-- **Storage**: `STORAGE_DRIVER`, `R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `R2_BUCKET_NAME`
+- **Storage**: nothing to set on Vercel once a Blob store is connected; `STORAGE_DRIVER` and `STORAGE_LOCAL_DIR` elsewhere
 - **Email**: `EMAIL_DRIVER`, `RESEND_API_KEY`, `RESEND_FROM_EMAIL`, `SUPPORT_EMAIL`
 - **Internal jobs**: `RETENTION_JOB_SECRET`
 
@@ -98,9 +99,20 @@ Open [http://localhost:3000](http://localhost:3000).
 
 ### Storage
 
-Documents, signed PDFs, audit certificates, and drawn signature images are stored in Cloudflare R2 using its S3-compatible API.
+Documents, signed PDFs, audit certificates, and drawn signature images are stored in one of two places:
 
-For local development, `STORAGE_DRIVER=local` keeps the same files on disk under `.data/storage`.
+- **Vercel Blob**, in a private store. This is used whenever a Blob store is connected to the project (Vercel sets `BLOB_READ_WRITE_TOKEN`, or `BLOB_STORE_ID` for a store that signs in with the project's OIDC token), and always on Vercel. Nothing in the store has a public URL; every download goes through the app, which checks who is asking first.
+- **Local disk**, under `.data/storage` (change it with `STORAGE_LOCAL_DIR`). This is the default everywhere else, including local development.
+
+`STORAGE_DRIVER=blob` or `STORAGE_DRIVER=local` overrides the choice.
+
+On Vercel Blob, the upload page sends the PDF straight from the browser to the store with a short-lived signed URL, because a request to a Vercel Function cannot be larger than 4.5 MB. The upload lands in a pending folder, the app reads it back and validates it like any other upload, stores its own copy, and deletes the pending one. A pending upload that is never picked up is deleted by Blob after a day.
+
+To run the end-to-end test against a real Blob store instead of local disk:
+
+```bash
+E2E_STORAGE_DRIVER=blob BLOB_READ_WRITE_TOKEN=... npm run test:e2e
+```
 
 ### Database
 
