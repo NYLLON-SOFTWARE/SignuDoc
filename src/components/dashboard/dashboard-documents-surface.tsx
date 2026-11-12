@@ -273,8 +273,15 @@ function EnvelopeCard({
 
       <span className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1.5 px-1 pb-0.5">
         <span
-          aria-label={`Status: ${statusLabelMap[envelope.status]}`}
-          className={cn("pill", statusPillClasses[envelope.status])}
+          aria-label={`Status: ${
+            envelope.expired ? "Expired" : statusLabelMap[envelope.status]
+          }`}
+          className={cn(
+            "pill",
+            envelope.expired
+              ? "pill-danger"
+              : statusPillClasses[envelope.status],
+          )}
         >
           {envelope.statusLabel}
         </span>

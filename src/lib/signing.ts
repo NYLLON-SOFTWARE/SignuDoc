@@ -75,6 +75,7 @@ import { requireConfigValue } from "./services/service-config.ts";
 import { RECIPIENT_DOWNLOAD_LINK_TTL_SECONDS } from "./types/domain.ts";
 import { getEnv } from "./utils/env.ts";
 import { escapeHtml } from "./utils/html.ts";
+import { isEnvelopeExpired } from "./envelope-deadline.ts";
 import {
   buildElectronicRecordsDisclosure,
   CONSENT_STATEMENT,
@@ -113,6 +114,7 @@ type SigningEnvelopeRow = {
   createdAt: number;
   declinedAt: number | null;
   evidenceKey: string | null;
+  expiresAt: number | null;
   id: string;
   pageCount: number;
   sentAt: number | null;
@@ -477,6 +479,7 @@ async function getEnvelopeRow(
           completed_at AS "completedAt",
           declined_at AS "declinedAt",
           voided_at AS "voidedAt",
+          expires_at AS "expiresAt",
           created_at AS "createdAt",
           updated_at AS "updatedAt"
         FROM envelopes
@@ -1417,7 +1420,9 @@ async function resolveSigningContext(
     signer.status !== "notified" ||
     signer.envelopeId !== envelopeRow.id ||
     signer.signingTokenHash !== signerRow.signingTokenHash ||
-    (signingTokenExpiresAt !== null && signingTokenExpiresAt < now)
+    (signingTokenExpiresAt !== null && signingTokenExpiresAt < now) ||
+    // The envelope's own deadline, whatever the link says.
+    isEnvelopeExpired(envelopeRow, now)
   ) {
     throw new SigningAccessError("expired");
   }
@@ -1765,6 +1770,12 @@ export async function submitSigningForToken(
       }
 
       nextSignerLink = await issueSigningLink({
+        // Until the envelope's deadline. The signer who just finished was
+        // inside it a moment ago, so a minute is kept in hand.
+        expiresInSeconds:
+          typeof context.envelope.expiresAt === "number"
+            ? Math.max(60, context.envelope.expiresAt - submittedAt)
+            : undefined,
         issuedAt: submittedAt,
       });
     }
@@ -1928,6 +1939,7 @@ export async function submitSigningForToken(
           buildSigningInvitationEmail({
             branding: await getBranding(),
             envelopeTitle: context.envelope.title,
+            expiresAt: context.envelope.expiresAt,
             senderName: normalizeSenderName(context.sender),
             signerEmail: nextSigner.email,
             signerName: nextSigner.name,

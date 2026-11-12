@@ -108,7 +108,7 @@ const securityPillars: readonly SecurityPillar[] = [
   },
   {
     title: "Secure signing links",
-    body: "Each signer gets a unique cryptographic token. Links expire after 7 days and can't be guessed or reused.",
+    body: "Each signer gets a unique cryptographic token. Links expire at the deadline the sender sets and can't be guessed or reused.",
     icon: Link2,
   },
   {

@@ -4,6 +4,11 @@ export const SIGNING_LINK_TTL_SECONDS = 7 * 24 * 60 * 60;
 export const RECIPIENT_DOWNLOAD_LINK_TTL_SECONDS = 7 * 24 * 60 * 60;
 export const MANUAL_NUDGE_COOLDOWN_SECONDS = 24 * 60 * 60;
 
+/** How long signers get, in days: what the send step offers, and its limits. */
+export const ENVELOPE_DEADLINE_DAY_OPTIONS = [3, 7, 14, 30, 60, 90] as const;
+export const DEFAULT_ENVELOPE_DEADLINE_DAYS = 30;
+export const MAX_ENVELOPE_DEADLINE_DAYS = 365;
+
 export const envelopeStatuses = [
   "draft",
   "sent",
@@ -42,6 +47,8 @@ export const auditEventTypes = [
   "email_sent",
   "completed",
   "voided",
+  "deadline_changed",
+  "expired",
 ] as const;
 
 export const auditActorTypes = ["sender", "signer", "system"] as const;
@@ -62,6 +69,7 @@ export const emailTemplateKinds = [
   "void_notification",
   "password_reset",
   "retention_notice",
+  "expiry_notice",
   "test_email",
 ] as const;
 

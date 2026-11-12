@@ -3,14 +3,15 @@ import { NextResponse } from "next/server";
 import {
   identifyRetentionCaller,
   isCronLockedOutByOlderSecret,
-  retentionSweepFailed,
+  retentionJobFailed,
   runRetentionJob,
 } from "@/lib/retention-job";
 import { logRouteError } from "@/lib/security/logging";
 import { getClientIpAddress, getRequestPathname } from "@/lib/security/request";
 
-// The daily cleanup. Vercel's cron job calls this with GET (see
-// vercel.json); a scheduler elsewhere can use POST as before.
+// The daily job: the cleanup, then expiry notices for envelopes whose
+// deadline passed. Vercel's cron job calls this with GET (see vercel.json);
+// a scheduler elsewhere can use POST as before.
 //
 // With a job secret configured, only a caller that presents it gets in, and
 // it gets the summary back. With none, anyone may call and gets an empty
@@ -32,12 +33,13 @@ async function handle(request: Request) {
 
   try {
     const outcome = await runRetentionJob({ caller });
-    const failed =
-      outcome.status === "ran" && retentionSweepFailed(outcome.summary);
+    const failed = outcome.status === "ran" && retentionJobFailed(outcome);
 
     if (caller === "authorized") {
       return NextResponse.json(
-        outcome.status === "ran" ? outcome.summary : outcome,
+        outcome.status === "ran"
+          ? { ...outcome.summary, schedule: outcome.schedule }
+          : outcome,
         { status: failed ? 500 : 200 },
       );
     }

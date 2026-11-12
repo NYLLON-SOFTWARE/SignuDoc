@@ -25,6 +25,10 @@ import type {
   EnvelopeDetailData,
   EnvelopeDetailTimelineItem,
 } from "@/lib/envelopes";
+import {
+  DEFAULT_ENVELOPE_DEADLINE_DAYS,
+  ENVELOPE_DEADLINE_DAY_OPTIONS,
+} from "@/lib/types/domain";
 import { getSignerPalette } from "./signer-palette";
 
 type EnvelopeDetailShellProps = {
@@ -60,7 +64,7 @@ type EnvelopeDetailRecord = {
   title: string;
 };
 
-type ModalState = "delete-draft" | "void-envelope" | null;
+type ModalState = "change-deadline" | "delete-draft" | "void-envelope" | null;
 
 const statusPillClasses: Record<EnvelopeStatus, string> = {
   completed: "pill-success",
@@ -113,6 +117,7 @@ export function EnvelopeDetailShell({
 }: EnvelopeDetailShellProps) {
   const [activeModal, setActiveModal] = useState<ModalState>(null);
   const [actionError, setActionError] = useState<string | null>(null);
+  const [isChangingDeadline, setIsChangingDeadline] = useState(false);
   const [isDeletingDraft, setIsDeletingDraft] = useState(false);
   const [isSendingReminder, setIsSendingReminder] = useState(false);
   const [isVoidingEnvelope, setIsVoidingEnvelope] = useState(false);
@@ -170,6 +175,8 @@ export function EnvelopeDetailShell({
     timeline: record.timeline,
     title: record.title,
   };
+  const deadline = activeRecord.status === "sent" ? record.deadline : null;
+  const isExpired = Boolean(deadline?.expired);
   const manualReminderState = record.manualReminder ?? null;
   const reminderLimited =
     activeRecord.status === "sent" &&
@@ -179,6 +186,13 @@ export function EnvelopeDetailShell({
     activeRecord.status === "sent" && manualReminderState?.nextAvailableAtLabel
       ? `You can send another reminder after ${manualReminderState.nextAvailableAtLabel}.`
       : null;
+  const deadlineText = !deadline
+    ? null
+    : isExpired
+      ? `Expired ${deadline.expiresAtLabel}. Nobody can sign until you set a new deadline.`
+      : deadline.expiresAtLabel
+        ? `Expires ${deadline.expiresAtLabel}.`
+        : "No deadline. Each signing link lasts seven days.";
   const activeSigner =
     activeRecord.status === "sent"
       ? activeRecord.signers.find((signer) => signer.status === "waiting")
@@ -221,6 +235,33 @@ export function EnvelopeDetailShell({
       setActionError(payload?.error ?? "Unable to send a reminder right now.");
     } finally {
       setIsSendingReminder(false);
+    }
+  }
+
+  async function handleConfirmChangeDeadline(expiresInDays: number) {
+    setActionError(null);
+    setIsChangingDeadline(true);
+
+    try {
+      const response = await fetch(`/api/envelopes/${envelopeId}/deadline`, {
+        body: JSON.stringify({ expiresInDays }),
+        headers: { "content-type": "application/json" },
+        method: "POST",
+      });
+      const payload = (await response.json().catch(() => null)) as {
+        error?: string;
+      } | null;
+
+      if (response.ok || response.status === 404 || response.status === 409) {
+        window.location.reload();
+        return;
+      }
+
+      setActionError(payload?.error ?? "Unable to change the deadline.");
+    } catch {
+      setActionError("Unable to change the deadline.");
+    } finally {
+      setIsChangingDeadline(false);
     }
   }
 
@@ -310,9 +351,13 @@ export function EnvelopeDetailShell({
               </h1>
               <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
                 <span
-                  className={`pill ${statusPillClasses[activeRecord.status]}`}
+                  className={`pill ${
+                    isExpired
+                      ? "pill-danger"
+                      : statusPillClasses[activeRecord.status]
+                  }`}
                 >
-                  {statusLabelMap[activeRecord.status]}
+                  {isExpired ? "Expired" : statusLabelMap[activeRecord.status]}
                 </span>
                 <p className="text-sm text-(--secondary)">
                   Created {activeRecord.createdAtLabel}
@@ -389,6 +434,32 @@ export function EnvelopeDetailShell({
           <p className="mt-4 text-sm leading-6 text-(--secondary) lg:text-right">
             {reminderHelperText}
           </p>
+        ) : null}
+
+        {deadlineText ? (
+          <div
+            className={`mt-5 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between ${
+              isExpired ? "notice notice-danger" : "well px-5 py-3.5"
+            }`}
+          >
+            <p
+              className={
+                isExpired ? undefined : "text-sm leading-6 text-(--secondary)"
+              }
+            >
+              {deadlineText}
+            </p>
+            <button
+              className="btn-quiet shrink-0"
+              onClick={() => {
+                setActionError(null);
+                setActiveModal("change-deadline");
+              }}
+              type="button"
+            >
+              {isExpired ? "Set a new deadline" : "Change deadline"}
+            </button>
+          </div>
         ) : null}
 
         {actionError ? (
@@ -507,6 +578,16 @@ export function EnvelopeDetailShell({
         </article>
       </section>
 
+      {activeModal === "change-deadline" ? (
+        <DeadlineDialog
+          errorMessage={actionError}
+          expired={isExpired}
+          onCancel={() => setActiveModal(null)}
+          onConfirm={handleConfirmChangeDeadline}
+          processing={isChangingDeadline}
+        />
+      ) : null}
+
       {activeModal === "delete-draft" ? (
         <ConfirmationDialog
           confirmLabel="Delete draft"
@@ -538,6 +619,93 @@ export function EnvelopeDetailShell({
         />
       ) : null}
     </div>
+  );
+}
+
+type DeadlineDialogProps = {
+  errorMessage?: string | null;
+  expired: boolean;
+  onCancel: () => void;
+  onConfirm: (expiresInDays: number) => void | Promise<void>;
+  processing?: boolean;
+};
+
+function DeadlineDialog({
+  errorMessage,
+  expired,
+  onCancel,
+  onConfirm,
+  processing = false,
+}: DeadlineDialogProps) {
+  const [days, setDays] = useState<number>(DEFAULT_ENVELOPE_DEADLINE_DAYS);
+
+  return (
+    <Dialog
+      open
+      onOpenChange={(open) => {
+        if (!open && !processing) {
+          onCancel();
+        }
+      }}
+    >
+      <DialogContent className="max-w-md sm:p-8" showCloseButton={false}>
+        <div className="space-y-4">
+          <DialogHeader className="space-y-3">
+            <DialogTitle>
+              {expired ? "Set a new deadline" : "Change the deadline"}
+            </DialogTitle>
+            <DialogDescription asChild>
+              <div className="space-y-2 text-sm leading-6 text-(--secondary)">
+                <p>
+                  The new deadline counts from now.{" "}
+                  {expired
+                    ? "The signing link that was already sent will work again."
+                    : "The signing link that was already sent keeps working until then."}
+                </p>
+              </div>
+            </DialogDescription>
+          </DialogHeader>
+
+          <label className="grid gap-1.5">
+            <span className="text-[0.8125rem] font-semibold text-(--secondary)">
+              Signing deadline
+            </span>
+            <select
+              autoFocus
+              className="field-input"
+              disabled={processing}
+              onChange={(event) => setDays(Number(event.target.value))}
+              value={days}
+            >
+              {ENVELOPE_DEADLINE_DAY_OPTIONS.map((option) => (
+                <option key={option} value={option}>
+                  {option} days from now
+                </option>
+              ))}
+            </select>
+          </label>
+
+          {errorMessage ? (
+            <div className="notice notice-danger" role="alert">
+              <p>{errorMessage}</p>
+            </div>
+          ) : null}
+
+          <div className="flex flex-col-reverse gap-3 pt-2 sm:flex-row sm:justify-end">
+            <ShellButton
+              disabled={processing}
+              onClick={onCancel}
+              variant="secondary"
+            >
+              Cancel
+            </ShellButton>
+            <ShellButton loading={processing} onClick={() => onConfirm(days)}>
+              {processing ? "Saving..." : "Save deadline"}
+            </ShellButton>
+          </div>
+        </div>
+      </DialogContent>
+    </Dialog>
   );
 }
 

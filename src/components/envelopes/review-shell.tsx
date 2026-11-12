@@ -17,6 +17,10 @@ import {
 } from "@/components/ui/dialog";
 import type { ReviewEnvelopeData } from "@/lib/envelopes";
 import { PERMITTED_USE_PATH } from "@/lib/permitted-uses";
+import {
+  DEFAULT_ENVELOPE_DEADLINE_DAYS,
+  ENVELOPE_DEADLINE_DAY_OPTIONS,
+} from "@/lib/types/domain";
 import { getSignerPalette } from "./signer-palette";
 
 const envelopeSteps = ["Upload", "Signers", "Place fields", "Review"];
@@ -61,6 +65,9 @@ export function ReviewShell({
   initialState,
   record,
 }: ReviewShellProps) {
+  const [deadlineDays, setDeadlineDays] = useState<number>(
+    DEFAULT_ENVELOPE_DEADLINE_DAYS,
+  );
   const [isConfirmationOpen, setIsConfirmationOpen] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
   const [sendPhase, setSendPhase] = useState<SendPhase>("idle");
@@ -107,6 +114,7 @@ export function ReviewShell({
     try {
       const response = await fetch(`/api/envelopes/${envelopeId}/send`, {
         body: JSON.stringify({
+          expiresInDays: deadlineDays,
           permittedUseConfirmed: true,
         }),
         headers: {
@@ -320,6 +328,32 @@ export function ReviewShell({
               sign. Each signer is notified in order after the previous signer
               completes.
             </p>
+
+            <div className="well mt-4 p-4">
+              <label className="grid gap-1.5 sm:max-w-xs">
+                <span className="text-[0.8125rem] font-semibold text-(--secondary)">
+                  Signing deadline
+                </span>
+                <select
+                  className="field-input"
+                  disabled={sendPhase === "sending" || Boolean(notice)}
+                  onChange={(event) =>
+                    setDeadlineDays(Number(event.target.value))
+                  }
+                  value={deadlineDays}
+                >
+                  {ENVELOPE_DEADLINE_DAY_OPTIONS.map((days) => (
+                    <option key={days} value={days}>
+                      {days} days
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <p className="mt-2 text-sm leading-6 text-(--secondary)">
+                Signing links stop working after this. You can change the
+                deadline later from the envelope.
+              </p>
+            </div>
           </article>
         </div>
 
@@ -344,6 +378,7 @@ export function ReviewShell({
 
       {isConfirmationOpen ? (
         <SendConfirmationDialog
+          deadlineDays={deadlineDays}
           errorMessage={sendPhase === "error" ? sendError : null}
           firstSignerName={firstSigner?.name ?? "Signer 1"}
           isSending={sendPhase === "sending"}
@@ -358,6 +393,7 @@ export function ReviewShell({
 }
 
 type SendConfirmationDialogProps = {
+  deadlineDays: number;
   errorMessage: string | null;
   firstSignerName: string;
   isSending: boolean;
@@ -368,6 +404,7 @@ type SendConfirmationDialogProps = {
 };
 
 function SendConfirmationDialog({
+  deadlineDays,
   errorMessage,
   firstSignerName,
   isSending,
@@ -398,7 +435,8 @@ function SendConfirmationDialog({
                   {signerCount === 1 ? "signer" : "signers"}.{" "}
                   {signerCount === 1
                     ? `${firstSignerName} will be notified immediately.`
-                    : `The first signer (${firstSignerName}) will be notified immediately.`}
+                    : `The first signer (${firstSignerName}) will be notified immediately.`}{" "}
+                  The request expires in {deadlineDays} days.
                 </p>
               </div>
             </DialogDescription>

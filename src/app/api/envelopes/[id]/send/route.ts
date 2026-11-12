@@ -3,6 +3,7 @@ import { NextResponse } from "next/server";
 import { requireVerifiedSenderSession } from "@/lib/auth/route-session";
 import { getDb } from "@/lib/db/connection";
 import { EnvelopeMutationError, sendDraftEnvelope } from "@/lib/envelopes";
+import { sendEnvelopeOptionsSchema } from "@/lib/schemas/envelope";
 import { logRouteError } from "@/lib/security/logging";
 import {
   applyRateLimit,
@@ -21,6 +22,7 @@ type EnvelopeSendRouteContext = {
 };
 
 type SendEnvelopeRequest = {
+  expiresInDays?: unknown;
   permittedUseConfirmed?: boolean;
 };
 
@@ -65,11 +67,23 @@ export async function POST(
     );
   }
 
+  const options = sendEnvelopeOptionsSchema.safeParse({
+    expiresInDays: body.expiresInDays ?? undefined,
+  });
+
+  if (!options.success) {
+    return NextResponse.json(
+      { error: "Choose a deadline between 1 and 365 days from now." },
+      { status: 400 },
+    );
+  }
+
   try {
     const result = await sendDraftEnvelope(
       session.user.id,
       id,
       {
+        expiresInDays: options.data.expiresInDays,
         ipAddress,
         senderEmail: session.user.email,
         senderName:

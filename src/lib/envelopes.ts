@@ -10,8 +10,15 @@ import {
   withTransaction,
 } from "./db/connection.ts";
 import {
+  deadlineFromDays,
+  formatDeadline,
+  isEnvelopeExpired,
+} from "./envelope-deadline.ts";
+import {
+  changeDeadlineResponseSchema,
   envelopeListFiltersSchema,
   type AuditEventRecord,
+  type ChangeDeadlineResponse,
   envelopeCreateResponseSchema,
   envelopePageSchema,
   envelopeRecordSchema,
@@ -93,6 +100,8 @@ type CreateDraftEnvelopeInput = {
 };
 
 type SendDraftEnvelopeInput = {
+  /** How many days signers get. The default applies when left out. */
+  expiresInDays?: number;
   ipAddress?: string | null;
   senderEmail: string;
   senderName: string;
@@ -119,6 +128,7 @@ type EnvelopeRow = {
   createdAt: number;
   declinedAt: number | null;
   evidenceKey: string | null;
+  expiresAt: number | null;
   id: string;
   pageCount: number;
   sentAt: number | null;
@@ -215,6 +225,8 @@ type PersistedFieldRecord = FieldRecord & {
 export type DashboardEnvelopeListItem = {
   contextLine: string;
   createdAtLabel: string;
+  /** Out for signature and past its deadline. */
+  expired?: boolean;
   id: string;
   searchableEmails: readonly string[];
   status: EnvelopeRecord["status"];
@@ -296,8 +308,17 @@ export type EnvelopeDetailManualReminderState = {
   nextAvailableAtLabel: string | null;
 };
 
+export type EnvelopeDetailDeadline = {
+  /** True once the deadline has passed and nobody can sign any more. */
+  expired: boolean;
+  /** Null for an envelope sent before deadlines existed. */
+  expiresAtLabel: string | null;
+};
+
 export type EnvelopeDetailData = {
   createdAtLabel: string;
+  /** Set while the envelope is out for signature. */
+  deadline: EnvelopeDetailDeadline | null;
   envelopeId: string;
   manualReminder: EnvelopeDetailManualReminderState | null;
   signers: readonly EnvelopeDetailSignerView[];
@@ -369,8 +390,10 @@ const TIMELINE_TONE_MAP: Record<
   completed: "success",
   consented: "neutral",
   created: "accent",
+  deadline_changed: "neutral",
   declined: "danger",
   email_sent: "neutral",
+  expired: "danger",
   reminded_manual: "neutral",
   sent: "neutral",
   signed: "success",
@@ -656,6 +679,7 @@ async function getEnvelopeByIdForUser(
         completed_at AS "completedAt",
         declined_at AS "declinedAt",
         voided_at AS "voidedAt",
+        expires_at AS "expiresAt",
         created_at AS "createdAt",
         updated_at AS "updatedAt"
       FROM envelopes
@@ -855,6 +879,10 @@ function buildDashboardContextLine(
       signers.find((signer) => signer.status === "notified") ??
       signers.find((signer) => signer.status === "pending");
 
+    if (isEnvelopeExpired(envelope, Math.floor(Date.now() / 1000))) {
+      return `Expired ${formatShortDate(envelope.expiresAt!)} · was waiting on: ${currentSigner?.email ?? "—"}`;
+    }
+
     return `Waiting on: ${currentSigner?.email ?? "—"}`;
   }
 
@@ -884,6 +912,10 @@ function buildDashboardStatusLabel(
   envelope: EnvelopeRecord,
   signers: readonly PersistedSignerRecord[],
 ): string {
+  if (isEnvelopeExpired(envelope, Math.floor(Date.now() / 1000))) {
+    return "Expired";
+  }
+
   // With one signer "Sent" says it all. With several, say how many are done.
   if (envelope.status === "sent" && signers.length > 1) {
     const signedCount = signers.filter(
@@ -1006,6 +1038,12 @@ function buildTimelineDescription(event: AuditEventRecord): string {
       return "Final signed PDF and certificate generated";
     case "voided":
       return "Envelope voided by sender";
+    case "deadline_changed":
+      return typeof event.metadata?.expiresAt === "number"
+        ? `Deadline set to ${formatDeadline(event.metadata.expiresAt)}`
+        : "Deadline changed";
+    case "expired":
+      return "Deadline passed before everyone signed";
     default:
       return event.event;
   }
@@ -1134,6 +1172,7 @@ export async function listEnvelopesForUser(
         completed_at AS "completedAt",
         declined_at AS "declinedAt",
         voided_at AS "voidedAt",
+        expires_at AS "expiresAt",
         created_at AS "createdAt",
         updated_at AS "updatedAt"
       FROM envelopes
@@ -1158,6 +1197,7 @@ export async function listEnvelopesForUser(
     return {
       contextLine: buildDashboardContextLine(envelope, signers, fields),
       createdAtLabel: formatShortDate(envelope.createdAt),
+      expired: isEnvelopeExpired(envelope, Math.floor(Date.now() / 1000)),
       id: envelope.id,
       searchableEmails: signers.map((signer) => signer.email),
       status: envelope.status,
@@ -1229,8 +1269,13 @@ export async function getEnvelopeDetailDataForUser(
   const currentSigner = signers.find((signer) => signer.status === "notified");
   let manualReminder: EnvelopeDetailManualReminderState | null = null;
 
-  if (envelope.status === "sent" && currentSigner) {
-    const nowUnixTimestamp = Math.floor(Date.now() / 1000);
+  const nowUnixTimestamp = Math.floor(Date.now() / 1000);
+  const expired = isEnvelopeExpired(envelope, nowUnixTimestamp);
+
+  if (envelope.status === "sent" && currentSigner && expired) {
+    // A reminder would carry a link that no longer works.
+    manualReminder = { canSend: false, nextAvailableAtLabel: null };
+  } else if (envelope.status === "sent" && currentSigner) {
     const nextAvailableAt =
       typeof currentSigner.lastNudgedAt === "number"
         ? getManualNudgeAvailableAt(currentSigner.lastNudgedAt)
@@ -1251,6 +1296,16 @@ export async function getEnvelopeDetailDataForUser(
 
   return {
     createdAtLabel: formatLongDate(envelope.createdAt),
+    deadline:
+      envelope.status === "sent"
+        ? {
+            expired,
+            expiresAtLabel:
+              typeof envelope.expiresAt === "number"
+                ? formatDeadline(envelope.expiresAt)
+                : null,
+          }
+        : null,
     envelopeId,
     manualReminder,
     signers: signerViews,
@@ -1583,7 +1638,9 @@ export async function sendDraftEnvelope(
 
   const sentAt = Math.floor(Date.now() / 1000);
   const sentAuditAt = Math.max(sentAt, envelope.createdAt + 1);
+  const expiresAt = deadlineFromDays(sentAt, input.expiresInDays);
   const issuedLink = await issueSigningLink({
+    expiresInSeconds: expiresAt - sentAt,
     issuedAt: sentAt,
   });
 
@@ -1595,12 +1652,14 @@ export async function sendDraftEnvelope(
           SET
             status = 'sent',
             sent_at = $1,
-            updated_at = $2
+            updated_at = $2,
+            expires_at = $5,
+            expiry_notified_at = NULL
           WHERE id = $3
             AND user_id = $4
             AND status = 'draft'
         `,
-        [sentAt, sentAt, envelopeId, userId],
+        [sentAt, sentAt, envelopeId, userId, expiresAt],
       );
 
       if (updatedEnvelope.rowCount !== 1) {
@@ -1670,6 +1729,7 @@ export async function sendDraftEnvelope(
           ipAddress: input.ipAddress ?? null,
           metadata: {
             // The send route refuses a send without this confirmation.
+            expiresAt,
             permittedUseConfirmed: true,
             permittedUseVersion: PERMITTED_USE_VERSION,
             signerEmail: firstSigner.email,
@@ -1693,6 +1753,7 @@ export async function sendDraftEnvelope(
         buildSigningInvitationEmail({
           branding: await getBranding(),
           envelopeTitle: envelope.title,
+          expiresAt,
           senderName: input.senderName,
           signerEmail: firstSigner.email,
           signerName: firstSigner.name,
@@ -1708,6 +1769,7 @@ export async function sendDraftEnvelope(
           SET
             status = 'draft',
             sent_at = NULL,
+            expires_at = NULL,
             updated_at = $1
           WHERE id = $2
             AND user_id = $3
@@ -1775,9 +1837,99 @@ export async function sendDraftEnvelope(
 
   return sendEnvelopeResponseSchema.parse({
     envelopeId,
+    expiresAt,
     notifiedSignerName: firstSigner.name,
     redirectPath: `/envelopes/${envelopeId}`,
     sentAt,
+  });
+}
+
+type ChangeEnvelopeDeadlineInput = {
+  expiresInDays: number;
+  ipAddress?: string | null;
+  senderEmail: string;
+  userAgent?: string | null;
+};
+
+/**
+ * Gives an envelope that is out for signature a new deadline, counted from
+ * now. The current signer's link is kept and simply lives until the new
+ * deadline, so a link that had expired works again.
+ */
+export async function changeEnvelopeDeadline(
+  userId: string,
+  envelopeId: string,
+  input: ChangeEnvelopeDeadlineInput,
+  {
+    database = getDb(),
+    nowUnixTimestamp = Math.floor(Date.now() / 1000),
+  }: { database?: DbPool; nowUnixTimestamp?: number } = {},
+): Promise<ChangeDeadlineResponse> {
+  const expiresAt = deadlineFromDays(nowUnixTimestamp, input.expiresInDays);
+
+  await withTransaction(async (tx) => {
+    const current = await queryOne<{
+      expiresAt: number | null;
+      status: EnvelopeRecord["status"];
+    }>(
+      tx,
+      `
+        SELECT expires_at AS "expiresAt", status
+        FROM envelopes
+        WHERE id = $1 AND user_id = $2
+        FOR UPDATE
+      `,
+      [envelopeId, userId],
+    );
+
+    if (!current) {
+      throw new EnvelopeMutationError("Envelope not found.", 404);
+    }
+
+    if (current.status !== "sent") {
+      throw new EnvelopeMutationError(
+        "Only an envelope that is out for signature has a deadline to change.",
+        409,
+      );
+    }
+
+    await tx.query(
+      `
+        UPDATE envelopes
+        SET expires_at = $1, expiry_notified_at = NULL, updated_at = $2
+        WHERE id = $3
+      `,
+      [expiresAt, nowUnixTimestamp, envelopeId],
+    );
+    await tx.query(
+      `
+        UPDATE signers
+        SET signing_token_expires_at = $1, updated_at = $2
+        WHERE envelope_id = $3
+          AND status = 'notified'
+          AND signing_token_hash IS NOT NULL
+      `,
+      [expiresAt, nowUnixTimestamp, envelopeId],
+    );
+    await recordAuditEvent(
+      {
+        actorEmail: input.senderEmail,
+        actorType: "sender",
+        createdAt: nowUnixTimestamp,
+        envelopeId,
+        event: "deadline_changed",
+        ipAddress: input.ipAddress ?? null,
+        metadata: { expiresAt, previousExpiresAt: current.expiresAt },
+        userAgent: input.userAgent ?? null,
+      },
+      tx,
+    );
+  }, database);
+
+  return changeDeadlineResponseSchema.parse({
+    envelopeId,
+    expiresAt,
+    expiresAtLabel: formatDeadline(expiresAt),
   });
 }
 

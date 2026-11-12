@@ -1,4 +1,5 @@
 import { type Branding } from "../branding.ts";
+import { formatDeadline } from "../envelope-deadline.ts";
 import { escapeHtml } from "../utils/html.ts";
 import { withUserEmailLegalFooter } from "./email-legal-footer.ts";
 import { type TransactionalEmailMessage } from "./email.ts";
@@ -6,17 +7,29 @@ import { type TransactionalEmailMessage } from "./email.ts";
 type SigningInvitationEmailInput = {
   branding: Branding;
   envelopeTitle: string;
+  /** The envelope's deadline, when it has one. */
+  expiresAt?: number | null;
   senderName: string;
   signerEmail: string;
   signerName: string;
   signingUrl: string;
 };
 
+/** "This request expires on …", or nothing for an envelope with no deadline. */
+export function buildDeadlineLine(
+  expiresAt: number | null | undefined,
+): string | null {
+  return typeof expiresAt === "number"
+    ? `This request expires on ${formatDeadline(expiresAt)}.`
+    : null;
+}
+
 export function buildSigningInvitationEmail(
   input: SigningInvitationEmailInput,
 ): TransactionalEmailMessage {
   const { productName } = input.branding;
   const subject = `${input.senderName} requested your signature on "${input.envelopeTitle}"`;
+  const deadlineLine = buildDeadlineLine(input.expiresAt);
   const textBody = [
     `Hi ${input.signerName},`,
     "",
@@ -24,6 +37,7 @@ export function buildSigningInvitationEmail(
     "",
     "Review and sign the document here:",
     input.signingUrl,
+    ...(deadlineLine ? ["", deadlineLine] : []),
     "",
     `You do not need a ${productName} account to sign.`,
     "If you receive a newer invitation or reminder link, use the newest one.",
@@ -32,6 +46,7 @@ export function buildSigningInvitationEmail(
     `<p>Hi ${escapeHtml(input.signerName)},</p>`,
     `<p>${escapeHtml(input.senderName)} sent you &ldquo;${escapeHtml(input.envelopeTitle)}&rdquo; through ${escapeHtml(productName)}.</p>`,
     `<p><a href="${escapeHtml(input.signingUrl)}">Review and sign the document</a></p>`,
+    deadlineLine ? `<p>${escapeHtml(deadlineLine)}</p>` : "",
     `<p>You do not need a ${escapeHtml(productName)} account to sign.</p>`,
     "<p>If you receive a newer invitation or reminder link, use the newest one.</p>",
   ].join("");
