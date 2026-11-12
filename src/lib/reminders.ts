@@ -135,6 +135,12 @@ export class ReminderMutationError extends Error {
  * The envelope, and only for its owner when a user is given. With a lock,
  * inside a transaction, the envelope's row is held until the transaction
  * ends, so its deadline cannot be moved in between.
+ *
+ * The lock is the one an UPDATE takes (NO KEY UPDATE), not the stronger
+ * FOR UPDATE. Storing an audit event checks its foreign key, which needs a
+ * share of this row while it holds the envelope's audit chain. FOR UPDATE
+ * would refuse that share, and a reminder waiting for the chain would then
+ * deadlock with a signer opening the signing page.
  */
 async function getReminderEnvelope(
   envelopeId: string,
@@ -159,7 +165,7 @@ async function getReminderEnvelope(
       JOIN "user" u ON u.id = e.user_id
       WHERE e.id = $1
         AND ($2::text IS NULL OR e.user_id = $2)
-      ${lock ? "FOR UPDATE OF e" : ""}
+      ${lock ? "FOR NO KEY UPDATE OF e" : ""}
     `,
     [envelopeId, userId],
   );

@@ -4,7 +4,10 @@ import { after, before, test } from "node:test";
 
 import type pg from "pg";
 
-import { openTestDatabase } from "./db/test-database.ts";
+import {
+  openTestDatabase,
+  recordAuditEventWhileWaitedOn,
+} from "./db/test-database.ts";
 import { formatDeadline } from "./envelope-deadline.ts";
 import { runEnvelopeSchedule } from "./envelope-schedule.ts";
 import { changeEnvelopeDeadline, EnvelopeMutationError } from "./envelopes.ts";
@@ -443,6 +446,36 @@ test("a deadline moved during the run is not told or noted as passed", async () 
       null,
     );
   }
+});
+
+test("a change of deadline and a signer opening the page do not lock each other out", async () => {
+  const { envelopeId, signerId, userId } = await createSentEnvelope({
+    expiresAt: unixNow() + DAY,
+  });
+
+  const changed = await recordAuditEventWhileWaitedOn(
+    database,
+    {
+      actorType: "signer",
+      envelopeId,
+      event: "viewed",
+      metadata: { signerId },
+    },
+    () =>
+      changeEnvelopeDeadline(
+        userId,
+        envelopeId,
+        { expiresInDays: 7, senderEmail: "sam@example.test" },
+        { database },
+      ),
+  );
+
+  assert.equal((await readEnvelope(envelopeId)).expires_at, changed.expiresAt);
+  assert.deepEqual(await auditEvents(envelopeId), [
+    "viewed",
+    "deadline_changed",
+  ]);
+  assert.equal((await verifyAuditChain(envelopeId, database)).ok, true);
 });
 
 test("a deadline moved while a signer submits reaches the next signer", async () => {

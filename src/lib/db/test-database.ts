@@ -1,6 +1,11 @@
 import pg from "pg";
 
 import { runMigrations } from "../../../db/migrate.mjs";
+import {
+  lockEnvelopeAuditChain,
+  recordAuditEvent,
+  type RecordAuditEventInput,
+} from "../services/audit.ts";
 
 // For the tests that need a real Postgres (npm run test:db). They use the
 // same disposable database as the end-to-end test and bring its schema up
@@ -53,4 +58,60 @@ export async function openTestDatabase(): Promise<pg.Pool> {
   await runMigrations({ connectionString, log: () => undefined });
 
   return new pg.Pool({ connectionString, max: 12 });
+}
+
+/**
+ * Records an audit event the way a signer opening the signing page does,
+ * timed against something else that writes to the same envelope: the
+ * event's transaction takes the envelope's audit chain, `start()` gets
+ * under way until it has to wait for that chain, and only then is the event
+ * stored.
+ *
+ * Storing it checks the event's foreign key, which needs a share of the
+ * envelope's row. So if `start()` holds that row too tightly while it
+ * waits, each waits for the other, Postgres cancels one of them, and this
+ * rejects.
+ */
+export async function recordAuditEventWhileWaitedOn<T>(
+  database: pg.Pool,
+  event: RecordAuditEventInput,
+  start: () => Promise<T>,
+): Promise<T> {
+  const client = await database.connect();
+
+  try {
+    await client.query("begin");
+    await lockEnvelopeAuditChain(event.envelopeId, client);
+
+    const started = start();
+
+    // Looked at below. Until then a rejection must not go unhandled.
+    started.catch(() => undefined);
+
+    for (let attempt = 0; ; attempt += 1) {
+      const waiting = await database.query(
+        `select 1 from pg_locks where locktype = 'advisory' and not granted limit 1`,
+      );
+
+      if (waiting.rowCount) {
+        break;
+      }
+
+      if (attempt === 500) {
+        throw new Error("Nothing came to wait for the audit chain.");
+      }
+
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+
+    await recordAuditEvent(event, client);
+    await client.query("commit");
+
+    return await started;
+  } catch (error) {
+    await client.query("rollback").catch(() => undefined);
+    throw error;
+  } finally {
+    client.release();
+  }
 }

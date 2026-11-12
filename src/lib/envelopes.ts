@@ -2055,7 +2055,10 @@ export async function changeEnvelopeDeadline(
         SELECT expires_at AS "expiresAt", status
         FROM envelopes
         WHERE id = $1 AND user_id = $2
-        FOR UPDATE
+        -- The lock an UPDATE takes, not FOR UPDATE: storing an audit event
+        -- needs a share of this row for its foreign key, and FOR UPDATE
+        -- would deadlock with a signer opening the signing page.
+        FOR NO KEY UPDATE
       `,
       [envelopeId, userId],
     );

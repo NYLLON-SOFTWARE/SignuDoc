@@ -4,13 +4,17 @@ import { after, before, test } from "node:test";
 
 import type pg from "pg";
 
-import { openTestDatabase } from "./db/test-database.ts";
+import {
+  openTestDatabase,
+  recordAuditEventWhileWaitedOn,
+} from "./db/test-database.ts";
 import { runEnvelopeSchedule } from "./envelope-schedule.ts";
 import {
   changeEnvelopeDeadline,
   changeEnvelopeReminders,
   EnvelopeMutationError,
 } from "./envelopes.ts";
+import { sendAutomaticEnvelopeReminder } from "./reminders.ts";
 import { verifyAuditChain } from "./services/audit.ts";
 import type {
   EmailService,
@@ -290,6 +294,39 @@ test("a deadline moved while a reminder's email fails stays moved", async () => 
   assert.ok(newDeadline);
   assert.equal(signer.signing_token_hash, due.tokenHash);
   assert.equal(signer.signing_token_expires_at, newDeadline);
+});
+
+test("a reminder and a signer opening the page do not lock each other out", async () => {
+  const due = await createSentEnvelope({ reminderIntervalDays: 1 });
+  const { sent, service } = recordingEmailService();
+
+  const reminded = await recordAuditEventWhileWaitedOn(
+    database,
+    {
+      actorType: "signer",
+      envelopeId: due.envelopeId,
+      event: "viewed",
+      metadata: { signerId: due.signerId },
+    },
+    () =>
+      sendAutomaticEnvelopeReminder(due.envelopeId, {
+        database,
+        emailService: service,
+        nowUnixTimestamp: SENT_AT + DAY,
+      }),
+  );
+
+  assert.equal(reminded, true);
+  assert.equal(
+    sent.filter((message) => message.to.startsWith(due.signerId)).length,
+    1,
+  );
+  assert.deepEqual(await auditEvents(due.envelopeId), [
+    "viewed",
+    "reminded_auto",
+    "email_sent",
+  ]);
+  assert.equal((await verifyAuditChain(due.envelopeId, database)).ok, true);
 });
 
 test("a run that is out of time leaves the rest for the next one", async () => {
