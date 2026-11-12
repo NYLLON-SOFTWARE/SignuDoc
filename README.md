@@ -20,11 +20,11 @@ The button puts your own copy on [Vercel](https://vercel.com) with a Postgres da
    - [Resend](https://resend.com) for sending email.
 4. **Click Deploy.** The build creates the database tables by itself.
 5. **Open your new site.** It takes you to a setup page, where you name your organization and create the first account. That account is the administrator.
-6. **Add your email DNS records.** Under Settings, Organization, the site lists the DNS records for the address you want to send from and checks them for you. Add them where your domain is managed. If your Resend key is not allowed to manage domains, the page sends you to Resend's dashboard for this step instead.
+6. **Set up the address you send from.** Under Settings, Organization, enter an address at your own domain in "Send email from" and save (the setup page offers the same field). The site lists the DNS records for that domain and checks them for you. Add them where your domain is managed. If your Resend key is not allowed to manage domains, the page sends you to Resend's dashboard for this step instead.
 
 ![The setup page of a new install](docs/images/setup.png)
 
-Step 6 is the one part that cannot be done for you: every email provider asks for proof that you own the domain you send from. Until the records are in, email goes out from Resend's test address, which Resend delivers only to the email address of the Resend account itself, normally the one on your Vercel account. So you can try the whole product by sending a document to that address straight away, and send to other people once the domain shows as verified.
+Step 6 is the one part that cannot be done for you: every email provider asks for proof that you own the domain you send from. While "Send email from" is empty, email goes out from Resend's test address, which Resend delivers only to the email address of the Resend account itself, normally the one on your Vercel account. So to try the whole product straight away, leave that field empty and send a document to that address. Once you save an address of your own, email is sent from it, and Resend does not deliver it until the domain shows as verified. Add the records before you count on it.
 
 If the site opens on a page that says to connect a database, the database was not connected when the site was built. Connect it under Storage in the Vercel project, deploy again and reload.
 
@@ -155,7 +155,7 @@ Open [http://localhost:3000](http://localhost:3000).
 The first time you open a new install it takes you to `/setup`. There you name your organization and create the first account, which becomes the administrator. After that the setup page is gone for good.
 
 - **Who can sign up.** The install starts by letting people with an email address at the administrator's own domain create accounts (or nobody else, if the administrator used a public mailbox such as Gmail). The administrator can change this under Settings, Organization: people at listed domains, nobody, or anyone. People who are only sent a document to sign never need an account.
-- **Email.** Settings, Organization also shows whether email is working. Until you verify a domain of your own with Resend, mail goes out from Resend's test address, which only reaches the owner of the Resend account. Enter a sender address at your domain and the page shows the DNS records to add and checks them for you.
+- **Email.** Settings, Organization also shows whether email is working. While no sender address is set, mail goes out from Resend's test address, which only reaches the owner of the Resend account. Enter a sender address at your domain and the page shows the DNS records to add and checks them for you. Mail from that address is not delivered until its domain is verified.
 - **`SETUP_TOKEN`.** A new install can be claimed by whoever opens it first. If its URL will be public before you get to it, set `SETUP_TOKEN` to a secret of your own and the setup page will ask for it.
 - **An install from before this page existed** has accounts but no administrator. Set `SETUP_TOKEN`, sign in with the account that should be in charge, and open `/setup`. Sign-up stays open, as it was, until that administrator changes it.
 
