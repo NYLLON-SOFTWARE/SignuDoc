@@ -273,6 +273,8 @@ export function getEnv(env: EnvSource = process.env) {
       supportAddress: readEnv(env, "SUPPORT_EMAIL"),
     },
     internal: {
+      // Vercel sends this as a bearer token on cron calls when it is set.
+      cronSecret: readEnv(env, "CRON_SECRET"),
       retentionJobSecret: readEnv(env, "RETENTION_JOB_SECRET"),
     },
     setup: {

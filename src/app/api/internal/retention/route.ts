@@ -1,34 +1,64 @@
 import { NextResponse } from "next/server";
 
-import { runRetentionSweep } from "@/lib/retention";
-import { getEnv } from "@/lib/utils/env";
+import {
+  identifyRetentionCaller,
+  isCronLockedOutByOlderSecret,
+  retentionSweepFailed,
+  runRetentionJob,
+} from "@/lib/retention-job";
+import { logRouteError } from "@/lib/security/logging";
+import { getClientIpAddress, getRequestPathname } from "@/lib/security/request";
 
-function isAuthorizedRequest(request: Request, secret: string) {
-  return request.headers.get("authorization") === `Bearer ${secret}`;
-}
+// The daily cleanup. Vercel's cron job calls this with GET (see
+// vercel.json); a scheduler elsewhere can use POST as before.
+//
+// With a job secret configured, only a caller that presents it gets in, and
+// it gets the summary back. With none, anyone may call and gets an empty
+// answer whether or not anything ran: see src/lib/retention-job.ts for why
+// that is safe to leave open.
 
-export async function POST(request: Request) {
-  const retentionJobSecret = getEnv().internal.retentionJobSecret;
+async function handle(request: Request) {
+  const caller = identifyRetentionCaller(request.headers.get("authorization"));
 
-  if (!retentionJobSecret) {
-    return NextResponse.json(
-      {
-        error: "Retention job secret is not configured.",
-      },
-      { status: 503 },
-    );
-  }
+  if (caller === "denied") {
+    if (isCronLockedOutByOlderSecret(request.headers.get("user-agent"))) {
+      console.warn(
+        "[retention] Vercel's daily cleanup call was refused: RETENTION_JOB_SECRET is set, and Vercel only sends CRON_SECRET. Store the secret as CRON_SECRET instead, or remove it.",
+      );
+    }
 
-  if (!isAuthorizedRequest(request, retentionJobSecret)) {
     return NextResponse.json({ error: "Unauthorized." }, { status: 401 });
   }
 
-  const summary = await runRetentionSweep();
-  const hasFailures =
-    summary.accountPurgeFailures.length > 0 ||
-    summary.draftDeletionFailures.length > 0;
+  try {
+    const outcome = await runRetentionJob({ caller });
+    const failed =
+      outcome.status === "ran" && retentionSweepFailed(outcome.summary);
 
-  return NextResponse.json(summary, {
-    status: hasFailures ? 500 : 200,
-  });
+    if (caller === "authorized") {
+      return NextResponse.json(
+        outcome.status === "ran" ? outcome.summary : outcome,
+        { status: failed ? 500 : 200 },
+      );
+    }
+
+    return new NextResponse(null, { status: failed ? 500 : 204 });
+  } catch (error) {
+    logRouteError(error, {
+      category: "retention_job_failure",
+      ipAddress: getClientIpAddress(request.headers),
+      message: "The cleanup job failed.",
+      path: getRequestPathname(request),
+    });
+
+    return new NextResponse(null, { status: 500 });
+  }
+}
+
+export function GET(request: Request) {
+  return handle(request);
+}
+
+export function POST(request: Request) {
+  return handle(request);
 }
