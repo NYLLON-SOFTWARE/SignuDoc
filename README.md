@@ -10,7 +10,7 @@ The open source project is designed to be self-hostable, and the hosted version 
 
 - SignuDoc is designed for U.S. small businesses and ordinary business agreements such as NDAs, SOWs, and vendor contracts.
 - SignuDoc is not a law firm and does not provide legal advice. It does not determine whether a particular document is legally suitable for electronic signing.
-- If you self-host SignuDoc, you are responsible for replacing the legal pages (`/terms`, `/privacy`, `/contact`, `/accessibility`) with your own content, setting your own support contact details, and making sure your deployment meets any applicable compliance, retention, or consent requirements.
+- If you self-host SignuDoc, your install carries your organization's name, not SignuDoc's, and does not show SignuDoc's own terms, privacy, contact or accessibility pages. You are responsible for linking to your own terms and privacy policy (in Settings), setting your own support address, and making sure your deployment meets any applicable compliance, retention, or consent requirements.
 
 ## What it does
 
@@ -30,7 +30,7 @@ The open source project is designed to be self-hostable, and the hosted version 
 - React + TypeScript
 - Better Auth
 - Postgres (`pg`)
-- Cloudflare R2 object storage
+- Vercel Blob object storage (local disk in development)
 - Resend for transactional email
 - `pdf-lib` and `pdfjs-dist`
 - Tailwind CSS 4 + shadcn/ui
@@ -68,7 +68,8 @@ At a minimum, you should review these groups:
 - **App/Auth**: `APP_URL`, `BETTER_AUTH_SECRET`, `BETTER_AUTH_URL`
 - **Database**: `DATABASE_URL`
 - **Storage**: nothing to set on Vercel once a Blob store is connected; `STORAGE_DRIVER` and `STORAGE_LOCAL_DIR` elsewhere
-- **Email**: `EMAIL_DRIVER`, `RESEND_API_KEY`, `RESEND_FROM_EMAIL`, `SUPPORT_EMAIL`
+- **Email**: `EMAIL_DRIVER`, `RESEND_API_KEY`. The sender and support addresses are chosen in the app; `RESEND_FROM_EMAIL` and `SUPPORT_EMAIL` override them if set.
+- **First run**: `SETUP_TOKEN` (optional), `HOSTED_MODE` (only for running SignuDoc as a public service)
 - **Internal jobs**: `RETENTION_JOB_SECRET`
 
 See `.env.example` for the full list.
@@ -94,6 +95,19 @@ npm run dev
 ```
 
 Open [http://localhost:3000](http://localhost:3000).
+
+### 5. Set the site up
+
+The first time you open a new install it takes you to `/setup`. There you name your organization and create the first account, which becomes the administrator. After that the setup page is gone for good.
+
+- **Who can sign up.** The install starts by letting people with an email address at the administrator's own domain create accounts (or nobody else, if the administrator used a public mailbox such as Gmail). The administrator can change this under Settings, Organization: people at listed domains, nobody, or anyone. People who are only sent a document to sign never need an account.
+- **Email.** Settings, Organization also shows whether email is working. Until you verify a domain of your own with Resend, mail goes out from Resend's test address, which only reaches the owner of the Resend account. Enter a sender address at your domain and the page shows the DNS records to add and checks them for you.
+- **`SETUP_TOKEN`.** A new install can be claimed by whoever opens it first. If its URL will be public before you get to it, set `SETUP_TOKEN` to a secret of your own and the setup page will ask for it.
+- **An install from before this page existed** has accounts but no administrator. Set `SETUP_TOKEN`, sign in with the account that should be in charge, and open `/setup`. Sign-up stays open, as it was, until that administrator changes it.
+
+### Hosted mode
+
+`HOSTED_MODE=1` runs SignuDoc as a public service under its own name, the way [signudoc.app](https://signudoc.app) does: the landing page at `/`, the built-in terms, privacy, contact and accessibility pages, and sign-up open to anyone. Leave it unset for an install that belongs to one organization.
 
 ## Development notes
 
@@ -124,8 +138,10 @@ The schema lives in `db/migrations` as plain SQL files. `npm run db:migrate` app
 
 SignuDoc sends transactional email through Resend.
 
-- `RESEND_FROM_EMAIL` must use a verified Resend sending domain or subdomain.
-- `SUPPORT_EMAIL` is used as the default reply-to address for outbound mail **and** as the public support contact displayed on the Terms, Privacy, and Accessibility pages. If it is missing, those pages will fail to render.
+- The address email is sent from, and the support address replies go to, are set by the administrator under Settings, Organization. The sender address must be at a domain verified with Resend; the same page adds the domain to Resend, lists the DNS records and checks them. With a Resend API key that is only allowed to send, it points you at Resend's dashboard for that step instead.
+- `RESEND_FROM_EMAIL` and `SUPPORT_EMAIL` are optional. When set they take the place of the addresses saved in Settings, which then cannot be changed there.
+- Until a sender address is set, mail goes out from `onboarding@resend.dev`, which Resend only delivers to the owner of the Resend account.
+- In hosted mode the support address is also the contact shown on the Terms, Privacy, and Accessibility pages.
 - For local development, `EMAIL_DRIVER=capture` writes each email to `.data/outbox` as a JSON file instead of sending it. Open the newest file to find a verification or signing link. This driver refuses to run in production.
 
 ### Upload constraints
@@ -155,7 +171,7 @@ npm run format:check
 npm run test:e2e
 ```
 
-`npm run test:e2e` runs the Playwright end-to-end test. It starts the app against a separate `signudoc_e2e` database on the same Postgres server, signs up, sends a PDF, signs it as the recipient and downloads the results. Install the browser once with `npx playwright install chromium`.
+`npm run test:e2e` runs the Playwright end-to-end test. It starts the app against a separate `signudoc_e2e` database on the same Postgres server, sets the site up as its first visitor, signs up a sender, sends a PDF, signs it as the recipient and downloads the results. Install the browser once with `npx playwright install chromium`.
 
 ## How the workflow fits together
 
@@ -189,8 +205,8 @@ node .next/standalone/server.js
 
 Self-hosted operators are responsible for:
 
-- replacing the bundled legal pages with deployment-specific terms, privacy, contact, and accessibility content;
-- setting the correct public support address and email-delivery configuration;
+- linking to their own terms and privacy policy under Settings, Organization;
+- setting the correct support address and verifying a sending domain for email;
 - configuring retention, consent, and compliance requirements for their own deployment; and
 - scheduling the internal retention job if they want automatic stale-draft cleanup and queued account purges.
 
