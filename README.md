@@ -1,10 +1,81 @@
 # SignuDoc
 
-SignuDoc is a focused e-signature app for U.S. small businesses.
+SignuDoc is an e-signature app you can run for your own organization.
 
 Upload a PDF, add signers in order, place fields, send secure signing links, and keep the final signed PDF plus an audit certificate in one place.
 
-The open source project is designed to be self-hostable, and the hosted version is available at [signudoc.app](https://signudoc.app).
+[![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https%3A%2F%2Fgithub.com%2FNYLLON-SOFTWARE%2Fsignudoc&project-name=signudoc&repository-name=signudoc&stores=%5B%7B%22type%22%3A%22integration%22%2C%22integrationSlug%22%3A%22neon%22%2C%22productSlug%22%3A%22neon%22%2C%22protocol%22%3A%22storage%22%7D%2C%7B%22type%22%3A%22blob%22%2C%22access%22%3A%22private%22%7D%2C%7B%22type%22%3A%22integration%22%2C%22integrationSlug%22%3A%22resend%22%2C%22productSlug%22%3A%22resend-email%22%2C%22protocol%22%3A%22messaging%22%7D%5D&demo-title=SignuDoc&demo-description=Your%20own%20e-signature%20site.%20Upload%20a%20PDF%2C%20place%20fields%2C%20send%20signing%20links%2C%20and%20keep%20the%20signed%20copy%20with%20its%20audit%20certificate.&demo-url=https%3A%2F%2Fsignudoc.app&demo-image=https%3A%2F%2Fraw.githubusercontent.com%2FNYLLON-SOFTWARE%2Fsignudoc%2Fmain%2Fdocs%2Fimages%2Fprepare.png)
+
+The button puts your own copy on [Vercel](https://vercel.com) with a Postgres database, private file storage and email already connected. There is no terminal to open and nothing to type in. A hosted version runs at [signudoc.app](https://signudoc.app).
+
+![Placing a signature field on a document in SignuDoc](docs/images/prepare.png)
+
+## Deploy your own
+
+1. **Click "Deploy with Vercel"** above.
+2. **Sign in to Vercel** and let it copy this repository into your GitHub account. Your site is built from that copy.
+3. **Add the three things Vercel offers to create.** Each has a free plan:
+   - a Postgres database from [Neon](https://neon.com) (pick the region closest to you),
+   - a private file store, [Vercel Blob](https://vercel.com/docs/vercel-blob), for the documents,
+   - [Resend](https://resend.com) for sending email.
+4. **Click Deploy.** The build creates the database tables by itself.
+5. **Open your new site.** It takes you to a setup page, where you name your organization and create the first account. That account is the administrator.
+6. **Add your email DNS records.** Under Settings, Organization, the site lists the DNS records for the address you want to send from and checks them for you. Add them where your domain is managed. If your Resend key is not allowed to manage domains, the page sends you to Resend's dashboard for this step instead.
+
+![The setup page of a new install](docs/images/setup.png)
+
+Step 6 is the one part that cannot be done for you: every email provider asks for proof that you own the domain you send from. Until the records are in, email goes out from Resend's test address, which Resend delivers only to the email address of the Resend account itself, normally the one on your Vercel account. So you can try the whole product by sending a document to that address straight away, and send to other people once the domain shows as verified.
+
+If the site opens on a page that says to connect a database, the database was not connected when the site was built. Connect it under Storage in the Vercel project, deploy again and reload.
+
+### What it costs
+
+- **Vercel.** The free Hobby plan is enough to run SignuDoc, but Vercel [limits Hobby to personal, non-commercial use](https://vercel.com/docs/limits/fair-use-guidelines). An organization using this for its work belongs on Vercel Pro. Everything here works the same on both.
+- **Neon, Vercel Blob and Resend** each have a free plan with limits: see [Neon](https://neon.com/faqs/free-plan-limits-and-quotas), [Vercel Blob](https://vercel.com/docs/vercel-blob/usage-and-pricing) and [Resend](https://resend.com/pricing). The one you are most likely to meet first is Resend's, which at the time of writing allows 100 emails a day and 3,000 a month on its free plan. Every signing invitation, reminder and completed copy is an email.
+
+### Use your own web address
+
+Add your domain to the project in Vercel (Settings, Domains), then deploy once more. The site works out its own address from the project's production domain, so the links in its emails follow the new domain after that deployment. Nothing needs to be set by hand.
+
+### Lock down a new install
+
+A new install is claimed by whoever opens it first. That is normally you, seconds after the deployment finishes. If its address will be known to others before you get there, add a `SETUP_TOKEN` environment variable in Vercel with a secret of your own and deploy again: the setup page then asks for it.
+
+### Keep your install up to date
+
+The Deploy button makes a copy of this repository, and a copy does not receive new versions by itself. To take a new version, bring the changes into your copy and push. Vercel builds the push, and the build applies any new database migrations.
+
+```bash
+git clone https://github.com/<your-account>/signudoc.git
+cd signudoc
+git remote add upstream https://github.com/NYLLON-SOFTWARE/signudoc.git
+git fetch upstream
+git merge upstream/main
+git push
+```
+
+If git answers `refusing to merge unrelated histories`, your copy was made without this project's history. As long as you have not changed the code yourself, take the new version as it is:
+
+```bash
+git reset --hard upstream/main
+git push --force-with-lease
+```
+
+After that first time, `git merge upstream/main` works as above.
+
+### Optional settings
+
+A deployment made with the button needs no environment variables. These are there if you want them, under Settings, Environment Variables in the Vercel project. Deploy again after changing one.
+
+| Variable                             | What it does                                                                                                                              |
+| ------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------- |
+| `SETUP_TOKEN`                        | A secret the setup page asks for. See [Lock down a new install](#lock-down-a-new-install).                                                |
+| `CRON_SECRET`                        | Closes the daily cleanup route to everyone but Vercel's own cron call. See [Daily cleanup](#daily-cleanup).                               |
+| `BOTID`                              | `1` turns on Vercel BotID for sign-in, sign-up and setup. See [Bot protection](#bot-protection).                                          |
+| `RESEND_FROM_EMAIL`, `SUPPORT_EMAIL` | Fix the sender and support addresses from the environment instead of in Settings.                                                         |
+| `BETTER_AUTH_SECRET`                 | Your own secret for signing sessions. Without it one is derived from the database password, so changing that password signs everyone out. |
+| `APP_URL`                            | The site's public address, if it should not be the project's production domain.                                                           |
+| `HOSTED_MODE`                        | `1` runs SignuDoc as a public service under its own name. See [Hosted mode](#hosted-mode).                                                |
 
 ## Important notes
 
@@ -35,7 +106,9 @@ The open source project is designed to be self-hostable, and the hosted version 
 - `pdf-lib` and `pdfjs-dist`
 - Tailwind CSS 4 + shadcn/ui
 
-## Getting started
+## Run it locally
+
+For development, or to try it on your own machine first.
 
 ### 1. Install dependencies
 
@@ -51,29 +124,9 @@ SignuDoc targets Node.js 24 and is built on Next.js 16.
 cp .env.example .env
 ```
 
-The example file is ready for local development as it is, apart from `BETTER_AUTH_SECRET`, which you generate with `openssl rand -hex 32`. Locally, uploaded PDFs are kept on disk under `.data/storage` and outgoing email is written to `.data/outbox` as JSON files instead of being sent, so you need no storage or email account to try the whole product.
+The example file is ready for local development as it is. Uploaded PDFs are kept on disk under `.data/storage` and outgoing email is written to `.data/outbox` as JSON files instead of being sent, so you need no storage or email account to try the whole product.
 
-A value that still starts with `replace-with-` is treated as not set.
-
-For production deployments:
-
-- `APP_URL` and `BETTER_AUTH_URL` must be absolute HTTPS URLs.
-- `APP_URL` and `BETTER_AUTH_URL` must not point at localhost.
-- `BETTER_AUTH_SECRET` must be a strong secret. The app enforces a minimum length of 32 characters in production.
-- Leave `EMAIL_DRIVER` unset, or set it to `resend`. The capture driver is for development only.
-- Leave `STORAGE_DRIVER` unset. On Vercel, files go to the Blob store connected to the project. Anywhere else they are kept on the machine's disk, so that disk must persist between restarts.
-
-At a minimum, you should review these groups:
-
-- **App/Auth**: `APP_URL`, `BETTER_AUTH_SECRET`, `BETTER_AUTH_URL`
-- **Database**: `DATABASE_URL`
-- **Storage**: nothing to set on Vercel once a Blob store is connected; `STORAGE_DRIVER` and `STORAGE_LOCAL_DIR` elsewhere
-- **Email**: `EMAIL_DRIVER`, `RESEND_API_KEY`. The sender and support addresses are chosen in the app; `RESEND_FROM_EMAIL` and `SUPPORT_EMAIL` override them if set.
-- **First run**: `SETUP_TOKEN` (optional), `HOSTED_MODE` (only for running SignuDoc as a public service)
-- **Daily cleanup**: `CRON_SECRET` (optional, see [Daily cleanup](#daily-cleanup))
-- **Bot protection**: `BOTID` (optional, Vercel only, see [Bot protection](#bot-protection))
-
-See `.env.example` for the full list.
+Every setting, and which ones are optional, is described in `.env.example`.
 
 ### 3. Start the database and apply the schema
 
@@ -174,7 +227,7 @@ npm run test:db
 npm run test:e2e
 ```
 
-`npm test` runs the unit tests, which need nothing else running. `npm run test:db` runs the few tests that need a real Postgres (the rate limit counter and the cleanup job's lock) against the `signudoc_e2e` database.
+`npm test` runs the unit tests, which need nothing else running. `npm run test:db` runs the few tests that need a real Postgres (the rate limit counter, the cleanup job's lock and first-run setup) against the `signudoc_e2e` database.
 
 `npm run test:e2e` runs the Playwright end-to-end test. It starts the app against a separate `signudoc_e2e` database on the same Postgres server, sets the site up as its first visitor, signs up a sender, sends a PDF, signs it as the recipient and downloads the results. Install the browser once with `npx playwright install chromium`.
 
@@ -188,25 +241,24 @@ npm run test:e2e
 6. Each signer completes their turn in order.
 7. SignuDoc finalizes the signed PDF and audit certificate when the last signer finishes.
 
-## Self-hosting
+## Self-hosting somewhere else
 
-SignuDoc is set up for regular Next.js deployments and also uses Next.js standalone output.
-
-A simple production flow looks like this:
+SignuDoc is a regular Next.js app and runs anywhere Node.js 24 and Postgres do:
 
 ```bash
+npm run db:migrate
 npm run build
 npm run start
 ```
 
-If you want to deploy the standalone build directly, copy `public` and `.next/static` into `.next/standalone`, then run the generated server:
+Away from Vercel, a few things Vercel does for you are yours to set:
 
-```bash
-npm run build
-cp -r public .next/standalone/
-cp -r .next/static .next/standalone/.next/
-node .next/standalone/server.js
-```
+- `DATABASE_URL`, pointing at your Postgres. Run `npm run db:migrate` on every deploy; it only applies what is new.
+- `APP_URL`, the site's public HTTPS address.
+- `BETTER_AUTH_SECRET`, at least 32 characters (`openssl rand -hex 32`). Without it a secret is derived from the database password, which must then be at least 12 characters long.
+- `RESEND_API_KEY`, from your Resend account.
+- Files are kept on the machine's disk under `.data/storage` (`STORAGE_LOCAL_DIR` changes where), so that disk must survive restarts. To use a Vercel Blob store from elsewhere, set `BLOB_READ_WRITE_TOKEN`.
+- Leave `EMAIL_DRIVER` unset. The capture driver is for development only.
 
 Self-hosted operators are responsible for:
 
@@ -251,6 +303,8 @@ It is opt-in for now because it has not yet been proven against a live Vercel de
 src/app         Next.js routes, layouts, and API handlers
 src/components  UI shells and reusable components
 src/lib         Auth, database, services, schemas, and domain logic
+db              SQL migrations and the script that applies them
+e2e             The Playwright end-to-end test
 public/pdfjs    PDF.js worker and standard font assets
 ```
 
