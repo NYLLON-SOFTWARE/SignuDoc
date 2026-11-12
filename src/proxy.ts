@@ -52,6 +52,7 @@ function resolveBlobUploadSource() {
 
 function buildContentSecurityPolicy() {
   const preview = isVercelPreview();
+  const botProtection = process.env.NEXT_PUBLIC_BOTID === "1";
   const directives: Array<[name: string, sources: Array<string | false>]> = [
     ["default-src", ["'self'"]],
     ["base-uri", ["'self'"]],
@@ -85,7 +86,17 @@ function buildContentSecurityPolicy() {
         preview && "https://vercel.live wss://ws-us3.pusher.com",
       ],
     ],
-    ["frame-src", [preview ? "https://vercel.live" : "'none'"]],
+    [
+      "frame-src",
+      [
+        preview && "https://vercel.live",
+        // BotID's deeper check runs in a hidden frame on this same site.
+        // Not yet confirmed against a live deployment; see the note on
+        // BotID in the README.
+        botProtection && "'self'",
+        !preview && !botProtection && "'none'",
+      ],
+    ],
     ["worker-src", ["'self'", "blob:"]],
     [
       "style-src",
