@@ -43,6 +43,7 @@ import { getBranding } from "./settings.ts";
 import { importPdfDocument } from "./services/document-import.ts";
 import {
   listAuditEventsForEnvelope,
+  lockEnvelopeAuditChain,
   recordAuditEvent,
   recordEmailSent,
 } from "./services/audit.ts";
@@ -1603,6 +1604,7 @@ export async function sendDraftEnvelope(
         [envelope.updatedAt, envelopeId],
       );
 
+      await lockEnvelopeAuditChain(envelopeId, tx);
       await tx.query(
         `
           DELETE FROM audit_events

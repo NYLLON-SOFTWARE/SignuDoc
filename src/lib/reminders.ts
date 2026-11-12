@@ -12,7 +12,11 @@ import {
 } from "./schemas/envelope.ts";
 import { type SignerRecord } from "./schemas/signer.ts";
 import { getBranding } from "./settings.ts";
-import { recordAuditEvent, recordEmailSent } from "./services/audit.ts";
+import {
+  lockEnvelopeAuditChain,
+  recordAuditEvent,
+  recordEmailSent,
+} from "./services/audit.ts";
 import { createEmailService } from "./services/email.ts";
 import { withUserEmailLegalFooter } from "./services/email-legal-footer.ts";
 import {
@@ -431,6 +435,7 @@ export async function sendManualEnvelopeNudge(
         ],
       );
 
+      await lockEnvelopeAuditChain(persisted.envelopeId, tx);
       await tx.query(
         `
           DELETE FROM audit_events

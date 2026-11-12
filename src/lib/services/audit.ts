@@ -114,6 +114,22 @@ function isPool(database: DbExecutor): database is ReturnType<typeof getDb> {
   return "connect" in database && "totalCount" in database;
 }
 
+/**
+ * Serializes writers of one envelope's audit chain until the surrounding
+ * transaction ends, so two events cannot take the same place in the chain and
+ * a rollback cannot delete the head while another event is chaining to it.
+ * Call it inside a transaction.
+ */
+export async function lockEnvelopeAuditChain(
+  envelopeId: string,
+  database: DbExecutor,
+): Promise<void> {
+  await database.query(
+    "SELECT pg_advisory_xact_lock(hashtextextended($1, 7))",
+    [envelopeId],
+  );
+}
+
 async function insertChainedAuditEvent(
   input: RecordAuditEventInput,
   database: DbExecutor,
@@ -121,12 +137,7 @@ async function insertChainedAuditEvent(
   const id = input.id ?? randomUUID();
   const createdAt = input.createdAt ?? Math.floor(Date.now() / 1000);
 
-  // Serializes writers for one envelope until the surrounding transaction
-  // ends, so two events cannot take the same place in the chain.
-  await database.query(
-    "SELECT pg_advisory_xact_lock(hashtextextended($1, 7))",
-    [input.envelopeId],
-  );
+  await lockEnvelopeAuditChain(input.envelopeId, database);
 
   const previous = await database.query<{
     rowHash: string | null;
