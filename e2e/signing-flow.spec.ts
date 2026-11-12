@@ -142,6 +142,34 @@ test("a new install is set up, a sender sends a PDF and a recipient signs it", a
     await adminContext.close();
   });
 
+  await test.step("pages a signer can reach carry the organization's name and its own links", async () => {
+    // These sit outside the signed-in app. None of them may fall back to the
+    // hosted service's name, or link to pages only the hosted service has.
+    for (const publicPath of [
+      "/signer-privacy",
+      "/electronic-signatures",
+      "/verify",
+      "/download/not-a-real-link",
+    ]) {
+      await page.goto(publicPath);
+      await expect(
+        page.getByRole("link", { exact: true, name: ORGANIZATION_NAME }),
+      ).toBeVisible();
+
+      const footer = page.getByRole("contentinfo");
+
+      await expect(
+        footer.getByRole("link", { exact: true, name: "Privacy" }),
+      ).toHaveAttribute("href", "/signer-privacy");
+
+      for (const hostedOnly of ["Terms", "Accessibility", "Contact"]) {
+        await expect(
+          footer.getByRole("link", { exact: true, name: hostedOnly }),
+        ).toHaveCount(0);
+      }
+    }
+  });
+
   await test.step("an address outside the organization cannot sign up", async () => {
     await page.goto("/signup");
     await expect(page).toHaveTitle(ORGANIZATION_NAME);
