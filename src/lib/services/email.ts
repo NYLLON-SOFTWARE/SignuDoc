@@ -68,7 +68,58 @@ type CreateEmailServiceOptions = {
   /** Replaced in tests, where there is no database to read settings from. */
   resolveAddresses?: () => Promise<EmailAddresses>;
   resendClient?: Resend;
+  /** Replaced in tests, so that they do not really wait. */
+  wait?: (milliseconds: number) => Promise<void>;
 };
+
+/** How often a message Resend turned away for rate is tried again. */
+const RATE_LIMIT_RETRIES = 3;
+const DEFAULT_RATE_LIMIT_WAIT_MS = 1_000;
+const MAX_RATE_LIMIT_WAIT_MS = 5_000;
+
+type ResendResult = {
+  error: { name: string } | null;
+  headers: Record<string, string> | null;
+};
+
+function rateLimitWaitMs(headers: Record<string, string> | null): number {
+  const seconds = Number(headers?.["retry-after"]);
+
+  return Number.isFinite(seconds) && seconds > 0
+    ? Math.min(seconds * 1000, MAX_RATE_LIMIT_WAIT_MS)
+    : DEFAULT_RATE_LIMIT_WAIT_MS;
+}
+
+/**
+ * Resend allows a team so many requests a second, across everything that
+ * uses its key. A request over that is refused, not queued, so the message
+ * would be lost: a signer would never get their copy. It is tried again
+ * after the wait Resend names. A used-up daily or monthly quota is also a
+ * 429, and is not retried: a second's wait does not bring it back.
+ */
+async function sendWithinRateLimit<T extends ResendResult>(
+  request: () => Promise<T>,
+  wait: (milliseconds: number) => Promise<void>,
+): Promise<T> {
+  for (let attempt = 0; ; attempt += 1) {
+    const result = await request();
+
+    if (
+      result.error?.name !== "rate_limit_exceeded" ||
+      attempt >= RATE_LIMIT_RETRIES
+    ) {
+      return result;
+    }
+
+    await wait(rateLimitWaitMs(result.headers));
+  }
+}
+
+function waitFor(milliseconds: number): Promise<void> {
+  return new Promise((resolve) => {
+    setTimeout(resolve, milliseconds);
+  });
+}
 
 function getResendErrorMessage(error: unknown): string {
   if (
@@ -249,6 +300,7 @@ export function createEmailService({
   env = process.env,
   resolveAddresses = () => resolveEmailAddresses(env),
   resendClient,
+  wait = waitFor,
 }: CreateEmailServiceOptions = {}): EmailService {
   if (!resendClient && resolveEmailDriver(env) === "capture") {
     return createCaptureEmailService(env, resolveAddresses);
@@ -263,9 +315,13 @@ export function createEmailService({
   return {
     async send(message, options) {
       const config = await resolveAddresses();
-      const { data, error } = await client.emails.send(
-        buildResendPayload(message, config),
-        buildResendOptions(options),
+      const { data, error } = await sendWithinRateLimit(
+        () =>
+          client.emails.send(
+            buildResendPayload(message, config),
+            buildResendOptions(options),
+          ),
+        wait,
       );
 
       if (error) {
@@ -289,9 +345,13 @@ export function createEmailService({
       }
 
       const config = await resolveAddresses();
-      const { data, error } = await client.batch.send(
-        messages.map((message) => buildResendPayload(message, config)),
-        buildResendOptions(options),
+      const { data, error } = await sendWithinRateLimit(
+        () =>
+          client.batch.send(
+            messages.map((message) => buildResendPayload(message, config)),
+            buildResendOptions(options),
+          ),
+        wait,
       );
 
       if (error) {
