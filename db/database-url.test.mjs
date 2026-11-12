@@ -58,6 +58,10 @@ test("TLS settings are made explicit", () => {
     "postgres://u:p@db.example.com/app?sslmode=disable",
     "postgres://u:p@db.example.com/app?sslmode=no-verify",
     "postgres://u:p@db.example.com/app?sslmode=require&uselibpqcompat=true",
+    // Asking Supabase for certificate checks must never be downgraded.
+    "postgres://u:p@db.ref.supabase.co:5432/postgres?sslmode=verify-ca",
+    "postgres://u:p@db.ref.supabase.co:5432/postgres?sslmode=verify-full",
+    "postgres://u:p@aws-0-eu-west-1.pooler.supabase.com:6543/postgres?sslmode=verify-ca&sslrootcert=/ca.crt",
     "not a url",
   ]) {
     assert.equal(normalizeDatabaseUrl(unchanged), unchanged);

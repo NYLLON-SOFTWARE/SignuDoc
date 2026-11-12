@@ -101,9 +101,12 @@ function isSupabaseHost(hostname) {
  *   which is what pg does today and keeps full certificate verification after
  *   that change.
  * - Supabase serves a certificate from its own authority, which Node does not
- *   trust by default, so verify-full fails there. For Supabase hosts the URL
- *   gets libpq semantics instead, where sslmode=require means "encrypt, do
- *   not verify", exactly as psql and Supabase's own documentation read it.
+ *   trust by default, so verify-full fails there. For Supabase hosts a URL
+ *   that says require or prefer gets libpq semantics instead, where those
+ *   modes mean "encrypt, do not verify", exactly as psql and Supabase's own
+ *   documentation read them. A Supabase URL that asks for verify-ca is left
+ *   alone: that is an explicit request for certificate checks, which pg
+ *   honours once Supabase's CA is trusted (sslrootcert or NODE_EXTRA_CA_CERTS).
  *
  * A URL that already says uselibpqcompat, verify-full, no-verify or disable,
  * or has no sslmode at all, is returned unchanged.
@@ -131,6 +134,11 @@ export function normalizeDatabaseUrl(connectionString) {
   }
 
   if (isSupabaseHost(url.hostname)) {
+    if (sslMode === "verify-ca") {
+      // Never weaken a mode that asks for certificate verification.
+      return connectionString;
+    }
+
     url.searchParams.set("uselibpqcompat", "true");
     url.searchParams.set("sslmode", "require");
   } else {
