@@ -12,7 +12,7 @@ import {
   markEmailReady,
   type ResolvedSettings,
 } from "./settings.ts";
-import { getEnv, type EnvSource } from "./utils/env.ts";
+import { getEnv, readEnv, type EnvSource } from "./utils/env.ts";
 
 // Whether this install can send email to anyone, and what is left to do if
 // it cannot. Shown to the administrator in Settings.
@@ -63,6 +63,28 @@ export type EmailStatus =
   | { state: "error"; message: string; senderAddress: string };
 
 /** The parts of the Resend SDK used here. Replaced by a fake in tests. */
+const RESEND_REGIONS = [
+  "us-east-1",
+  "eu-west-1",
+  "sa-east-1",
+  "ap-northeast-1",
+] as const;
+
+/**
+ * RESEND_REGION picks where Resend sends a new domain's mail from, for
+ * example eu-west-1 to keep sending in the EU. Unset, Resend's default
+ * (us-east-1) is used. It only applies when the app adds the domain.
+ */
+export function resendRegionOption(env: EnvSource): {
+  region?: (typeof RESEND_REGIONS)[number];
+} {
+  const value = readEnv(env, "RESEND_REGION")?.toLowerCase();
+
+  return value && (RESEND_REGIONS as readonly string[]).includes(value)
+    ? { region: value as (typeof RESEND_REGIONS)[number] }
+    : {};
+}
+
 export type ResendDomainsClient = Pick<
   Resend["domains"],
   "create" | "get" | "list" | "verify"
@@ -473,7 +495,10 @@ export async function addEmailDomain(
   }
 
   const created = await callResend(() =>
-    client.create({ name: status.domain }),
+    client.create({
+      name: status.domain,
+      ...resendRegionOption(options.env ?? process.env),
+    }),
   );
 
   if (created.error) {

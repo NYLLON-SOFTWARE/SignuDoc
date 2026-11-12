@@ -42,6 +42,9 @@ type EnvelopeRow = {
   sourcePdfHash: string;
   sourcePdfKey: string;
   sourcePdfSizeBytes: number;
+  evidenceSha256: string | null;
+  recipientEvidenceSha256: string | null;
+  signedPdfSha256: string | null;
   status: EnvelopeRecord["status"];
   title: string;
   updatedAt: number;
@@ -123,6 +126,14 @@ export class DownloadAccessError extends Error {
   }
 }
 
+/** A link this site issued whose time is up. A new one can be sent. */
+export class ExpiredDownloadLinkError extends DownloadAccessError {
+  constructor() {
+    super("This download link has expired.", 410);
+    this.name = "ExpiredDownloadLinkError";
+  }
+}
+
 function mapEnvelopeRow(row: EnvelopeRow): EnvelopeRecord {
   return envelopeRecordSchema.parse(row);
 }
@@ -190,6 +201,9 @@ async function getEnvelopeById(
         signed_pdf_key AS "signedPdfKey",
         evidence_key AS "evidenceKey",
         source_pdf_hash AS "sourcePdfHash",
+        signed_pdf_sha256 AS "signedPdfSha256",
+        evidence_sha256 AS "evidenceSha256",
+        recipient_evidence_sha256 AS "recipientEvidenceSha256",
         sent_at AS "sentAt",
         completed_at AS "completedAt",
         declined_at AS "declinedAt",
@@ -225,6 +239,9 @@ async function getEnvelopeByIdForUser(
         signed_pdf_key AS "signedPdfKey",
         evidence_key AS "evidenceKey",
         source_pdf_hash AS "sourcePdfHash",
+        signed_pdf_sha256 AS "signedPdfSha256",
+        evidence_sha256 AS "evidenceSha256",
+        recipient_evidence_sha256 AS "recipientEvidenceSha256",
         sent_at AS "sentAt",
         completed_at AS "completedAt",
         declined_at AS "declinedAt",
@@ -443,7 +460,7 @@ async function listFieldsForEnvelope(
   return rows.map(mapFieldRow);
 }
 
-function sanitizeFileNameSegment(value: string): string {
+export function sanitizeFileNameSegment(value: string): string {
   return value
     .trim()
     .replace(/[<>:"/\\|?*\u0000-\u001F]+/g, " ")
@@ -510,6 +527,12 @@ async function buildSignedPdfDownload(
         key: signedPdfObject.key,
       };
     }
+  }
+
+  // A file whose fingerprint was recorded cannot be made again: a rebuilt
+  // copy would not match it, and handing one out would undo the point.
+  if (envelope.signedPdfSha256) {
+    throw new DownloadAccessError("This file is no longer available.", 404);
   }
 
   const [auditEvents, fields, signers] = await Promise.all([
@@ -612,6 +635,14 @@ async function buildCertificateDownload(
     }
   }
 
+  if (
+    redactForRecipients
+      ? envelope.recipientEvidenceSha256
+      : envelope.evidenceSha256
+  ) {
+    throw new DownloadAccessError("This file is no longer available.", 404);
+  }
+
   const [auditEvents, signers] = await Promise.all([
     listAuditEventsForEnvelope(envelope.id, database),
     listSignersForEnvelope(envelope.id, database),
@@ -620,6 +651,7 @@ async function buildCertificateDownload(
     auditEvents,
     envelope,
     redactForRecipients,
+    signedPdfSha256: envelope.signedPdfSha256,
     signers,
   });
 
@@ -698,11 +730,15 @@ export async function getPublicEnvelopeDownloadForToken(
   );
   const now = Math.floor(Date.now() / 1000);
 
-  if (!tokenRow || tokenRow.expiresAt <= now) {
+  if (!tokenRow) {
     throw new DownloadAccessError(
       "This download link is invalid or has expired.",
       410,
     );
+  }
+
+  if (tokenRow.expiresAt <= now) {
+    throw new ExpiredDownloadLinkError();
   }
 
   const envelope = await getEnvelopeById(tokenRow.envelopeId, database);
@@ -736,4 +772,95 @@ export async function getPublicEnvelopeDownloadForToken(
   return buildCertificateDownload(envelope, database, storageService, {
     redactForRecipients: true,
   });
+}
+
+export type RenewedDownloadLinks = {
+  /** The signer's address with most of it hidden, to show on the page. */
+  maskedEmail: string;
+};
+
+function maskEmail(email: string): string {
+  const [local = "", domain = ""] = email.split("@");
+
+  return `${local.slice(0, 1)}${"*".repeat(Math.max(1, local.length - 1))}@${domain}`;
+}
+
+/**
+ * Someone holding an expired download link asks for a new one. The new links
+ * go only to the signer's own address on record, never anywhere the request
+ * names, so holding an old link gains nothing a forwarded email did not.
+ */
+export async function renewRecipientDownloadLinks(
+  token: string,
+  {
+    database = getDb(),
+    sendLinks,
+  }: {
+    database?: DbExecutor;
+    sendLinks: (input: {
+      envelope: EnvelopeRecord;
+      evidenceUrl: string;
+      signedUrl: string | null;
+      signer: SignerRecord;
+    }) => Promise<void>;
+  },
+): Promise<RenewedDownloadLinks> {
+  const tokenRow = await getRecipientDownloadTokenByHash(
+    hashOpaqueToken(token),
+    database,
+  );
+  const envelope = tokenRow
+    ? await getEnvelopeById(tokenRow.envelopeId, database)
+    : null;
+  const signer =
+    tokenRow && envelope
+      ? await getSignerForEnvelope(tokenRow.signerId, envelope.id, database)
+      : null;
+
+  if (
+    !tokenRow ||
+    !envelope ||
+    !signer?.id ||
+    (envelope.status !== "completed" &&
+      envelope.status !== "declined" &&
+      envelope.status !== "voided")
+  ) {
+    throw new DownloadAccessError(
+      "This download link is invalid or has expired.",
+      410,
+    );
+  }
+
+  const issuedAt = Math.floor(Date.now() / 1000);
+  const [signedLink, evidenceLink] = await Promise.all([
+    envelope.status === "completed"
+      ? createRecipientDownloadLink(
+          {
+            envelopeId: envelope.id,
+            fileType: "signed",
+            issuedAt,
+            signerId: signer.id,
+          },
+          { database },
+        )
+      : Promise.resolve(null),
+    createRecipientDownloadLink(
+      {
+        envelopeId: envelope.id,
+        fileType: "evidence",
+        issuedAt,
+        signerId: signer.id,
+      },
+      { database },
+    ),
+  ]);
+
+  await sendLinks({
+    envelope,
+    evidenceUrl: evidenceLink.url,
+    signedUrl: signedLink?.url ?? null,
+    signer,
+  });
+
+  return { maskedEmail: maskEmail(signer.email) };
 }

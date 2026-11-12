@@ -1,9 +1,20 @@
 import { NextResponse } from "next/server";
 
 import { getDb } from "@/lib/db/connection";
-import { SigningAccessError, getSigningDocumentForToken } from "@/lib/signing";
+import {
+  verificationRequiredResponse,
+  verifiedMethodsForRequest,
+} from "@/lib/signing-route";
+import {
+  SigningAccessError,
+  SigningVerificationRequiredError,
+  getSigningDocumentForToken,
+} from "@/lib/signing";
 import { logRouteError } from "@/lib/security/logging";
-import { applyRateLimit, buildRateLimitKey } from "@/lib/security/route-controls";
+import {
+  applyRateLimit,
+  buildRateLimitKey,
+} from "@/lib/security/route-controls";
 import { getClientIpAddress } from "@/lib/security/request";
 
 type SigningDocumentRouteContext = {
@@ -36,13 +47,20 @@ export async function GET(
   try {
     const documentObject = await getSigningDocumentForToken(token, {
       database: getDb(),
+      verifiedMethods: verifiedMethodsForRequest(token, request),
     });
     const responseBody = documentObject.body.slice().buffer as ArrayBuffer;
 
     return new Response(responseBody, {
       headers: {
         "cache-control": "private, no-store",
-        "content-disposition": 'inline; filename="document.pdf"',
+        // ?download=1 saves the file instead of showing it, for the
+        // signer's own copy before signing.
+        "content-disposition": `${
+          new URL(request.url).searchParams.get("download") === "1"
+            ? "attachment"
+            : "inline"
+        }; filename="document.pdf"`,
         "content-length": String(
           documentObject.contentLength ?? documentObject.body.length,
         ),
@@ -51,6 +69,10 @@ export async function GET(
       status: 200,
     });
   } catch (error) {
+    if (error instanceof SigningVerificationRequiredError) {
+      return verificationRequiredResponse(error);
+    }
+
     if (error instanceof SigningAccessError) {
       return NextResponse.json(
         {

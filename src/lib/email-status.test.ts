@@ -6,6 +6,7 @@ import {
   emailNeedsAttention,
   getEmailStatus,
   recheckEmailDomain,
+  resendRegionOption,
   type ResendDomainsClient,
 } from "./email-status.ts";
 import { resolveSettings, type AppSettings } from "./settings.ts";
@@ -15,6 +16,7 @@ const stored: AppSettings = {
   emailReadyAt: null,
   organizationName: "Acme Corp",
   privacyUrl: null,
+  retentionDays: null,
   senderAddress: "sign@acme.com",
   setupCompletedAt: 1_800_000_000,
   signupMode: "domains",
@@ -544,4 +546,12 @@ test("the administrator is told about email until it has been seen working", () 
     emailNeedsAttention(settings, { EMAIL_DRIVER: "capture" }),
     false,
   );
+});
+
+test("RESEND_REGION picks a known Resend region and ignores anything else", () => {
+  assert.deepEqual(resendRegionOption({ RESEND_REGION: "EU-WEST-1" }), {
+    region: "eu-west-1",
+  });
+  assert.deepEqual(resendRegionOption({ RESEND_REGION: "mars-1" }), {});
+  assert.deepEqual(resendRegionOption({}), {});
 });

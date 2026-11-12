@@ -37,6 +37,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 import {
@@ -355,6 +356,10 @@ export function SigningLiveShell({ record }: { record: SigningPayload }) {
   const [checkboxValues, setCheckboxValues] = useState<Record<string, boolean>>(
     {},
   );
+  const [consentedAt, setConsentedAt] = useState(record.consentedAt);
+  const [isConsentChecked, setIsConsentChecked] = useState(false);
+  const [isSavingConsent, setIsSavingConsent] = useState(false);
+  const [consentError, setConsentError] = useState<string | null>(null);
   const [declineError, setDeclineError] = useState<string | null>(null);
   const [declineReason, setDeclineReason] = useState("");
   const [isDeclineDialogOpen, setIsDeclineDialogOpen] = useState(false);
@@ -397,9 +402,8 @@ export function SigningLiveShell({ record }: { record: SigningPayload }) {
   const pageVisibleFields = record.visibleFields.filter(
     (field) => field.page === activePage,
   );
-  const actionSummaryFields = record.currentSignerFields.filter(
-    isActionSummaryField,
-  );
+  const actionSummaryFields =
+    record.currentSignerFields.filter(isActionSummaryField);
   const remainingFields = record.currentSignerFields.filter(
     (field) =>
       field.required &&
@@ -500,6 +504,36 @@ export function SigningLiveShell({ record }: { record: SigningPayload }) {
     }
   }
 
+  async function handleConsent() {
+    setIsSavingConsent(true);
+    setConsentError(null);
+
+    try {
+      const response = await fetch(record.consentUrl, {
+        body: JSON.stringify({ disclosureVersion: record.disclosure.version }),
+        headers: { "content-type": "application/json" },
+        method: "POST",
+      });
+      const payload = (await response.json().catch(() => null)) as {
+        consentedAt?: number;
+        error?: string;
+      } | null;
+
+      if (!response.ok || typeof payload?.consentedAt !== "number") {
+        setConsentError(
+          payload?.error ?? "Your agreement could not be saved right now.",
+        );
+        return;
+      }
+
+      setConsentedAt(payload.consentedAt);
+    } catch {
+      setConsentError("Your agreement could not be saved right now.");
+    } finally {
+      setIsSavingConsent(false);
+    }
+  }
+
   async function handleDeclineSigning() {
     if (isDeclining) {
       return;
@@ -588,17 +622,26 @@ export function SigningLiveShell({ record }: { record: SigningPayload }) {
               </p>
             </div>
           </div>
-          <ShellButton
-            className="min-h-11 px-4"
-            disabled={isSubmitting || isDeclining}
-            onClick={() => {
-              setDeclineError(null);
-              setIsDeclineDialogOpen(true);
-            }}
-            variant="secondary"
-          >
-            Decline
-          </ShellButton>
+          <div className="flex items-center gap-3">
+            <a
+              className="inline-flex min-h-11 items-center px-2 text-sm font-semibold text-(--fg) underline decoration-[rgba(17,17,17,0.35)] underline-offset-4"
+              download="document.pdf"
+              href={`${record.documentUrl}?download=1`}
+            >
+              Download PDF
+            </a>
+            <ShellButton
+              className="min-h-11 px-4"
+              disabled={isSubmitting || isDeclining}
+              onClick={() => {
+                setDeclineError(null);
+                setIsDeclineDialogOpen(true);
+              }}
+              variant="secondary"
+            >
+              Decline
+            </ShellButton>
+          </div>
         </div>
       </header>
 
@@ -844,7 +887,6 @@ export function SigningLiveShell({ record }: { record: SigningPayload }) {
                 ))}
               </div>
             </section>
-
           </aside>
         </section>
       </main>
@@ -926,6 +968,59 @@ export function SigningLiveShell({ record }: { record: SigningPayload }) {
             </ShellButton>
             <ShellButton loading={isSubmitting} onClick={handleFinishSigning}>
               {isSubmitting ? "Finishing..." : "Finish signing"}
+            </ShellButton>
+          </div>
+        </DialogFrame>
+      ) : null}
+
+      {consentedAt === null && !isDeclineDialogOpen ? (
+        <DialogFrame
+          description={`${record.senderName} sent you "${record.envelopeTitle}" to sign electronically.`}
+          onClose={() => undefined}
+          title="Before you sign"
+        >
+          <div className="max-h-[45vh] space-y-4 overflow-y-auto border border-(--border) bg-(--surface) px-4 py-4 text-sm leading-6 text-muted-foreground">
+            {record.disclosure.sections.map((section) => (
+              <section key={section.heading}>
+                <h3 className="font-semibold text-(--fg)">{section.heading}</h3>
+                <p className="mt-1">{section.text}</p>
+              </section>
+            ))}
+          </div>
+          <label className="flex items-start gap-3 text-sm leading-6 text-(--fg)">
+            <Checkbox
+              aria-label="I agree to use electronic records and signatures"
+              checked={isConsentChecked}
+              className="mt-1"
+              disabled={isSavingConsent}
+              onCheckedChange={(checked) =>
+                setIsConsentChecked(checked === true)
+              }
+            />
+            <span>{record.disclosure.statement}</span>
+          </label>
+          {consentError ? (
+            <div className="border border-[rgba(180,35,53,0.18)] bg-[rgba(180,35,53,0.08)] px-4 py-3 text-sm text-(--accent)">
+              {consentError}
+            </div>
+          ) : null}
+          <div className="flex flex-col-reverse gap-3 sm:flex-row sm:justify-end">
+            <ShellButton
+              disabled={isSavingConsent}
+              onClick={() => {
+                setDeclineError(null);
+                setIsDeclineDialogOpen(true);
+              }}
+              variant="secondary"
+            >
+              Decline
+            </ShellButton>
+            <ShellButton
+              disabled={!isConsentChecked}
+              loading={isSavingConsent}
+              onClick={handleConsent}
+            >
+              Agree and continue
             </ShellButton>
           </div>
         </DialogFrame>
@@ -1075,7 +1170,8 @@ function CurrentSignerField({
         type="button"
       >
         <span className="pointer-events-none flex h-full w-full items-center justify-center overflow-hidden px-1 text-center">
-          {signatureEntry?.inputMethod === "drawn" && signatureEntry.imageDataUrl ? (
+          {signatureEntry?.inputMethod === "drawn" &&
+          signatureEntry.imageDataUrl ? (
             <span className="relative block h-full w-full">
               <Image
                 alt={`${field.type === "initials" ? "Initials" : "Signature"} preview`}
@@ -1094,7 +1190,9 @@ function CurrentSignerField({
                     ? typedSignatureFont
                     : undefined,
                 fontSize:
-                  signatureEntry.inputMethod === "typed" ? "1.05rem" : undefined,
+                  signatureEntry.inputMethod === "typed"
+                    ? "1.05rem"
+                    : undefined,
               }}
             >
               {signatureEntry.value}

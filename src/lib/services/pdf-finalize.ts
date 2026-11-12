@@ -20,6 +20,8 @@ import {
 import type { FieldRecord } from "../schemas/field.ts";
 import type { SignerRecord } from "../schemas/signer.ts";
 import { normalizedRectToPdfRect } from "../utils/pdf-coords.ts";
+import { sha256Hex } from "./pdf-seal.ts";
+import { saveInstallSealedPdf, type SealPurpose } from "./seal-identity.ts";
 import {
   buildEnvelopeCertificateKey,
   buildEnvelopeSignedPdfKey,
@@ -44,11 +46,64 @@ const DEFAULT_AUDIT_PAGE_SIZE = {
 
 let typedSignatureFontBytesPromise: Promise<Uint8Array> | null = null;
 
-export type FinalizedEnvelopeArtifacts = {
-  certificate: StorageObjectRef;
-  generatedAt: number;
-  signedPdf: StorageObjectRef;
+export type StoredSealedPdf = StorageObjectRef & {
+  body: Uint8Array;
+  sha256: string;
 };
+
+export type FinalizedEnvelopeArtifacts = {
+  certificate: StoredSealedPdf;
+  generatedAt: number;
+  recipientCertificate: StoredSealedPdf;
+  signedPdf: StoredSealedPdf;
+};
+
+/** Saves a finished PDF. The default seals it with the install's key. */
+export type PdfSealer = (
+  pdfDocument: PDFDocument,
+  purpose: SealPurpose,
+) => Promise<Uint8Array>;
+
+const defaultSealer: PdfSealer = (pdfDocument, purpose) =>
+  saveInstallSealedPdf(pdfDocument, purpose);
+
+/**
+ * Standard PDF fonts can only draw Windows-1252 text. Evidence lines carry
+ * text from browsers and email providers, so anything outside Latin-1
+ * becomes "?".
+ */
+function toPrintable(value: string): string {
+  return value.replace(/[^\x20-\x7e\xa0-\xff]/g, "?");
+}
+
+const CERTIFICATE_FINGERPRINT_VERSION = 1;
+
+/**
+ * A SHA-256 over every audit event the certificate is built from, in order,
+ * unredacted. Printed on both certificates, so the record held by the sender
+ * can later be shown to be the one the certificate was made from.
+ */
+export function computeAuditFingerprint(
+  auditEvents: readonly AuditEventRecord[],
+): string {
+  return sha256Hex(
+    new TextEncoder().encode(
+      JSON.stringify({
+        events: auditEvents.map((event) => [
+          event.id,
+          event.createdAt,
+          event.event,
+          event.actorType,
+          event.actorEmail ?? null,
+          event.ipAddress ?? null,
+          event.userAgent ?? null,
+          event.metadata ?? null,
+        ]),
+        version: CERTIFICATE_FINGERPRINT_VERSION,
+      }),
+    ),
+  );
+}
 
 export class PdfFinalizeError extends Error {
   constructor(message: string) {
@@ -467,6 +522,7 @@ async function stampFieldValue(
 
 function buildAuditLines(input: {
   auditEvents: AuditEventRecord[];
+  auditFingerprint?: string | null;
   completedAt: number;
   envelope: EnvelopeRecord;
   fonts: {
@@ -475,6 +531,7 @@ function buildAuditLines(input: {
   };
   maxWidth: number;
   redactForRecipients?: boolean;
+  signedPdfSha256?: string | null;
   signers: SignerRecord[];
 }) {
   const titleFontSize = 18;
@@ -542,6 +599,22 @@ function buildAuditLines(input: {
     input.fonts.regular,
     bodyFontSize,
   );
+  if (input.signedPdfSha256) {
+    pushParagraph(
+      `Signed document SHA-256: ${input.signedPdfSha256}`,
+      input.fonts.regular,
+      bodyFontSize,
+    );
+  }
+
+  if (input.auditFingerprint) {
+    pushParagraph(
+      `Audit trail fingerprint (SHA-256): ${input.auditFingerprint}`,
+      input.fonts.regular,
+      bodyFontSize,
+    );
+  }
+
   pushParagraph(
     `Status: ${getEnvelopeStatusLabel(input.envelope.status)}`,
     input.fonts.regular,
@@ -561,15 +634,20 @@ function buildAuditLines(input: {
   });
 
   for (const signer of input.signers) {
-    const actionLabel = getSignerCertificateActionLabel(
-      input.envelope,
-      signer,
-    );
+    const actionLabel = getSignerCertificateActionLabel(input.envelope, signer);
     const signerLabel = input.redactForRecipients
       ? `${signer.signOrder}. ${signer.name} | ${actionLabel}`
       : `${signer.signOrder}. ${signer.name} <${signer.email}> | ${actionLabel}`;
 
     pushParagraph(signerLabel, input.fonts.regular, bodyFontSize);
+
+    for (const detail of describeSignerEvidence(
+      signer,
+      input.auditEvents,
+      Boolean(input.redactForRecipients),
+    )) {
+      pushParagraph(`   ${detail}`, input.fonts.regular, bodyFontSize);
+    }
   }
 
   pushParagraph("Audit events", input.fonts.bold, sectionFontSize, {
@@ -591,13 +669,153 @@ function buildAuditLines(input: {
       signerName && actor !== signerName ? `${signerName} <${actor}>` : actor;
 
     pushParagraph(
-      `${formatAuditTimestamp(event.createdAt)} | ${event.event} | ${actorLabel}`,
+      toPrintable(
+        `${formatAuditTimestamp(event.createdAt)} | ${event.event} | ${actorLabel}`,
+      ),
       input.fonts.regular,
       bodyFontSize,
     );
+
+    for (const detail of describeEventEvidence(event)) {
+      pushParagraph(
+        toPrintable(`   ${detail}`),
+        input.fonts.regular,
+        bodyFontSize,
+      );
+    }
   }
 
+  pushParagraph("How to check this record", input.fonts.bold, sectionFontSize, {
+    gapAfter: 4,
+    gapBefore: 10,
+  });
+  pushParagraph(
+    "The signed document and this certificate are each sealed with a digital signature. A PDF reader shows the seal as valid only if the file has not changed since it was sealed. The SHA-256 values above can also be checked on this site's Verify page.",
+    input.fonts.regular,
+    bodyFontSize,
+  );
+
   return lines;
+}
+
+const AUTHENTICATION_LABELS: Record<string, string> = {
+  access_code: "access code from the sender",
+  email_code: "one-time code sent by email",
+};
+
+function readStringArray(value: unknown): string[] {
+  return Array.isArray(value)
+    ? value.filter((item): item is string => typeof item === "string")
+    : [];
+}
+
+/** What the record shows about how one signer was identified and agreed. */
+function describeSignerEvidence(
+  signer: SignerRecord,
+  auditEvents: readonly AuditEventRecord[],
+  redacted: boolean,
+): string[] {
+  const forSigner = auditEvents.filter(
+    (event) => event.metadata?.signerId === signer.id,
+  );
+  const details: string[] = [];
+  const signed = forSigner.find((event) => event.event === "signed");
+  const consented = forSigner.find((event) => event.event === "consented");
+  const checks = [
+    "possession of the emailed signing link",
+    ...readStringArray(signed?.metadata?.authMethods).map(
+      (method) => AUTHENTICATION_LABELS[method] ?? method,
+    ),
+  ];
+
+  if (signed || signer.status === "declined") {
+    details.push(`Identified by: ${checks.join(", ")}`);
+  }
+
+  if (consented) {
+    details.push(
+      `Agreed to use electronic records and signatures at ${formatAuditTimestamp(consented.createdAt)}${
+        typeof consented.metadata?.disclosureVersion === "string"
+          ? ` (disclosure ${consented.metadata.disclosureVersion})`
+          : ""
+      }`,
+    );
+  }
+
+  const methods = readStringArray(signed?.metadata?.signatureMethods);
+
+  if (methods.length > 0) {
+    details.push(`Signature adopted by: ${methods.join(", ")}`);
+  }
+
+  if (!redacted && signed?.ipAddress) {
+    details.push(`Signed from IP ${signed.ipAddress}`);
+  }
+
+  return details;
+}
+
+function describeEventEvidence(event: AuditEventRecord): string[] {
+  const details: string[] = [];
+  const metadata = event.metadata ?? {};
+
+  if (event.ipAddress || event.userAgent) {
+    details.push(
+      [
+        event.ipAddress ? `IP ${event.ipAddress}` : null,
+        event.userAgent ? `browser ${event.userAgent.slice(0, 160)}` : null,
+      ]
+        .filter(Boolean)
+        .join(" | "),
+    );
+  }
+
+  if (typeof metadata.timezoneOffsetMinutes === "number") {
+    const offset = -metadata.timezoneOffsetMinutes;
+    const sign = offset >= 0 ? "+" : "-";
+    const hours = Math.floor(Math.abs(offset) / 60);
+    const minutes = Math.abs(offset) % 60;
+
+    details.push(
+      `signer's clock: UTC${sign}${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}`,
+    );
+  }
+
+  if (event.event === "email_sent") {
+    const recipient =
+      typeof metadata.recipient === "string" ? metadata.recipient : null;
+    const kind =
+      typeof metadata.template === "string" ? metadata.template : null;
+    const messageId =
+      typeof metadata.messageId === "string" ? metadata.messageId : null;
+
+    details.push(
+      [
+        kind ? `email ${kind.replaceAll("_", " ")}` : "email",
+        recipient ? `to ${recipient}` : null,
+        messageId ? `accepted by the mail provider as ${messageId}` : null,
+      ]
+        .filter(Boolean)
+        .join(" "),
+    );
+  }
+
+  if (event.event === "verified" && typeof metadata.method === "string") {
+    details.push(
+      `passed: ${AUTHENTICATION_LABELS[metadata.method] ?? metadata.method}`,
+    );
+  }
+
+  if (
+    event.event === "verification_failed" &&
+    typeof metadata.method === "string"
+  ) {
+    details.push(
+      `wrong ${AUTHENTICATION_LABELS[metadata.method] ?? metadata.method}`,
+    );
+  }
+
+  return details;
 }
 
 function getSignerCertificateActionLabel(
@@ -630,6 +848,7 @@ function getSignerCertificateActionLabel(
 
 function appendAuditTrailPages(input: {
   auditEvents: AuditEventRecord[];
+  auditFingerprint?: string | null;
   completedAt: number;
   envelope: EnvelopeRecord;
   fonts: {
@@ -638,6 +857,7 @@ function appendAuditTrailPages(input: {
   };
   pdfDocument: PDFDocument;
   redactForRecipients?: boolean;
+  signedPdfSha256?: string | null;
   signers: SignerRecord[];
 }) {
   const templatePage = input.pdfDocument.getPageCount()
@@ -654,11 +874,13 @@ function appendAuditTrailPages(input: {
   const lineHeightMultiplier = 1.24;
   const lines = buildAuditLines({
     auditEvents: input.auditEvents,
+    auditFingerprint: input.auditFingerprint,
     completedAt: input.completedAt,
     envelope: input.envelope,
     fonts: input.fonts,
     maxWidth,
     redactForRecipients: input.redactForRecipients,
+    signedPdfSha256: input.signedPdfSha256,
     signers: input.signers,
   });
 
@@ -688,65 +910,64 @@ function appendAuditTrailPages(input: {
   }
 }
 
-export async function storeEnvelopeCertificatePdf(input: {
+type CertificateInput = {
   auditEvents: AuditEventRecord[];
   envelope: EnvelopeRecord;
-  certificate: StorageObjectRef;
   redactForRecipients?: boolean;
+  /** The finished signed PDF's SHA-256, printed when there is one. */
+  signedPdfSha256?: string | null;
   signers: SignerRecord[];
-  },
-  {
-    storageService = createStorageService(),
-  }: {
-    storageService?: StorageService;
-  } = {},
-): Promise<StorageObjectRef> {
+};
+
+type SealOption = {
+  seal?: PdfSealer;
+};
+
+function assertTerminalEnvelope(envelope: EnvelopeRecord, noun: string) {
   if (
-    input.envelope.status !== "completed" &&
-    input.envelope.status !== "declined" &&
-    input.envelope.status !== "voided"
+    envelope.status !== "completed" &&
+    envelope.status !== "declined" &&
+    envelope.status !== "voided"
   ) {
     throw new PdfFinalizeError(
-      "Certificates can only be generated for terminal envelopes.",
+      `${noun} can only be generated for terminal envelopes.`,
     );
   }
+}
 
-  const body = await renderEnvelopeCertificatePdf({
-    auditEvents: input.auditEvents,
-    envelope: input.envelope,
-    redactForRecipients: input.redactForRecipients,
-    signers: input.signers,
-  });
+export async function storeEnvelopeCertificatePdf(
+  input: CertificateInput & { certificate: StorageObjectRef },
+  {
+    seal,
+    storageService = createStorageService(),
+  }: SealOption & {
+    storageService?: StorageService;
+  } = {},
+): Promise<StoredSealedPdf> {
+  assertTerminalEnvelope(input.envelope, "Certificates");
 
-  return storageService.putObject({
+  const body = await renderEnvelopeCertificatePdf(input, { seal });
+  const stored = await storageService.putObject({
     body,
     contentType: "application/pdf",
     key: input.certificate.key,
   });
+
+  return { ...stored, body, sha256: sha256Hex(body) };
 }
 
 export async function storeRecipientEnvelopeCertificatePdf(
-  input: {
-    auditEvents: AuditEventRecord[];
+  input: Omit<CertificateInput, "redactForRecipients"> & {
     certificate: StorageObjectRef;
-    envelope: EnvelopeRecord;
-    signers: SignerRecord[];
   },
   {
+    seal,
     storageService = createStorageService(),
-  }: {
+  }: SealOption & {
     storageService?: StorageService;
   } = {},
-): Promise<StorageObjectRef> {
-  if (
-    input.envelope.status !== "completed" &&
-    input.envelope.status !== "declined" &&
-    input.envelope.status !== "voided"
-  ) {
-    throw new PdfFinalizeError(
-      "Evidence bundles can only be generated for terminal envelopes.",
-    );
-  }
+): Promise<StoredSealedPdf> {
+  assertTerminalEnvelope(input.envelope, "Evidence bundles");
 
   return storeEnvelopeCertificatePdf(
     {
@@ -754,26 +975,17 @@ export async function storeRecipientEnvelopeCertificatePdf(
       redactForRecipients: true,
     },
     {
+      seal,
       storageService,
     },
   );
 }
 
-export async function renderEnvelopeCertificatePdf(input: {
-  auditEvents: AuditEventRecord[];
-  envelope: EnvelopeRecord;
-  redactForRecipients?: boolean;
-  signers: SignerRecord[];
-}): Promise<Uint8Array> {
-  if (
-    input.envelope.status !== "completed" &&
-    input.envelope.status !== "declined" &&
-    input.envelope.status !== "voided"
-  ) {
-    throw new PdfFinalizeError(
-      "Certificates can only be generated for terminal envelopes.",
-    );
-  }
+export async function renderEnvelopeCertificatePdf(
+  input: CertificateInput,
+  { seal = defaultSealer }: SealOption = {},
+): Promise<Uint8Array> {
+  assertTerminalEnvelope(input.envelope, "Certificates");
 
   const pdfDocument = await PDFDocument.create();
   const auditRegularFont = await pdfDocument.embedFont(StandardFonts.Helvetica);
@@ -789,6 +1001,9 @@ export async function renderEnvelopeCertificatePdf(input: {
     auditEvents: input.redactForRecipients
       ? input.auditEvents.map(redactAuditEventForRecipients)
       : input.auditEvents,
+    auditFingerprint: computeAuditFingerprint(
+      stripCompletedAuditEvents(input.auditEvents),
+    ),
     completedAt: terminalTimestamp,
     envelope: input.envelope,
     fonts: {
@@ -797,12 +1012,24 @@ export async function renderEnvelopeCertificatePdf(input: {
     },
     pdfDocument,
     redactForRecipients: input.redactForRecipients,
+    signedPdfSha256: input.signedPdfSha256,
     signers: input.signers,
   });
+  pdfDocument.setTitle(
+    `Audit certificate: ${toPrintable(input.envelope.title)}`,
+  );
+  pdfDocument.setProducer("SignuDoc");
 
-  return pdfDocument.save({
-    useObjectStreams: false,
-  });
+  return seal(pdfDocument, "certificate");
+}
+
+export class SourceDocumentChangedError extends PdfFinalizeError {
+  constructor() {
+    super(
+      "The stored source document no longer matches the one that was sent for signing.",
+    );
+    this.name = "SourceDocumentChangedError";
+  }
 }
 
 export async function renderFinalizedEnvelopePdf(
@@ -816,12 +1043,20 @@ export async function renderFinalizedEnvelopePdf(
     sourcePdfKey: string;
   },
   {
+    seal = defaultSealer,
     storageService = createStorageService(),
-  }: {
+  }: SealOption & {
     storageService?: StorageService;
   } = {},
 ): Promise<Uint8Array> {
   const sourcePdfObject = await storageService.getObject(input.sourcePdfKey);
+
+  // The certificate states the source document's hash, so the stamped copy
+  // must be made from exactly that file.
+  if (sha256Hex(sourcePdfObject.body) !== input.envelope.sourcePdfHash) {
+    throw new SourceDocumentChangedError();
+  }
+
   const pdfDocument = await PDFDocument.load(sourcePdfObject.body);
 
   pdfDocument.registerFontkit(fontkit);
@@ -880,9 +1115,7 @@ export async function renderFinalizedEnvelopePdf(
     });
   }
 
-  return pdfDocument.save({
-    useObjectStreams: false,
-  });
+  return seal(pdfDocument, "signed-document");
 }
 
 export async function finalizeEnvelope(
@@ -894,8 +1127,9 @@ export async function finalizeEnvelope(
     sourcePdf: StorageObjectRef;
   },
   {
+    seal,
     storageService = createStorageService(),
-  }: {
+  }: SealOption & {
     storageService?: StorageService;
   } = {},
 ): Promise<FinalizedEnvelopeArtifacts> {
@@ -914,25 +1148,31 @@ export async function finalizeEnvelope(
       sourcePdfKey: input.sourcePdf.key,
     },
     {
+      seal,
       storageService,
     },
   );
+  const signedPdfSha256 = sha256Hex(signedPdfBytes);
   const completedEnvelope = {
     ...input.envelope,
     completedAt: generatedAt,
     status: "completed" as const,
     updatedAt: generatedAt,
   };
-  let signedPdf: StorageObjectRef | null = null;
-  let certificate: StorageObjectRef | null = null;
-  let recipientCertificate: StorageObjectRef | null = null;
+  let signedPdf: StoredSealedPdf | null = null;
+  let certificate: StoredSealedPdf | null = null;
+  let recipientCertificate: StoredSealedPdf | null = null;
 
   try {
-    signedPdf = await storageService.putObject({
+    signedPdf = {
+      ...(await storageService.putObject({
+        body: signedPdfBytes,
+        contentType: "application/pdf",
+        key: buildEnvelopeSignedPdfKey(storageIdentity),
+      })),
       body: signedPdfBytes,
-      contentType: "application/pdf",
-      key: buildEnvelopeSignedPdfKey(storageIdentity),
-    });
+      sha256: signedPdfSha256,
+    };
 
     certificate = await storeEnvelopeCertificatePdf(
       {
@@ -945,9 +1185,11 @@ export async function finalizeEnvelope(
           }),
         },
         envelope: completedEnvelope,
+        signedPdfSha256,
         signers: input.signers,
       },
       {
+        seal,
         storageService,
       },
     );
@@ -962,9 +1204,11 @@ export async function finalizeEnvelope(
           }),
         },
         envelope: completedEnvelope,
+        signedPdfSha256,
         signers: input.signers,
       },
       {
+        seal,
         storageService,
       },
     );
@@ -972,6 +1216,7 @@ export async function finalizeEnvelope(
     return {
       certificate,
       generatedAt,
+      recipientCertificate,
       signedPdf,
     };
   } catch (error) {
