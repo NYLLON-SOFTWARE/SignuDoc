@@ -1,11 +1,17 @@
 import { type DbPool, queryMany, withTransaction } from "./db/connection.ts";
 import { formatDeadline } from "./envelope-deadline.ts";
+import { sendAutomaticEnvelopeReminder } from "./reminders.ts";
 import { lockEnvelopeAuditChain, recordAuditEvent } from "./services/audit.ts";
 import { createEmailService, type EmailService } from "./services/email.ts";
+import { AUTOMATIC_REMINDER_SLACK_SECONDS } from "./services/reminders.ts";
 import { resolveAppUrl } from "./utils/env.ts";
 
-// What the daily job does for envelopes that are out for signature: it tells
-// a sender once when a deadline has passed with signatures still missing.
+// What the daily job does for envelopes that are out for signature:
+//
+// - it tells a sender once when a deadline has passed with signatures still
+//   missing;
+// - it reminds the signer whose turn it is, on envelopes whose sender asked
+//   for automatic reminders.
 //
 // It runs from the same cron call as the cleanup (see retention-job.ts), so
 // an install needs no second schedule. Each envelope is claimed in the
@@ -14,10 +20,26 @@ import { resolveAppUrl } from "./utils/env.ts";
 // never sends twice.
 
 const BATCH_SIZE = 200;
+// The job shares one function call with the cleanup, and a mail provider
+// takes about half a second per message. Past this, what is left waits for
+// the next run instead of risking the call being cut off mid-send.
+const TIME_BUDGET_MS = 60_000;
 
 export type EnvelopeScheduleSummary = {
   expiryNoticeFailures: string[];
   expiryNoticesSent: number;
+  reminderFailures: string[];
+  remindersSent: number;
+  /** True when the time ran out and some envelopes wait for the next run. */
+  stoppedEarly: boolean;
+};
+
+type ScheduleRun = {
+  database: DbPool;
+  emailService: () => EmailService;
+  now: number;
+  outOfTime: () => boolean;
+  summary: EnvelopeScheduleSummary;
 };
 
 type ExpiredEnvelopeRow = {
@@ -164,15 +186,21 @@ function buildExpiryNotice(envelope: ExpiredEnvelopeRow) {
   };
 }
 
-async function sendExpiryNotices(
-  now: number,
-  database: DbPool,
-  emailService: () => EmailService,
-  summary: EnvelopeScheduleSummary,
-): Promise<void> {
+async function sendExpiryNotices({
+  database,
+  emailService,
+  now,
+  outOfTime,
+  summary,
+}: ScheduleRun): Promise<void> {
   const expired = await listExpiredEnvelopesToNotify(now, database);
 
   for (const envelope of expired) {
+    if (outOfTime()) {
+      summary.stoppedEarly = true;
+      return;
+    }
+
     try {
       if (!(await claimExpiryNotice(envelope, now, database))) {
         continue;
@@ -203,25 +231,115 @@ async function sendExpiryNotices(
   }
 }
 
+/**
+ * Envelopes whose current signer has heard nothing for the envelope's
+ * reminder interval. Expired ones are left out: their link is dead, and the
+ * sender has been told.
+ */
+async function listEnvelopesDueForReminder(
+  now: number,
+  database: DbPool,
+): Promise<string[]> {
+  const rows = await queryMany<{ id: string }>(
+    database,
+    `
+      SELECT e.id
+      FROM envelopes e
+      JOIN signers s
+        ON s.envelope_id = e.id
+        AND s.status = 'notified'
+      WHERE e.status = 'sent'
+        AND e.reminder_interval_days IS NOT NULL
+        AND (e.expires_at IS NULL OR e.expires_at > $1)
+        AND GREATEST(
+          COALESCE(s.last_notified_at, 0),
+          COALESCE(s.last_nudged_at, 0)
+        ) > 0
+        AND GREATEST(
+          COALESCE(s.last_notified_at, 0),
+          COALESCE(s.last_nudged_at, 0)
+        ) + e.reminder_interval_days * 86400 - $2 <= $1
+      ORDER BY
+        GREATEST(
+          COALESCE(s.last_notified_at, 0),
+          COALESCE(s.last_nudged_at, 0)
+        ) ASC,
+        e.id ASC
+      LIMIT ${BATCH_SIZE}
+    `,
+    [now, AUTOMATIC_REMINDER_SLACK_SECONDS],
+  );
+
+  return rows.map((row) => row.id);
+}
+
+async function sendAutomaticReminders({
+  database,
+  emailService,
+  now,
+  outOfTime,
+  summary,
+}: ScheduleRun): Promise<void> {
+  for (const envelopeId of await listEnvelopesDueForReminder(now, database)) {
+    if (outOfTime()) {
+      summary.stoppedEarly = true;
+      return;
+    }
+
+    try {
+      const sent = await sendAutomaticEnvelopeReminder(envelopeId, {
+        database,
+        emailService: emailService(),
+        nowUnixTimestamp: now,
+      });
+
+      if (sent) {
+        summary.remindersSent += 1;
+      }
+    } catch (error) {
+      summary.reminderFailures.push(envelopeId);
+      console.error(
+        `Automatic reminder failed for envelope ${envelopeId}:`,
+        error,
+      );
+    }
+  }
+}
+
 export async function runEnvelopeSchedule({
   database,
   emailService,
   now = Math.floor(Date.now() / 1000),
+  timeBudgetMs = TIME_BUDGET_MS,
 }: {
   database: DbPool;
   emailService?: EmailService;
   now?: number;
+  timeBudgetMs?: number;
 }): Promise<EnvelopeScheduleSummary> {
   const summary: EnvelopeScheduleSummary = {
     expiryNoticeFailures: [],
     expiryNoticesSent: 0,
+    reminderFailures: [],
+    remindersSent: 0,
+    stoppedEarly: false,
   };
+  const stopAt = Date.now() + timeBudgetMs;
   let service = emailService;
   // Made only when there is something to send: an install without email
   // set up yet must not fail the whole job.
   const getEmailService = () => (service ??= createEmailService());
 
-  await sendExpiryNotices(now, database, getEmailService, summary);
+  const run: ScheduleRun = {
+    database,
+    emailService: getEmailService,
+    now,
+    outOfTime: () => Date.now() >= stopAt,
+    summary,
+  };
+
+  await sendExpiryNotices(run);
+  await sendAutomaticReminders(run);
 
   return summary;
 }
@@ -229,5 +347,8 @@ export async function runEnvelopeSchedule({
 export function envelopeScheduleFailed(
   summary: EnvelopeScheduleSummary,
 ): boolean {
-  return summary.expiryNoticeFailures.length > 0;
+  return (
+    summary.expiryNoticeFailures.length > 0 ||
+    summary.reminderFailures.length > 0
+  );
 }

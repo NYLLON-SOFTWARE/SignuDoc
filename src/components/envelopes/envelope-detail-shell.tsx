@@ -25,9 +25,11 @@ import type {
   EnvelopeDetailData,
   EnvelopeDetailTimelineItem,
 } from "@/lib/envelopes";
+import { formatReminderInterval } from "@/lib/services/reminders";
 import {
   DEFAULT_ENVELOPE_DEADLINE_DAYS,
   ENVELOPE_DEADLINE_DAY_OPTIONS,
+  ENVELOPE_REMINDER_DAY_OPTIONS,
 } from "@/lib/types/domain";
 import { getSignerPalette } from "./signer-palette";
 
@@ -64,7 +66,12 @@ type EnvelopeDetailRecord = {
   title: string;
 };
 
-type ModalState = "change-deadline" | "delete-draft" | "void-envelope" | null;
+type ModalState =
+  | "change-deadline"
+  | "change-reminders"
+  | "delete-draft"
+  | "void-envelope"
+  | null;
 
 const statusPillClasses: Record<EnvelopeStatus, string> = {
   completed: "pill-success",
@@ -118,6 +125,7 @@ export function EnvelopeDetailShell({
   const [activeModal, setActiveModal] = useState<ModalState>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const [isChangingDeadline, setIsChangingDeadline] = useState(false);
+  const [isChangingReminders, setIsChangingReminders] = useState(false);
   const [isDeletingDraft, setIsDeletingDraft] = useState(false);
   const [isSendingReminder, setIsSendingReminder] = useState(false);
   const [isVoidingEnvelope, setIsVoidingEnvelope] = useState(false);
@@ -193,6 +201,11 @@ export function EnvelopeDetailShell({
       : deadline.expiresAtLabel
         ? `Expires ${deadline.expiresAtLabel}.`
         : "No deadline. Each signing link lasts seven days.";
+  const reminderIntervalDays = record.reminderIntervalDays ?? null;
+  const remindersText =
+    reminderIntervalDays === null
+      ? "Automatic reminders are off."
+      : `Automatic reminders: ${formatReminderInterval(reminderIntervalDays).toLowerCase()}.`;
   const activeSigner =
     activeRecord.status === "sent"
       ? activeRecord.signers.find((signer) => signer.status === "waiting")
@@ -262,6 +275,33 @@ export function EnvelopeDetailShell({
       setActionError("Unable to change the deadline.");
     } finally {
       setIsChangingDeadline(false);
+    }
+  }
+
+  async function handleConfirmChangeReminders(intervalDays: number | null) {
+    setActionError(null);
+    setIsChangingReminders(true);
+
+    try {
+      const response = await fetch(`/api/envelopes/${envelopeId}/reminders`, {
+        body: JSON.stringify({ reminderIntervalDays: intervalDays }),
+        headers: { "content-type": "application/json" },
+        method: "POST",
+      });
+      const payload = (await response.json().catch(() => null)) as {
+        error?: string;
+      } | null;
+
+      if (response.ok || response.status === 404 || response.status === 409) {
+        window.location.reload();
+        return;
+      }
+
+      setActionError(payload?.error ?? "Unable to change the reminders.");
+    } catch {
+      setActionError("Unable to change the reminders.");
+    } finally {
+      setIsChangingReminders(false);
     }
   }
 
@@ -462,6 +502,24 @@ export function EnvelopeDetailShell({
           </div>
         ) : null}
 
+        {deadline ? (
+          <div className="well mt-3 flex flex-col gap-3 px-5 py-3.5 sm:flex-row sm:items-center sm:justify-between">
+            <p className="text-sm leading-6 text-(--secondary)">
+              {remindersText}
+            </p>
+            <button
+              className="btn-quiet shrink-0"
+              onClick={() => {
+                setActionError(null);
+                setActiveModal("change-reminders");
+              }}
+              type="button"
+            >
+              Change reminders
+            </button>
+          </div>
+        ) : null}
+
         {actionError ? (
           <div className="notice notice-danger mt-5" role="alert">
             {actionError}
@@ -588,6 +646,16 @@ export function EnvelopeDetailShell({
         />
       ) : null}
 
+      {activeModal === "change-reminders" ? (
+        <RemindersDialog
+          errorMessage={actionError}
+          initialIntervalDays={reminderIntervalDays}
+          onCancel={() => setActiveModal(null)}
+          onConfirm={handleConfirmChangeReminders}
+          processing={isChangingReminders}
+        />
+      ) : null}
+
       {activeModal === "delete-draft" ? (
         <ConfirmationDialog
           confirmLabel="Delete draft"
@@ -701,6 +769,109 @@ function DeadlineDialog({
             </ShellButton>
             <ShellButton loading={processing} onClick={() => onConfirm(days)}>
               {processing ? "Saving..." : "Save deadline"}
+            </ShellButton>
+          </div>
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+type RemindersDialogProps = {
+  errorMessage?: string | null;
+  initialIntervalDays: number | null;
+  onCancel: () => void;
+  onConfirm: (intervalDays: number | null) => void | Promise<void>;
+  processing?: boolean;
+};
+
+function RemindersDialog({
+  errorMessage,
+  initialIntervalDays,
+  onCancel,
+  onConfirm,
+  processing = false,
+}: RemindersDialogProps) {
+  const [intervalDays, setIntervalDays] = useState<number | null>(
+    initialIntervalDays,
+  );
+  // An interval set some other way than these choices is still offered.
+  const options = [
+    ...new Set([
+      ...ENVELOPE_REMINDER_DAY_OPTIONS,
+      ...(initialIntervalDays === null ? [] : [initialIntervalDays]),
+    ]),
+  ].sort((left, right) => left - right);
+
+  return (
+    <Dialog
+      open
+      onOpenChange={(open) => {
+        if (!open && !processing) {
+          onCancel();
+        }
+      }}
+    >
+      <DialogContent className="max-w-md sm:p-8" showCloseButton={false}>
+        <div className="space-y-4">
+          <DialogHeader className="space-y-3">
+            <DialogTitle>Automatic reminders</DialogTitle>
+            <DialogDescription asChild>
+              <div className="space-y-2 text-sm leading-6 text-(--secondary)">
+                <p>
+                  A reminder goes to the signer whose turn it is when they have
+                  not heard from you for this long. Reminders stop once everyone
+                  has signed or the deadline passes.
+                </p>
+              </div>
+            </DialogDescription>
+          </DialogHeader>
+
+          <label className="grid gap-1.5">
+            <span className="text-[0.8125rem] font-semibold text-(--secondary)">
+              Send a reminder
+            </span>
+            <select
+              autoFocus
+              className="field-input"
+              disabled={processing}
+              onChange={(event) =>
+                setIntervalDays(
+                  event.target.value === "off"
+                    ? null
+                    : Number(event.target.value),
+                )
+              }
+              value={intervalDays ?? "off"}
+            >
+              <option value="off">{formatReminderInterval(null)}</option>
+              {options.map((option) => (
+                <option key={option} value={option}>
+                  {formatReminderInterval(option)}
+                </option>
+              ))}
+            </select>
+          </label>
+
+          {errorMessage ? (
+            <div className="notice notice-danger" role="alert">
+              <p>{errorMessage}</p>
+            </div>
+          ) : null}
+
+          <div className="flex flex-col-reverse gap-3 pt-2 sm:flex-row sm:justify-end">
+            <ShellButton
+              disabled={processing}
+              onClick={onCancel}
+              variant="secondary"
+            >
+              Cancel
+            </ShellButton>
+            <ShellButton
+              loading={processing}
+              onClick={() => onConfirm(intervalDays)}
+            >
+              {processing ? "Saving..." : "Save reminders"}
             </ShellButton>
           </div>
         </div>

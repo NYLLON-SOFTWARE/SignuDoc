@@ -17,9 +17,12 @@ import {
 } from "@/components/ui/dialog";
 import type { ReviewEnvelopeData } from "@/lib/envelopes";
 import { PERMITTED_USE_PATH } from "@/lib/permitted-uses";
+import { formatReminderInterval } from "@/lib/services/reminders";
 import {
   DEFAULT_ENVELOPE_DEADLINE_DAYS,
+  DEFAULT_ENVELOPE_REMINDER_DAYS,
   ENVELOPE_DEADLINE_DAY_OPTIONS,
+  ENVELOPE_REMINDER_DAY_OPTIONS,
 } from "@/lib/types/domain";
 import { getSignerPalette } from "./signer-palette";
 
@@ -67,6 +70,9 @@ export function ReviewShell({
 }: ReviewShellProps) {
   const [deadlineDays, setDeadlineDays] = useState<number>(
     DEFAULT_ENVELOPE_DEADLINE_DAYS,
+  );
+  const [reminderDays, setReminderDays] = useState<number | null>(
+    DEFAULT_ENVELOPE_REMINDER_DAYS,
   );
   const [isConfirmationOpen, setIsConfirmationOpen] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
@@ -116,6 +122,7 @@ export function ReviewShell({
         body: JSON.stringify({
           expiresInDays: deadlineDays,
           permittedUseConfirmed: true,
+          reminderIntervalDays: reminderDays,
         }),
         headers: {
           "content-type": "application/json",
@@ -330,28 +337,55 @@ export function ReviewShell({
             </p>
 
             <div className="well mt-4 p-4">
-              <label className="grid gap-1.5 sm:max-w-xs">
-                <span className="text-[0.8125rem] font-semibold text-(--secondary)">
-                  Signing deadline
-                </span>
-                <select
-                  className="field-input"
-                  disabled={sendPhase === "sending" || Boolean(notice)}
-                  onChange={(event) =>
-                    setDeadlineDays(Number(event.target.value))
-                  }
-                  value={deadlineDays}
-                >
-                  {ENVELOPE_DEADLINE_DAY_OPTIONS.map((days) => (
-                    <option key={days} value={days}>
-                      {days} days
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <p className="mt-2 text-sm leading-6 text-(--secondary)">
-                Signing links stop working after this. You can change the
-                deadline later from the envelope.
+              <div className="grid gap-4 sm:grid-cols-2">
+                <label className="grid gap-1.5">
+                  <span className="text-[0.8125rem] font-semibold text-(--secondary)">
+                    Signing deadline
+                  </span>
+                  <select
+                    className="field-input"
+                    disabled={sendPhase === "sending" || Boolean(notice)}
+                    onChange={(event) =>
+                      setDeadlineDays(Number(event.target.value))
+                    }
+                    value={deadlineDays}
+                  >
+                    {ENVELOPE_DEADLINE_DAY_OPTIONS.map((days) => (
+                      <option key={days} value={days}>
+                        {days} days
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label className="grid gap-1.5">
+                  <span className="text-[0.8125rem] font-semibold text-(--secondary)">
+                    Automatic reminders
+                  </span>
+                  <select
+                    className="field-input"
+                    disabled={sendPhase === "sending" || Boolean(notice)}
+                    onChange={(event) =>
+                      setReminderDays(
+                        event.target.value === "off"
+                          ? null
+                          : Number(event.target.value),
+                      )
+                    }
+                    value={reminderDays ?? "off"}
+                  >
+                    <option value="off">{formatReminderInterval(null)}</option>
+                    {ENVELOPE_REMINDER_DAY_OPTIONS.map((days) => (
+                      <option key={days} value={days}>
+                        {formatReminderInterval(days)}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              </div>
+              <p className="mt-3 text-sm leading-6 text-(--secondary)">
+                Signing links stop working at the deadline. Reminders go to the
+                signer whose turn it is until they sign. You can change both
+                later from the envelope.
               </p>
             </div>
           </article>

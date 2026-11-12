@@ -175,14 +175,21 @@ export async function runRetentionJob({
       database,
       emailService,
     }).catch((error: unknown) => {
-      // A database from before deadlines has no column to read: nothing is
-      // due there. Anything else is a failure worth a red cron run.
+      // A database from before deadlines and reminders has no column to
+      // read: nothing is due there. Anything else is a failure worth a red
+      // cron run.
       if (!isMissingSchemaError(error)) {
         console.error("The envelope schedule failed:", error);
         return null;
       }
 
-      return { expiryNoticeFailures: [], expiryNoticesSent: 0 };
+      return {
+        expiryNoticeFailures: [],
+        expiryNoticesSent: 0,
+        reminderFailures: [],
+        remindersSent: 0,
+        stoppedEarly: false,
+      };
     });
 
     return { schedule, status: "ran", summary };

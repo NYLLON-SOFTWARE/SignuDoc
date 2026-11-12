@@ -22,12 +22,13 @@ import {
   recordAuditEvent,
   recordEmailSent,
 } from "./services/audit.ts";
-import { createEmailService } from "./services/email.ts";
+import { createEmailService, type EmailService } from "./services/email.ts";
 import { buildDeadlineLine } from "./services/signing-invitation-email.ts";
 import { withUserEmailLegalFooter } from "./services/email-legal-footer.ts";
 import {
   formatReminderAvailableAt,
   getManualNudgeAvailableAt,
+  isAutomaticReminderDue,
 } from "./services/reminders.ts";
 import {
   issueSigningLink,
@@ -38,6 +39,9 @@ import { escapeHtml } from "./utils/html.ts";
 type ReminderEnvelopeRow = {
   expiresAt: number | null;
   id: string;
+  ownerEmail: string;
+  ownerName: string | null;
+  reminderIntervalDays: number | null;
   status: EnvelopeRecord["status"];
   title: string;
   updatedAt: number;
@@ -65,7 +69,16 @@ type ManualNudgeInput = {
   userAgent?: string | null;
 };
 
-type PersistedManualNudge = {
+/**
+ * Who is asking for a reminder: the sender, by pressing the button, or the
+ * daily job, because the envelope's reminder interval has passed.
+ */
+type ReminderRequest =
+  | ({ kind: "manual"; userId: string } & ManualNudgeInput)
+  | { kind: "automatic" };
+
+type PersistedReminder = {
+  auditEventId: string;
   envelopeExpiresAt: number | null;
   envelopeId: string;
   envelopeTitle: string;
@@ -85,10 +98,12 @@ type PersistedManualNudge = {
   signerId: string;
   signerName: string;
   senderName: string;
+  userId: string;
 };
 
-type SendManualEnvelopeNudgeOptions = {
+type SendReminderOptions = {
   database?: DbPool;
+  emailService?: EmailService;
   nowUnixTimestamp?: number;
 };
 
@@ -116,24 +131,29 @@ export class ReminderMutationError extends Error {
   }
 }
 
-async function getEnvelopeByIdForUser(
+/** The envelope, and only for its owner when a user is given. */
+async function getReminderEnvelope(
   envelopeId: string,
-  userId: string,
+  userId: string | null,
   database: DbExecutor,
 ): Promise<ReminderEnvelopeRow | null> {
   return queryOne<ReminderEnvelopeRow>(
     database,
     `
       SELECT
-        id,
-        user_id AS "userId",
-        title,
-        status,
-        expires_at AS "expiresAt",
-        updated_at AS "updatedAt"
-      FROM envelopes
-      WHERE id = $1
-        AND user_id = $2
+        e.id,
+        e.user_id AS "userId",
+        e.title,
+        e.status,
+        e.expires_at AS "expiresAt",
+        e.reminder_interval_days AS "reminderIntervalDays",
+        e.updated_at AS "updatedAt",
+        u.email AS "ownerEmail",
+        u.name AS "ownerName"
+      FROM envelopes e
+      JOIN "user" u ON u.id = e.user_id
+      WHERE e.id = $1
+        AND ($2::text IS NULL OR e.user_id = $2)
     `,
     [envelopeId, userId],
   );
@@ -173,13 +193,19 @@ function buildReminderEmail(input: {
   envelopeId: string;
   envelopeTitle: string;
   expiresAt?: number | null;
+  kind: ReminderRequest["kind"];
   senderName: string;
   signerEmail: string;
   signerName: string;
   signingUrl: string;
 }) {
-  const subject = `${input.senderName} sent you a reminder to sign "${input.envelopeTitle}"`;
-  const introLine = `${input.senderName} sent you a reminder to sign "${input.envelopeTitle}" through ${input.branding.productName}.`;
+  const automatic = input.kind === "automatic";
+  const subject = automatic
+    ? `Reminder: ${input.senderName} is waiting for your signature on "${input.envelopeTitle}"`
+    : `${input.senderName} sent you a reminder to sign "${input.envelopeTitle}"`;
+  const introLine = automatic
+    ? `${input.senderName} is still waiting for your signature on "${input.envelopeTitle}", sent through ${input.branding.productName}.`
+    : `${input.senderName} sent you a reminder to sign "${input.envelopeTitle}" through ${input.branding.productName}.`;
   const deadlineLine = buildDeadlineLine(input.expiresAt);
   const textBody = [
     `Hi ${input.signerName},`,
@@ -212,20 +238,44 @@ function buildReminderEmail(input: {
   return {
     htmlBody: legalFooter.htmlBody,
     subject,
-    template: "manual_nudge" as const,
+    template: automatic
+      ? ("automatic_reminder" as const)
+      : ("manual_nudge" as const),
     textBody: legalFooter.textBody,
     to: input.signerEmail,
   };
 }
 
-async function persistManualNudge(
-  userId: string,
+/** Why the daily job should leave an envelope alone, or null to go ahead. */
+function getAutomaticReminderObstacle(
+  envelope: ReminderEnvelopeRow,
+  signer: ReminderSignerRow,
+  now: number,
+): string | null {
+  if (envelope.reminderIntervalDays === null) {
+    return "Automatic reminders are off for this envelope.";
+  }
+
+  return isAutomaticReminderDue(
+    {
+      intervalDays: envelope.reminderIntervalDays,
+      lastNotifiedAt: signer.lastNotifiedAt,
+      lastNudgedAt: signer.lastNudgedAt,
+    },
+    now,
+  )
+    ? null
+    : "This envelope's next reminder is not due yet.";
+}
+
+async function persistReminder(
   envelopeId: string,
-  input: ManualNudgeInput,
+  request: ReminderRequest,
   dispatchedAt: number,
   database: DbPool,
-): Promise<PersistedManualNudge> {
-  const envelope = await getEnvelopeByIdForUser(envelopeId, userId, database);
+): Promise<PersistedReminder> {
+  const userId = request.kind === "manual" ? request.userId : null;
+  const envelope = await getReminderEnvelope(envelopeId, userId, database);
 
   if (!envelope) {
     throw new ReminderMutationError("This envelope is unavailable.", 404);
@@ -263,11 +313,7 @@ async function persistManualNudge(
     issuedAt: dispatchedAt,
   });
   return withTransaction(async (tx) => {
-    const persistedEnvelope = await getEnvelopeByIdForUser(
-      envelopeId,
-      userId,
-      tx,
-    );
+    const persistedEnvelope = await getReminderEnvelope(envelopeId, userId, tx);
 
     if (!persistedEnvelope) {
       throw new ReminderMutationError("This envelope is unavailable.", 404);
@@ -297,7 +343,17 @@ async function persistManualNudge(
       );
     }
 
-    if (typeof persistedSigner.lastNudgedAt === "number") {
+    if (request.kind === "automatic") {
+      const obstacle = getAutomaticReminderObstacle(
+        persistedEnvelope,
+        persistedSigner,
+        dispatchedAt,
+      );
+
+      if (obstacle) {
+        throw new ReminderMutationError(obstacle, 409);
+      }
+    } else if (typeof persistedSigner.lastNudgedAt === "number") {
       const nextAvailableAt = getManualNudgeAvailableAt(
         persistedSigner.lastNudgedAt,
       );
@@ -319,10 +375,9 @@ async function persistManualNudge(
         UPDATE envelopes
         SET updated_at = $1
         WHERE id = $2
-          AND user_id = $3
           AND status = 'sent'
       `,
-      [dispatchedAt, envelopeId, userId],
+      [dispatchedAt, envelopeId],
     );
 
     const signerUpdate = await tx.query(
@@ -356,26 +411,39 @@ async function persistManualNudge(
       );
     }
 
-    await recordAuditEvent(
-      {
-        actorEmail: input.senderEmail,
-        actorType: "sender",
-        createdAt: dispatchedAt,
-        envelopeId,
-        event: "reminded_manual",
-        ipAddress: input.ipAddress ?? null,
-        metadata: {
-          signerEmail: persistedSigner.email,
-          signerId: persistedSigner.id,
-          signerName: persistedSigner.name,
-          signerOrder: persistedSigner.signOrder,
-        },
-        userAgent: input.userAgent ?? null,
-      },
+    const signerMetadata = {
+      signerEmail: persistedSigner.email,
+      signerId: persistedSigner.id,
+      signerName: persistedSigner.name,
+      signerOrder: persistedSigner.signOrder,
+    };
+    const auditEvent = await recordAuditEvent(
+      request.kind === "manual"
+        ? {
+            actorEmail: request.senderEmail,
+            actorType: "sender",
+            createdAt: dispatchedAt,
+            envelopeId,
+            event: "reminded_manual",
+            ipAddress: request.ipAddress ?? null,
+            metadata: signerMetadata,
+            userAgent: request.userAgent ?? null,
+          }
+        : {
+            actorType: "system",
+            createdAt: dispatchedAt,
+            envelopeId,
+            event: "reminded_auto",
+            metadata: {
+              ...signerMetadata,
+              intervalDays: persistedEnvelope.reminderIntervalDays,
+            },
+          },
       tx,
     );
 
     return {
+      auditEventId: auditEvent.id,
       envelopeExpiresAt: persistedEnvelope.expiresAt,
       envelopeId,
       envelopeTitle: persistedEnvelope.title,
@@ -390,32 +458,29 @@ async function persistManualNudge(
         signingTokenHash: persistedSigner.signingTokenHash,
         updatedAt: persistedSigner.updatedAt,
       },
-      senderName: input.senderName,
+      senderName:
+        request.kind === "manual"
+          ? request.senderName
+          : persistedEnvelope.ownerName?.trim() || persistedEnvelope.ownerEmail,
       signerEmail: persistedSigner.email,
       signerId: persistedSigner.id,
       signerName: persistedSigner.name,
+      userId: persistedEnvelope.userId,
     };
   }, database);
 }
 
-export async function sendManualEnvelopeNudge(
-  userId: string,
-  envelopeId: string,
-  input: ManualNudgeInput,
-  {
-    database = getDb(),
-    nowUnixTimestamp = Math.floor(Date.now() / 1000),
-  }: SendManualEnvelopeNudgeOptions = {},
-) {
-  const persisted = await persistManualNudge(
-    userId,
-    envelopeId,
-    input,
-    nowUnixTimestamp,
-    database,
-  );
-  const emailService = createEmailService();
-
+/**
+ * Sends the reminder that was just written to the database. If the email
+ * fails, the database is put back as it was and the error is passed on.
+ */
+async function deliverReminder(
+  persisted: PersistedReminder,
+  kind: ReminderRequest["kind"],
+  database: DbPool,
+  emailService: EmailService,
+): Promise<void> {
+  const template = kind === "automatic" ? "automatic_reminder" : "manual_nudge";
   let reminderMessageId: string | undefined;
 
   try {
@@ -426,6 +491,7 @@ export async function sendManualEnvelopeNudge(
           envelopeId: persisted.envelopeId,
           envelopeTitle: persisted.envelopeTitle,
           expiresAt: persisted.envelopeExpiresAt,
+          kind,
           senderName: persisted.senderName,
           signerEmail: persisted.signerEmail,
           signerName: persisted.signerName,
@@ -443,7 +509,11 @@ export async function sendManualEnvelopeNudge(
             AND user_id = $3
             AND status = 'sent'
         `,
-        [persisted.previousEnvelopeUpdatedAt, persisted.envelopeId, userId],
+        [
+          persisted.previousEnvelopeUpdatedAt,
+          persisted.envelopeId,
+          persisted.userId,
+        ],
       );
 
       await tx.query(
@@ -475,9 +545,7 @@ export async function sendManualEnvelopeNudge(
         `
           DELETE FROM audit_events
           WHERE envelope_id = $1
-            AND event = 'reminded_manual'
-            AND created_at = $2
-            AND actor_email = $3
+            AND id = $2
             -- Only while it is still the newest link of the audit chain: an
             -- event recorded after it (say, the invitation was opened before
             -- the send failed) chains to it, so it stays as history.
@@ -485,11 +553,11 @@ export async function sendManualEnvelopeNudge(
               SELECT max(sequence) FROM audit_events WHERE envelope_id = $1
             )
         `,
-        [persisted.envelopeId, nowUnixTimestamp, input.senderEmail],
+        [persisted.envelopeId, persisted.auditEventId],
       );
     }, database).catch((rollbackError) => {
       console.error(
-        `Failed to roll back manual reminder for envelope ${persisted.envelopeId} after email delivery failure:`,
+        `Failed to roll back a reminder for envelope ${persisted.envelopeId} after email delivery failure:`,
         rollbackError,
       );
     });
@@ -503,9 +571,34 @@ export async function sendManualEnvelopeNudge(
       messageId: reminderMessageId,
       recipient: persisted.signerEmail,
       signerId: persisted.signerId,
-      template: "manual_nudge",
+      template,
     },
     database,
+  );
+}
+
+export async function sendManualEnvelopeNudge(
+  userId: string,
+  envelopeId: string,
+  input: ManualNudgeInput,
+  {
+    database = getDb(),
+    emailService,
+    nowUnixTimestamp = Math.floor(Date.now() / 1000),
+  }: SendReminderOptions = {},
+) {
+  const persisted = await persistReminder(
+    envelopeId,
+    { ...input, kind: "manual", userId },
+    nowUnixTimestamp,
+    database,
+  );
+
+  await deliverReminder(
+    persisted,
+    "manual",
+    database,
+    emailService ?? createEmailService(),
   );
 
   return manualNudgeResponseSchema.parse({
@@ -516,4 +609,47 @@ export async function sendManualEnvelopeNudge(
     signerId: persisted.signerId,
     signerName: persisted.signerName,
   });
+}
+
+/**
+ * The daily job's reminder to the signer whose turn it is. Like the
+ * sender's own reminder, it carries a new link and retires the old one.
+ *
+ * Returns false, having sent nothing, when the envelope no longer needs
+ * one: it was signed, voided or expired, reminders were turned off, or a
+ * reminder went out since the job listed it.
+ */
+export async function sendAutomaticEnvelopeReminder(
+  envelopeId: string,
+  {
+    database = getDb(),
+    emailService,
+    nowUnixTimestamp = Math.floor(Date.now() / 1000),
+  }: SendReminderOptions = {},
+): Promise<boolean> {
+  let persisted: PersistedReminder;
+
+  try {
+    persisted = await persistReminder(
+      envelopeId,
+      { kind: "automatic" },
+      nowUnixTimestamp,
+      database,
+    );
+  } catch (error) {
+    if (error instanceof ReminderMutationError) {
+      return false;
+    }
+
+    throw error;
+  }
+
+  await deliverReminder(
+    persisted,
+    "automatic",
+    database,
+    emailService ?? createEmailService(),
+  );
+
+  return true;
 }

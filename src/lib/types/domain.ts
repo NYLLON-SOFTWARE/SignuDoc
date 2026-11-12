@@ -9,6 +9,14 @@ export const ENVELOPE_DEADLINE_DAY_OPTIONS = [3, 7, 14, 30, 60, 90] as const;
 export const DEFAULT_ENVELOPE_DEADLINE_DAYS = 30;
 export const MAX_ENVELOPE_DEADLINE_DAYS = 365;
 
+/**
+ * Automatic reminders: how many days apart the send step offers, the limit,
+ * and what a new envelope starts with (null is off).
+ */
+export const ENVELOPE_REMINDER_DAY_OPTIONS = [1, 2, 3, 7] as const;
+export const MAX_ENVELOPE_REMINDER_DAYS = 30;
+export const DEFAULT_ENVELOPE_REMINDER_DAYS: number | null = null;
+
 export const envelopeStatuses = [
   "draft",
   "sent",
@@ -49,6 +57,7 @@ export const auditEventTypes = [
   "voided",
   "deadline_changed",
   "expired",
+  "reminded_auto",
 ] as const;
 
 export const auditActorTypes = ["sender", "signer", "system"] as const;
@@ -63,6 +72,7 @@ export const emailTemplateKinds = [
   "signing_code",
   "change_email_confirmation",
   "manual_nudge",
+  "automatic_reminder",
   "completion_notification",
   "download_links",
   "decline_notification",

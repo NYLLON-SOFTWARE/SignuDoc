@@ -23,6 +23,7 @@ type EnvelopeSendRouteContext = {
 
 type SendEnvelopeRequest = {
   expiresInDays?: unknown;
+  reminderIntervalDays?: unknown;
   permittedUseConfirmed?: boolean;
 };
 
@@ -69,11 +70,15 @@ export async function POST(
 
   const options = sendEnvelopeOptionsSchema.safeParse({
     expiresInDays: body.expiresInDays ?? undefined,
+    reminderIntervalDays: body.reminderIntervalDays ?? undefined,
   });
 
   if (!options.success) {
     return NextResponse.json(
-      { error: "Choose a deadline between 1 and 365 days from now." },
+      {
+        error:
+          "Choose a deadline between 1 and 365 days from now, and reminders between 1 and 30 days apart.",
+      },
       { status: 400 },
     );
   }
@@ -84,6 +89,7 @@ export async function POST(
       id,
       {
         expiresInDays: options.data.expiresInDays,
+        reminderIntervalDays: options.data.reminderIntervalDays,
         ipAddress,
         senderEmail: session.user.email,
         senderName:

@@ -16,9 +16,11 @@ import {
 } from "./envelope-deadline.ts";
 import {
   changeDeadlineResponseSchema,
+  changeRemindersResponseSchema,
   envelopeListFiltersSchema,
   type AuditEventRecord,
   type ChangeDeadlineResponse,
+  type ChangeRemindersResponse,
   envelopeCreateResponseSchema,
   envelopePageSchema,
   envelopeRecordSchema,
@@ -102,6 +104,8 @@ type CreateDraftEnvelopeInput = {
 type SendDraftEnvelopeInput = {
   /** How many days signers get. The default applies when left out. */
   expiresInDays?: number;
+  /** Days between automatic reminders. Null or left out means none. */
+  reminderIntervalDays?: number | null;
   ipAddress?: string | null;
   senderEmail: string;
   senderName: string;
@@ -130,6 +134,7 @@ type EnvelopeRow = {
   evidenceKey: string | null;
   expiresAt: number | null;
   id: string;
+  reminderIntervalDays: number | null;
   pageCount: number;
   sentAt: number | null;
   signedPdfKey: string | null;
@@ -319,6 +324,8 @@ export type EnvelopeDetailData = {
   createdAtLabel: string;
   /** Set while the envelope is out for signature. */
   deadline: EnvelopeDetailDeadline | null;
+  /** Days between automatic reminders while it is out. Null when off. */
+  reminderIntervalDays: number | null;
   envelopeId: string;
   manualReminder: EnvelopeDetailManualReminderState | null;
   signers: readonly EnvelopeDetailSignerView[];
@@ -394,6 +401,7 @@ const TIMELINE_TONE_MAP: Record<
   declined: "danger",
   email_sent: "neutral",
   expired: "danger",
+  reminded_auto: "neutral",
   reminded_manual: "neutral",
   sent: "neutral",
   signed: "success",
@@ -680,6 +688,7 @@ async function getEnvelopeByIdForUser(
         declined_at AS "declinedAt",
         voided_at AS "voidedAt",
         expires_at AS "expiresAt",
+        reminder_interval_days AS "reminderIntervalDays",
         created_at AS "createdAt",
         updated_at AS "updatedAt"
       FROM envelopes
@@ -1024,6 +1033,8 @@ function buildTimelineDescription(event: AuditEventRecord): string {
         : `Declined by ${targetLabel}`;
     case "reminded_manual":
       return `Manual reminder sent to ${targetLabel}`;
+    case "reminded_auto":
+      return `Automatic reminder sent to ${targetLabel}`;
     case "consented":
       return `${targetLabel} agreed to use electronic records and signatures`;
     case "verified":
@@ -1173,6 +1184,7 @@ export async function listEnvelopesForUser(
         declined_at AS "declinedAt",
         voided_at AS "voidedAt",
         expires_at AS "expiresAt",
+        reminder_interval_days AS "reminderIntervalDays",
         created_at AS "createdAt",
         updated_at AS "updatedAt"
       FROM envelopes
@@ -1307,6 +1319,10 @@ export async function getEnvelopeDetailDataForUser(
           }
         : null,
     envelopeId,
+    reminderIntervalDays:
+      envelope.status === "sent"
+        ? (envelope.reminderIntervalDays ?? null)
+        : null,
     manualReminder,
     signers: signerViews,
     status: envelope.status,
@@ -1654,12 +1670,20 @@ export async function sendDraftEnvelope(
             sent_at = $1,
             updated_at = $2,
             expires_at = $5,
-            expiry_notified_at = NULL
+            expiry_notified_at = NULL,
+            reminder_interval_days = $6
           WHERE id = $3
             AND user_id = $4
             AND status = 'draft'
         `,
-        [sentAt, sentAt, envelopeId, userId, expiresAt],
+        [
+          sentAt,
+          sentAt,
+          envelopeId,
+          userId,
+          expiresAt,
+          input.reminderIntervalDays ?? null,
+        ],
       );
 
       if (updatedEnvelope.rowCount !== 1) {
@@ -1730,6 +1754,7 @@ export async function sendDraftEnvelope(
           metadata: {
             // The send route refuses a send without this confirmation.
             expiresAt,
+            reminderIntervalDays: input.reminderIntervalDays ?? null,
             permittedUseConfirmed: true,
             permittedUseVersion: PERMITTED_USE_VERSION,
             signerEmail: firstSigner.email,
@@ -1770,6 +1795,7 @@ export async function sendDraftEnvelope(
             status = 'draft',
             sent_at = NULL,
             expires_at = NULL,
+            reminder_interval_days = NULL,
             updated_at = $1
           WHERE id = $2
             AND user_id = $3
@@ -1930,6 +1956,46 @@ export async function changeEnvelopeDeadline(
     envelopeId,
     expiresAt,
     expiresAtLabel: formatDeadline(expiresAt),
+  });
+}
+
+/**
+ * Turns automatic reminders on, off, or to another interval for an envelope
+ * that is out for signature. The interval counts from the last time the
+ * signer was written to, so turning them on can send one the next day.
+ */
+export async function changeEnvelopeReminders(
+  userId: string,
+  envelopeId: string,
+  reminderIntervalDays: number | null,
+  {
+    database = getDb(),
+    nowUnixTimestamp = Math.floor(Date.now() / 1000),
+  }: { database?: DbExecutor; nowUnixTimestamp?: number } = {},
+): Promise<ChangeRemindersResponse> {
+  const updated = await database.query(
+    `
+      UPDATE envelopes
+      SET reminder_interval_days = $1, updated_at = $2
+      WHERE id = $3 AND user_id = $4 AND status = 'sent'
+    `,
+    [reminderIntervalDays, nowUnixTimestamp, envelopeId, userId],
+  );
+
+  if (updated.rowCount !== 1) {
+    const envelope = await getEnvelopeByIdForUser(userId, envelopeId, database);
+
+    throw envelope
+      ? new EnvelopeMutationError(
+          "Reminders can only be changed while an envelope is out for signature.",
+          409,
+        )
+      : new EnvelopeMutationError("Envelope not found.", 404);
+  }
+
+  return changeRemindersResponseSchema.parse({
+    envelopeId,
+    reminderIntervalDays,
   });
 }
 
