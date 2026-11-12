@@ -1,8 +1,12 @@
 import type { ReactNode } from "react";
+import { connection } from "next/server";
 
 import { Brand } from "@/components/layout/brand";
+import { BrandingProvider } from "@/components/layout/branding-provider";
 import { PublicLegalFooter } from "@/components/layout/public-legal-links";
 import { PublicSessionMenu } from "@/components/layout/public-session-menu";
+import { buildBranding, type Branding } from "@/lib/branding";
+import { getBranding, resolveSettings } from "@/lib/settings";
 
 type PublicDocumentShellProps = {
   children: ReactNode;
@@ -12,7 +16,47 @@ type PublicDocumentShellProps = {
   title: string;
 };
 
-export function PublicDocumentShell({
+async function loadBranding(): Promise<Branding> {
+  try {
+    return await getBranding();
+  } catch {
+    // A page of text is not worth failing over a database that cannot be
+    // reached. This is the install before anything was saved: still its own
+    // footer links, and never the hosted service's.
+    return buildBranding(resolveSettings(null));
+  }
+}
+
+// These pages sit outside the layouts that hand branding down, and some of
+// them are on every install: the signer privacy notice, what signatures are
+// for, document verification and the expired download link. So the shell
+// looks up what this install calls itself. Without that, such a page would
+// carry the hosted service's name and link to pages only it has.
+export async function PublicDocumentShell({
+  children,
+  description,
+  lastUpdated,
+  title,
+}: PublicDocumentShellProps) {
+  // Read when the page is requested, so one build serves any install.
+  await connection();
+
+  const branding = await loadBranding();
+
+  return (
+    <BrandingProvider branding={branding}>
+      <PublicDocumentPage
+        description={description}
+        lastUpdated={lastUpdated}
+        title={title}
+      >
+        {children}
+      </PublicDocumentPage>
+    </BrandingProvider>
+  );
+}
+
+function PublicDocumentPage({
   children,
   description,
   lastUpdated,

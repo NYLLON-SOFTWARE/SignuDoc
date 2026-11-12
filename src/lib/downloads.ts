@@ -3,6 +3,7 @@ import {
   getDb,
   queryMany,
   queryOne,
+  withTransaction,
 } from "./db/connection.ts";
 import {
   downloadFileTypeSchema,
@@ -785,6 +786,91 @@ function maskEmail(email: string): string {
   return `${local.slice(0, 1)}${"*".repeat(Math.max(1, local.length - 1))}@${domain}`;
 }
 
+function isPool(database: DbExecutor): database is ReturnType<typeof getDb> {
+  return "connect" in database && "totalCount" in database;
+}
+
+type StoredDownloadToken = {
+  createdAt: number;
+  expiresAt: number;
+  fileType: string;
+  tokenHash: string;
+};
+
+/**
+ * Puts a new pair of links in place of a signer's stored ones and returns
+ * the old rows. Call it inside a transaction. The signer's rows are locked
+ * first, so two renewals for the same signer take turns, and the links are
+ * stored together or not at all.
+ */
+async function replaceRecipientDownloadLinks(
+  {
+    envelope,
+    presentedTokenHash,
+    signerId,
+  }: {
+    envelope: EnvelopeRecord;
+    presentedTokenHash: string;
+    signerId: string;
+  },
+  tx: DbExecutor,
+): Promise<{
+  evidenceLink: IssuedDownloadLink;
+  previousTokens: StoredDownloadToken[];
+  signedLink: IssuedDownloadLink | null;
+}> {
+  const previousTokens = await queryMany<StoredDownloadToken>(
+    tx,
+    `
+      SELECT
+        token_hash AS "tokenHash",
+        file_type AS "fileType",
+        expires_at AS "expiresAt",
+        created_at AS "createdAt"
+      FROM recipient_download_tokens
+      WHERE envelope_id = $1 AND signer_id = $2
+      ORDER BY file_type
+      FOR UPDATE
+    `,
+    [envelope.id, signerId],
+  );
+
+  // A renewal that got the lock first has already replaced the link this
+  // request came with, and its email carries the pair that works. Sending
+  // a second pair would leave that email with dead links.
+  if (!previousTokens.some((row) => row.tokenHash === presentedTokenHash)) {
+    throw new DownloadAccessError(
+      "This download link is invalid or has expired.",
+      410,
+    );
+  }
+
+  const issuedAt = Math.floor(Date.now() / 1000);
+  const signedLink =
+    envelope.status === "completed"
+      ? await createRecipientDownloadLink(
+          {
+            envelopeId: envelope.id,
+            fileType: "signed",
+            issuedAt,
+            signerId,
+          },
+          { database: tx },
+        )
+      : null;
+  const evidenceLink = await createRecipientDownloadLink(
+    {
+      envelopeId: envelope.id,
+      fileType: "evidence",
+      issuedAt,
+      signerId,
+    },
+    { database: tx },
+  );
+
+  return { evidenceLink, previousTokens, signedLink };
+}
+
 /**
  * Someone holding an expired download link asks for a new one. The new links
  * go only to the signer's own address on record, never anywhere the request
@@ -805,8 +891,9 @@ export async function renewRecipientDownloadLinks(
     }) => Promise<void>;
   },
 ): Promise<RenewedDownloadLinks> {
+  const presentedTokenHash = hashOpaqueToken(token);
   const tokenRow = await getRecipientDownloadTokenByHash(
-    hashOpaqueToken(token),
+    presentedTokenHash,
     database,
   );
   const envelope = tokenRow
@@ -831,49 +918,18 @@ export async function renewRecipientDownloadLinks(
     );
   }
 
-  // The new links replace the old ones, so keep the old rows to put back
-  // if the email does not go out: the signer can then try again.
-  const previousTokens = await queryMany<{
-    createdAt: number;
-    expiresAt: number;
-    fileType: string;
-    tokenHash: string;
-  }>(
-    database,
-    `
-      SELECT
-        token_hash AS "tokenHash",
-        file_type AS "fileType",
-        expires_at AS "expiresAt",
-        created_at AS "createdAt"
-      FROM recipient_download_tokens
-      WHERE envelope_id = $1 AND signer_id = $2
-    `,
-    [envelope.id, signer.id],
-  );
-  const issuedAt = Math.floor(Date.now() / 1000);
-  const [signedLink, evidenceLink] = await Promise.all([
-    envelope.status === "completed"
-      ? createRecipientDownloadLink(
-          {
-            envelopeId: envelope.id,
-            fileType: "signed",
-            issuedAt,
-            signerId: signer.id,
-          },
-          { database },
-        )
-      : Promise.resolve(null),
-    createRecipientDownloadLink(
-      {
-        envelopeId: envelope.id,
-        fileType: "evidence",
-        issuedAt,
-        signerId: signer.id,
-      },
-      { database },
-    ),
-  ]);
+  const signerId = signer.id;
+  const replaceLinks = (tx: DbExecutor) =>
+    replaceRecipientDownloadLinks(
+      { envelope, presentedTokenHash, signerId },
+      tx,
+    );
+  // The new links are stored in a transaction of their own, which ends
+  // before the email is sent: a database connection is not held while the
+  // mail provider answers.
+  const { evidenceLink, previousTokens, signedLink } = isPool(database)
+    ? await withTransaction(replaceLinks, database)
+    : await replaceLinks(database);
 
   try {
     await sendLinks({
@@ -889,27 +945,35 @@ export async function renewRecipientDownloadLinks(
         ? [["signed", signedLink.tokenHash] as [string, string]]
         : []),
     ]);
+    // The email did not go out, so the old links go back, both or neither,
+    // and the signer can ask again.
+    const restoreLinks = async (tx: DbExecutor) => {
+      for (const previous of previousTokens) {
+        // Only where this request's link is still the stored one.
+        await tx.query(
+          `
+            UPDATE recipient_download_tokens
+            SET token_hash = $1, expires_at = $2, created_at = $3
+            WHERE envelope_id = $4 AND signer_id = $5 AND file_type = $6
+              AND token_hash = $7
+          `,
+          [
+            previous.tokenHash,
+            previous.expiresAt,
+            previous.createdAt,
+            envelope.id,
+            signerId,
+            previous.fileType,
+            issuedHashes.get(previous.fileType) ?? "",
+          ],
+        );
+      }
+    };
 
-    for (const previous of previousTokens) {
-      // Only where this request's link is still the stored one: a renewal
-      // that ran meanwhile and did get its email out keeps its links.
-      await database.query(
-        `
-          UPDATE recipient_download_tokens
-          SET token_hash = $1, expires_at = $2, created_at = $3
-          WHERE envelope_id = $4 AND signer_id = $5 AND file_type = $6
-            AND token_hash = $7
-        `,
-        [
-          previous.tokenHash,
-          previous.expiresAt,
-          previous.createdAt,
-          envelope.id,
-          signer.id,
-          previous.fileType,
-          issuedHashes.get(previous.fileType) ?? "",
-        ],
-      );
+    if (isPool(database)) {
+      await withTransaction(restoreLinks, database);
+    } else {
+      await restoreLinks(database);
     }
 
     throw error;
