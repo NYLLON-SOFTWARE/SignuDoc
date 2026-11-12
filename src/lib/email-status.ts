@@ -50,6 +50,12 @@ export type EmailStatus =
   | {
       state: "domain_pending";
       domain: string;
+      /**
+       * Set when Resend has verified part of the domain and the records do
+       * not say whether sending is the part that works. Only a test email
+       * can tell then.
+       */
+      mayAlreadySend?: true;
       records: EmailDnsRecord[];
       senderAddress: string;
     }
@@ -260,13 +266,14 @@ async function describeDomain(
   }
 
   // When it cannot be told, the mark is left as it is. A test email that
-  // gets through is what sets it then.
+  // gets through is what sets it then, and the status says so.
   if (sending === "not_ready") {
     await markReady(false);
   }
 
   return {
     domain,
+    ...(sending === "unknown" ? { mayAlreadySend: true as const } : {}),
     records: toDnsRecords(details.data.records),
     senderAddress,
     state: "domain_pending",

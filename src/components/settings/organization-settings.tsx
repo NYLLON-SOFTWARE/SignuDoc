@@ -559,6 +559,11 @@ function describeEmailStatus(status: EmailStatus): {
       return {
         lines: [
           `Add these records where ${status.domain}'s DNS is managed, then check them. DNS changes can take a few minutes to be seen, and sometimes longer.`,
+          ...(status.mayAlreadySend
+            ? [
+                "Resend has verified part of this domain, so sending may already work. Send yourself a test email to find out. If it arrives, email is working.",
+              ]
+            : []),
         ],
         ready: false,
         title: `Waiting for ${status.domain}'s DNS records`,

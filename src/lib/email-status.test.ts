@@ -255,6 +255,8 @@ test("a domain whose records are not verified yet is pending, with its records",
     status.state === "domain_pending" ? status.records.length : 0,
     1,
   );
+  // Nothing is verified, so there is no reason to think it can send.
+  assert.equal("mayAlreadySend" in status, false);
   assert.deepEqual(resend.calls, ["list", "get domain_1"]);
   assert.deepEqual(resend.readyMarks, [false]);
 });
@@ -483,6 +485,11 @@ test("a partly verified domain whose sending records are not all in is neither m
   const status = await getEmailStatus(resend.options);
 
   assert.equal(status.state, "domain_pending");
+  // The page then says that a test email is what settles it.
+  assert.equal(
+    status.state === "domain_pending" && status.mayAlreadySend,
+    true,
+  );
   assert.deepEqual(resend.readyMarks, []);
 });
 
