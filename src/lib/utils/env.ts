@@ -263,12 +263,6 @@ export function getEnv(env: EnvSource = process.env) {
     internal: {
       retentionJobSecret: readEnv(env, "RETENTION_JOB_SECRET"),
     },
-    storage: {
-      accountId: readEnv(env, "R2_ACCOUNT_ID"),
-      accessKeyId: readEnv(env, "R2_ACCESS_KEY_ID"),
-      bucketName: readEnv(env, "R2_BUCKET_NAME"),
-      secretAccessKey: readEnv(env, "R2_SECRET_ACCESS_KEY"),
-    },
   };
 }
 
