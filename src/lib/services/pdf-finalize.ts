@@ -1,16 +1,6 @@
-import fs from "node:fs/promises";
-import path from "node:path";
 import { randomUUID } from "node:crypto";
 
-import fontkit from "@pdf-lib/fontkit";
-import {
-  PDFDocument,
-  type PDFFont,
-  type PDFImage,
-  type PDFPage,
-  rgb,
-  StandardFonts,
-} from "pdf-lib";
+import { PDFDocument, type PDFImage, type PDFPage, rgb } from "pdf-lib";
 
 import {
   auditEventRecordSchema,
@@ -21,6 +11,7 @@ import type { FieldRecord } from "../schemas/field.ts";
 import type { SignerRecord } from "../schemas/signer.ts";
 import { canonicalJson } from "../utils/canonical-json.ts";
 import { normalizedRectToPdfRect } from "../utils/pdf-coords.ts";
+import { embedTextFaces, type TextFace } from "./pdf-fonts.ts";
 import { sha256Hex } from "./pdf-seal.ts";
 import { saveInstallSealedPdf, type SealPurpose } from "./seal-identity.ts";
 import {
@@ -33,19 +24,10 @@ import {
   type StorageService,
 } from "./storage.ts";
 
-const TYPED_SIGNATURE_FONT_PATH = path.join(
-  process.cwd(),
-  "src",
-  "assets",
-  "fonts",
-  "GreatVibes-Regular.ttf",
-);
 const DEFAULT_AUDIT_PAGE_SIZE = {
   height: 792,
   width: 612,
 } as const;
-
-let typedSignatureFontBytesPromise: Promise<Uint8Array> | null = null;
 
 export type StoredSealedPdf = StorageObjectRef & {
   body: Uint8Array;
@@ -67,15 +49,6 @@ export type PdfSealer = (
 
 const defaultSealer: PdfSealer = (pdfDocument, purpose) =>
   saveInstallSealedPdf(pdfDocument, purpose);
-
-/**
- * Standard PDF fonts can only draw Windows-1252 text. Evidence lines carry
- * text from browsers and email providers, so anything outside Latin-1
- * becomes "?".
- */
-function toPrintable(value: string): string {
-  return value.replace(/[^\x20-\x7e\xa0-\xff]/g, "?");
-}
 
 const CERTIFICATE_FINGERPRINT_VERSION = 1;
 
@@ -155,7 +128,7 @@ function redactAuditEventForRecipients(
 }
 
 type WrappedLine = {
-  font: PDFFont;
+  font: TextFace;
   size: number;
   text: string;
 };
@@ -171,7 +144,7 @@ function formatAuditTimestamp(timestamp: number | null | undefined): string {
 }
 
 function chunkLongWord(
-  font: PDFFont,
+  font: TextFace,
   size: number,
   maxWidth: number,
   word: string,
@@ -203,7 +176,7 @@ function chunkLongWord(
 }
 
 function wrapText(
-  font: PDFFont,
+  font: TextFace,
   size: number,
   maxWidth: number,
   text: string,
@@ -247,7 +220,7 @@ function wrapText(
 }
 
 function fitTextSize(
-  font: PDFFont,
+  font: TextFace,
   text: string,
   maxWidth: number,
   maxHeight: number,
@@ -272,14 +245,6 @@ function shouldStampField(field: FieldRecord): boolean {
   }
 
   return typeof field.submittedAt === "number";
-}
-
-async function getTypedSignatureFontBytes(): Promise<Uint8Array> {
-  typedSignatureFontBytesPromise ??= fs
-    .readFile(TYPED_SIGNATURE_FONT_PATH)
-    .then((buffer) => new Uint8Array(buffer));
-
-  return typedSignatureFontBytesPromise;
 }
 
 function buildCompletedAuditEvent(
@@ -401,9 +366,8 @@ async function stampFieldValue(
   field: FieldRecord,
   page: PDFPage,
   fonts: {
-    auditBold: PDFFont;
-    auditRegular: PDFFont;
-    signature: PDFFont;
+    auditRegular: TextFace;
+    signature: TextFace;
   },
   imageCache: Map<string, PDFImage>,
   pdfDocument: PDFDocument,
@@ -461,9 +425,8 @@ async function stampFieldValue(
         Math.min(maxHeight, rect.heightPt * 0.9),
       );
 
-      page.drawText(signatureValue, {
+      fonts.signature.drawText(page, signatureValue, {
         color: rgb(0.12, 0.12, 0.12),
-        font: fonts.signature,
         size: fontSize,
         x: rect.xPt + padding,
         y: rect.yPt + (rect.heightPt - fontSize) / 2 + fontSize * 0.1,
@@ -489,9 +452,8 @@ async function stampFieldValue(
         Math.min(maxHeight, rect.heightPt * 0.64),
       );
 
-      page.drawText(textValue, {
+      fonts.auditRegular.drawText(page, textValue, {
         color: rgb(0.12, 0.12, 0.12),
-        font: fonts.auditRegular,
         size: fontSize,
         x: rect.xPt + padding,
         y: rect.yPt + (rect.heightPt - fontSize) / 2 + fontSize * 0.2,
@@ -541,8 +503,8 @@ function buildAuditLines(input: {
   completedAt: number;
   envelope: EnvelopeRecord;
   fonts: {
-    bold: PDFFont;
-    regular: PDFFont;
+    bold: TextFace;
+    regular: TextFace;
   };
   maxWidth: number;
   redactForRecipients?: boolean;
@@ -557,7 +519,7 @@ function buildAuditLines(input: {
 
   const pushParagraph = (
     text: string,
-    font: PDFFont,
+    font: TextFace,
     size: number,
     options: { gapAfter?: number; gapBefore?: number } = {},
   ) => {
@@ -684,19 +646,13 @@ function buildAuditLines(input: {
       signerName && actor !== signerName ? `${signerName} <${actor}>` : actor;
 
     pushParagraph(
-      toPrintable(
-        `${formatAuditTimestamp(event.createdAt)} | ${event.event} | ${actorLabel}`,
-      ),
+      `${formatAuditTimestamp(event.createdAt)} | ${event.event} | ${actorLabel}`,
       input.fonts.regular,
       bodyFontSize,
     );
 
     for (const detail of describeEventEvidence(event)) {
-      pushParagraph(
-        toPrintable(`   ${detail}`),
-        input.fonts.regular,
-        bodyFontSize,
-      );
+      pushParagraph(`   ${detail}`, input.fonts.regular, bodyFontSize);
     }
   }
 
@@ -867,8 +823,8 @@ function appendAuditTrailPages(input: {
   completedAt: number;
   envelope: EnvelopeRecord;
   fonts: {
-    bold: PDFFont;
-    regular: PDFFont;
+    bold: TextFace;
+    regular: TextFace;
   };
   pdfDocument: PDFDocument;
   redactForRecipients?: boolean;
@@ -912,9 +868,8 @@ function appendAuditTrailPages(input: {
       cursorY = pageSize.height - margin;
     }
 
-    page.drawText(line.text, {
+    line.font.drawText(page, line.text, {
       color: rgb(0.14, 0.14, 0.14),
-      font: line.font,
       size: line.size,
       x: margin,
       y: cursorY - line.size,
@@ -1003,9 +958,10 @@ export async function renderEnvelopeCertificatePdf(
   assertTerminalEnvelope(input.envelope, "Certificates");
 
   const pdfDocument = await PDFDocument.create();
-  const auditRegularFont = await pdfDocument.embedFont(StandardFonts.Helvetica);
-  const auditBoldFont = await pdfDocument.embedFont(
-    StandardFonts.HelveticaBold,
+  const faces = await embedTextFaces(
+    pdfDocument,
+    [input.envelope, input.signers, input.auditEvents],
+    { bold: true, certificate: true },
   );
   const terminalTimestamp = resolveTerminalTimestamp(
     input.envelope,
@@ -1021,18 +977,13 @@ export async function renderEnvelopeCertificatePdf(
     ),
     completedAt: terminalTimestamp,
     envelope: input.envelope,
-    fonts: {
-      bold: auditBoldFont,
-      regular: auditRegularFont,
-    },
+    fonts: faces,
     pdfDocument,
     redactForRecipients: input.redactForRecipients,
     signedPdfSha256: input.signedPdfSha256,
     signers: input.signers,
   });
-  pdfDocument.setTitle(
-    `Audit certificate: ${toPrintable(input.envelope.title)}`,
-  );
+  pdfDocument.setTitle(`Audit certificate: ${input.envelope.title}`);
   pdfDocument.setProducer("SignuDoc");
 
   return seal(pdfDocument, "certificate");
@@ -1074,20 +1025,32 @@ export async function renderFinalizedEnvelopePdf(
 
   const pdfDocument = await PDFDocument.load(sourcePdfObject.body);
 
-  pdfDocument.registerFontkit(fontkit);
-
-  const signatureFont = await pdfDocument.embedFont(
-    await getTypedSignatureFontBytes(),
-  );
-  const auditRegularFont = await pdfDocument.embedFont(StandardFonts.Helvetica);
-  const auditBoldFont = await pdfDocument.embedFont(
-    StandardFonts.HelveticaBold,
+  const stampedFields = input.fields
+    .filter(shouldStampField)
+    .sort((left, right) => left.page - right.page || left.y - right.y);
+  // The signed document embeds glyphs for the stamped values only. The
+  // certificate's wording is added when the audit trail is appended to it.
+  const faces = await embedTextFaces(
+    pdfDocument,
+    [
+      stampedFields.map((field) => field.value),
+      input.includeAuditTrail
+        ? [input.envelope, input.signers, input.auditEvents]
+        : [],
+    ],
+    {
+      bold: Boolean(input.includeAuditTrail),
+      certificate: Boolean(input.includeAuditTrail),
+      signature: stampedFields.some(
+        (field) =>
+          (field.type === "signature" || field.type === "initials") &&
+          field.inputMethod !== "drawn",
+      ),
+    },
   );
   const imageCache = new Map<string, PDFImage>();
 
-  for (const field of input.fields
-    .filter(shouldStampField)
-    .sort((left, right) => left.page - right.page || left.y - right.y)) {
+  for (const field of stampedFields) {
     const page = pdfDocument.getPage(field.page - 1);
 
     if (!page) {
@@ -1099,11 +1062,7 @@ export async function renderFinalizedEnvelopePdf(
     await stampFieldValue(
       field,
       page,
-      {
-        auditBold: auditBoldFont,
-        auditRegular: auditRegularFont,
-        signature: signatureFont,
-      },
+      { auditRegular: faces.regular, signature: faces.signature },
       imageCache,
       pdfDocument,
       storageService,
@@ -1121,10 +1080,7 @@ export async function renderFinalizedEnvelopePdf(
       auditEvents: stripCompletedAuditEvents(input.auditEvents),
       completedAt: input.completedAt,
       envelope: input.envelope,
-      fonts: {
-        bold: auditBoldFont,
-        regular: auditRegularFont,
-      },
+      fonts: faces,
       pdfDocument,
       signers: input.signers,
     });
