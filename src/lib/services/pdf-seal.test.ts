@@ -59,6 +59,20 @@ async function hasPdfsig(): Promise<boolean> {
   }
 }
 
+/**
+ * The signature sits in a slot of fixed size, filled up with zeros. Where it
+ * ends is in its own header: a tag, then its length. Cutting the zeros off
+ * the end instead also cuts into a signature that happens to end in one,
+ * which about one in sixteen does.
+ */
+function withoutPadding(slot: Buffer): Buffer {
+  const first = slot[1]!;
+  const lengthBytes = first < 0x80 ? 0 : first & 0x7f;
+  const length = lengthBytes === 0 ? first : slot.readUIntBE(2, lengthBytes);
+
+  return slot.subarray(0, 2 + lengthBytes + length);
+}
+
 /** Checks the CMS signature the way a reader would, without poppler. */
 function verifyByteRange(sealed: Uint8Array) {
   const text = Buffer.from(sealed).toString("latin1");
@@ -78,8 +92,11 @@ function verifyByteRange(sealed: Uint8Array) {
     Buffer.from(sealed.subarray(a, a + b)),
     Buffer.from(sealed.subarray(c, c + d)),
   ]);
-  const hex = text.slice(a + b + 1, c - 1).replace(/0+$/, "");
-  const cms = forge.asn1.fromDer(Buffer.from(hex, "hex").toString("binary"));
+  const cms = forge.asn1.fromDer(
+    withoutPadding(Buffer.from(text.slice(a + b + 1, c - 1), "hex")).toString(
+      "binary",
+    ),
+  );
   const message = forge.pkcs7.messageFromAsn1(cms) as unknown as {
     rawCapture: { authenticatedAttributes: forge.asn1.Asn1[] };
   };
