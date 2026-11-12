@@ -1,0 +1,23 @@
+# Local Postgres for development and the end-to-end test.
+#   npm run db:start    start it and apply migrations
+#   npm run db:stop     stop it (data is kept)
+#   npm run db:reset    wipe it and start fresh
+services:
+  db:
+    image: postgres:17
+    environment:
+      POSTGRES_USER: signudoc
+      POSTGRES_PASSWORD: signudoc
+      POSTGRES_DB: signudoc
+    ports:
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - signudoc-db:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U signudoc -d signudoc"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+volumes:
+  signudoc-db:

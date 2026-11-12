@@ -17,9 +17,12 @@ dist/
 *.tsbuildinfo
 next-env.d.ts
 
-# Supabase local artifacts
-supabase/.branches/
-supabase/.temp/
+# Local development data (filesystem storage, captured emails)
+.data/
+
+# Playwright
+test-results/
+playwright-report/
 
 # Claude Code
 .claude/
