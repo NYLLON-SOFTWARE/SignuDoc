@@ -48,17 +48,17 @@ const emptyValues: SetupValues = {
 
 export function SetupShell({ hosted, onVercel, view }: SetupShellProps) {
   return (
-    <div className="flex min-h-screen flex-col bg-white">
-      <header className="border-b border-(--border) bg-white">
-        <div className="editorial-shell flex items-center justify-between gap-4 px-0 py-5">
+    <div className="flex min-h-screen flex-col">
+      <header>
+        <div className="page-width flex items-center justify-between gap-4 py-4">
           <Brand href="/setup" />
-          <p className="editorial-meta">Setup</p>
+          <span className="pill pill-accent">Setup</span>
         </div>
       </header>
 
-      <main className="editorial-shell flex flex-1 items-start justify-center px-0 py-12 sm:py-16">
+      <main className="page-width flex flex-1 items-start justify-center py-8 sm:py-14">
         <div className="flex w-full justify-center" data-animate="enter">
-          <section className="editorial-panel w-full max-w-[520px] p-8 sm:p-10">
+          <section className="panel w-full max-w-[520px] p-8 sm:p-10">
             <SetupContent hosted={hosted} onVercel={onVercel} view={view} />
           </section>
         </div>
@@ -166,12 +166,11 @@ function SetupNotice({
   return (
     <div className="space-y-5">
       <div className="space-y-2">
-        <p className="section-eyebrow">Setup</p>
-        <h1 className="text-[clamp(2rem,4.6vw,2.7rem)] font-extrabold leading-[1.04] tracking-[-0.045em] text-black">
+        <h1 className="text-[clamp(1.875rem,4.5vw,2.375rem)] font-extrabold leading-[1.08] tracking-[-0.035em] text-(--fg)">
           {title}
         </h1>
       </div>
-      <div className="space-y-4 text-sm leading-6 text-muted-foreground [&_code]:[font-family:var(--font-mono)] [&_code]:text-[0.82rem] [&_code]:text-(--fg)">
+      <div className="space-y-4 text-sm leading-6 text-muted-foreground [&_code]:rounded-md [&_code]:bg-(--surface) [&_code]:px-1.5 [&_code]:py-0.5 [&_code]:font-mono [&_code]:text-[0.8125rem] [&_code]:text-(--fg)">
         {children}
       </div>
     </div>
@@ -291,8 +290,7 @@ function SetupForm({
   return (
     <div className="space-y-7">
       <div className="space-y-2">
-        <p className="section-eyebrow">Setup</p>
-        <h1 className="text-[clamp(2rem,4.6vw,2.7rem)] font-extrabold leading-[1.04] tracking-[-0.045em] text-black">
+        <h1 className="text-[clamp(1.875rem,4.5vw,2.375rem)] font-extrabold leading-[1.08] tracking-[-0.035em] text-(--fg)">
           {isCreate ? "Set up your site" : "Choose an administrator"}
         </h1>
         <p className="pt-1 text-sm leading-6 text-muted-foreground">
@@ -303,10 +301,7 @@ function SetupForm({
       </div>
 
       {bannerMessage ? (
-        <p
-          className="rounded-[22px] border border-[rgba(180,35,53,0.16)] bg-[rgba(180,35,53,0.06)] px-4 py-3 text-sm font-medium text-(--accent)"
-          role="alert"
-        >
+        <p className="notice notice-danger" role="alert">
           {bannerMessage}
         </p>
       ) : null}
@@ -414,10 +409,10 @@ function SetupForm({
       </form>
 
       {!isCreate ? (
-        <p className="border-t border-(--border) pt-5 text-sm text-muted-foreground">
+        <p className="border-t border-(--border) pt-5 text-sm text-(--secondary)">
           Not the right account?{" "}
           <button
-            className="cursor-pointer font-semibold text-(--fg) transition hover:text-(--accent) disabled:cursor-default disabled:opacity-60"
+            className="cursor-pointer font-bold text-(--accent-ink) underline-offset-4 hover:underline disabled:cursor-default disabled:opacity-60"
             disabled={isSwitchingAccount}
             onClick={handleSwitchAccount}
             type="button"

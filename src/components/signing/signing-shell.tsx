@@ -1,5 +1,7 @@
 "use client";
 
+import { FileTextIcon } from "lucide-react";
+
 import { Brand } from "@/components/layout/brand";
 import { PublicLegalFooter } from "@/components/layout/public-legal-links";
 import type {
@@ -80,21 +82,27 @@ function StandaloneStateScreen({
   title: string;
 }) {
   return (
-    <div className="flex min-h-screen flex-col bg-white">
-      <header className="border-b border-(--border) bg-white">
-        <div className="mx-auto flex max-w-[1360px] items-center px-4 py-5 sm:px-6 lg:px-8">
+    <div className="flex min-h-screen flex-col">
+      <header>
+        <div className="page-width flex items-center py-4">
           <Brand href="/" />
         </div>
       </header>
-      <main className="mx-auto flex w-full max-w-[1360px] flex-1 items-center justify-center px-4 py-12 sm:px-6 lg:px-8">
-        <section className="editorial-panel w-full max-w-[760px] px-6 py-10 text-center sm:px-10 sm:py-12">
-          <span className="inline-flex border border-(--accent) bg-[#fff8f8] px-4 py-2 text-[11px] font-semibold uppercase tracking-[0.24em] text-(--accent)">
-            Signing state
+      <main className="page-width flex flex-1 items-center justify-center py-10">
+        <section
+          className="panel w-full max-w-[640px] px-6 py-12 text-center sm:px-12 sm:py-14"
+          data-animate="enter"
+        >
+          <span
+            aria-hidden="true"
+            className="mx-auto inline-flex size-14 items-center justify-center rounded-2xl bg-(--accent-soft) text-(--accent)"
+          >
+            <FileTextIcon className="size-6" strokeWidth={2.2} />
           </span>
-          <h1 className="mt-6 text-[32px] font-extrabold tracking-[-0.05em] text-(--fg) sm:text-[38px]">
+          <h1 className="mt-6 text-[clamp(1.625rem,4vw,2.125rem)] font-extrabold leading-tight tracking-[-0.03em] text-(--fg)">
             {title}
           </h1>
-          <p className="mx-auto mt-4 max-w-[520px] text-base leading-7 text-muted-foreground">
+          <p className="mx-auto mt-3 max-w-[460px] text-base leading-7 text-(--secondary)">
             {description}
           </p>
         </section>

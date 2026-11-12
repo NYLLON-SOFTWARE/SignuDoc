@@ -147,7 +147,7 @@ export function OrganizationSettings({
 
   return (
     <section
-      className="editorial-panel scroll-mt-6 p-6 sm:p-8"
+      className="panel scroll-mt-6 p-6 sm:p-8"
       data-animate="enter"
       data-animate-delay="2"
       id="organization"
@@ -155,10 +155,10 @@ export function OrganizationSettings({
       <div className="space-y-8">
         <div className="space-y-2">
           <p className="section-eyebrow">Administrator</p>
-          <h2 className="text-2xl font-bold tracking-[-0.035em] text-(--fg)">
+          <h2 className="text-2xl font-extrabold tracking-[-0.03em] text-(--fg)">
             Organization
           </h2>
-          <p className="max-w-2xl text-sm leading-6 text-muted-foreground">
+          <p className="max-w-2xl text-sm leading-6 text-(--secondary)">
             These settings apply to everyone who uses this site. Only you, the
             administrator, can see and change them.
           </p>
@@ -166,10 +166,8 @@ export function OrganizationSettings({
 
         {feedback ? (
           <p
-            className={`border px-5 py-4 text-sm font-semibold ${
-              feedback.tone === "success"
-                ? "border-[rgba(5,150,105,0.18)] bg-[rgba(5,150,105,0.05)] text-chart-4"
-                : "border-[rgba(180,35,53,0.18)] bg-[rgba(180,35,53,0.04)] text-(--accent)"
+            className={`notice ${
+              feedback.tone === "success" ? "notice-success" : "notice-danger"
             }`}
             role={feedback.tone === "error" ? "alert" : "status"}
           >
@@ -192,22 +190,22 @@ export function OrganizationSettings({
           </div>
 
           <fieldset className="space-y-4 border-t border-(--border) pt-8">
-            <legend className="float-left mb-4 w-full text-xl font-bold tracking-[-0.03em] text-(--fg)">
+            <legend className="float-left mb-4 w-full text-lg font-extrabold tracking-[-0.02em] text-(--fg)">
               Who can create an account
             </legend>
-            <p className="clear-both max-w-2xl text-sm leading-6 text-muted-foreground">
+            <p className="clear-both max-w-2xl text-sm leading-6 text-(--secondary)">
               This is about people who send documents. People who are sent a
               document to sign never need an account.
             </p>
             <div className="space-y-3">
               {signupModeOptions.map((option) => (
                 <label
-                  className="flex cursor-pointer items-start gap-3 border border-(--border) bg-white px-4 py-3 has-[:checked]:border-black"
+                  className="flex cursor-pointer items-start gap-3 rounded-2xl bg-(--surface) px-4 py-3.5 ring-2 ring-transparent transition has-[:checked]:bg-(--accent-softer) has-[:checked]:ring-(--accent)"
                   key={option.value}
                 >
                   <input
                     checked={values.signupMode === option.value}
-                    className="mt-1 accent-black"
+                    className="mt-1 size-4 accent-(--accent)"
                     disabled={isSaving}
                     name="signup-mode"
                     onChange={() => handleSignupModeChange(option.value)}
@@ -215,10 +213,10 @@ export function OrganizationSettings({
                     value={option.value}
                   />
                   <span className="space-y-1">
-                    <span className="block text-sm font-semibold text-(--fg)">
+                    <span className="block text-sm font-bold text-(--fg)">
                       {option.label}
                     </span>
-                    <span className="block text-sm leading-6 text-muted-foreground">
+                    <span className="block text-sm leading-6 text-(--secondary)">
                       {option.description}
                     </span>
                   </span>
@@ -243,7 +241,7 @@ export function OrganizationSettings({
           </fieldset>
 
           <div className="space-y-5 border-t border-(--border) pt-8">
-            <h3 className="text-xl font-bold tracking-[-0.03em] text-(--fg)">
+            <h3 className="text-lg font-extrabold tracking-[-0.02em] text-(--fg)">
               Email addresses
             </h3>
             <div className="grid gap-4 sm:grid-cols-2">
@@ -285,10 +283,10 @@ export function OrganizationSettings({
           {!values.hosted ? (
             <div className="space-y-5 border-t border-(--border) pt-8">
               <div className="space-y-2">
-                <h3 className="text-xl font-bold tracking-[-0.03em] text-(--fg)">
+                <h3 className="text-lg font-extrabold tracking-[-0.02em] text-(--fg)">
                   Your terms and privacy policy
                 </h3>
-                <p className="max-w-2xl text-sm leading-6 text-muted-foreground">
+                <p className="max-w-2xl text-sm leading-6 text-(--secondary)">
                   Optional. Links to pages on your own website, shown in the
                   footer of this site and of its emails.
                 </p>
@@ -315,9 +313,13 @@ export function OrganizationSettings({
                   value={values.privacyUrl}
                 />
               </div>
-              <p className="max-w-2xl text-sm leading-6 text-muted-foreground">
+              <p className="max-w-2xl text-sm leading-6 text-(--secondary)">
                 Without a privacy policy link, signers see{" "}
-                <a className="underline" href="/signer-privacy" target="_blank">
+                <a
+                  className="font-semibold text-(--accent-ink) underline decoration-[rgba(83,64,214,0.35)] underline-offset-4"
+                  href="/signer-privacy"
+                  target="_blank"
+                >
                   a notice built from these settings
                 </a>
                 . Check that it is right for your organization.
@@ -327,10 +329,10 @@ export function OrganizationSettings({
 
           <div className="space-y-5 border-t border-(--border) pt-8">
             <div className="space-y-2">
-              <h3 className="text-xl font-bold tracking-[-0.03em] text-(--fg)">
+              <h3 className="text-lg font-extrabold tracking-[-0.02em] text-(--fg)">
                 How long to keep finished documents
               </h3>
-              <p className="max-w-2xl text-sm leading-6 text-muted-foreground">
+              <p className="max-w-2xl text-sm leading-6 text-(--secondary)">
                 Optional. After this many days a completed, declined or voided
                 envelope is deleted with its audit trail. Its sender is emailed
                 30 days before. Leave empty to keep them until someone deletes
@@ -456,35 +458,30 @@ function EmailSetupPanel() {
 
   return (
     <div className="space-y-5 border-t border-(--border) pt-8" id="email-setup">
-      <h3 className="text-xl font-bold tracking-[-0.03em] text-(--fg)">
+      <h3 className="text-lg font-extrabold tracking-[-0.02em] text-(--fg)">
         Email setup
       </h3>
 
       {loadError ? (
-        <p
-          className="border border-[rgba(180,35,53,0.18)] bg-[rgba(180,35,53,0.04)] px-5 py-4 text-sm font-semibold text-(--accent)"
-          role="alert"
-        >
+        <p className="notice notice-danger" role="alert">
           {loadError}
         </p>
       ) : null}
 
       {!summary ? (
         loadError ? null : (
-          <p className="text-sm text-muted-foreground">Checking email…</p>
+          <p className="text-sm text-(--secondary)">Checking email…</p>
         )
       ) : (
         <div
-          className={`space-y-3 border px-5 py-4 ${
-            summary.ready
-              ? "border-[rgba(5,150,105,0.18)] bg-[rgba(5,150,105,0.05)]"
-              : "border-(--border) bg-(--surface)"
+          className={`space-y-2 rounded-2xl px-5 py-4 ${
+            summary.ready ? "bg-(--success-soft)" : "bg-(--surface)"
           }`}
           data-email-state={status?.state}
         >
-          <p className="text-sm font-semibold text-(--fg)">{summary.title}</p>
+          <p className="text-sm font-bold text-(--fg)">{summary.title}</p>
           {summary.lines.map((line) => (
-            <p className="text-sm leading-6 text-muted-foreground" key={line}>
+            <p className="text-sm leading-6 text-(--secondary)" key={line}>
               {line}
             </p>
           ))}
@@ -539,10 +536,8 @@ function EmailSetupPanel() {
 
       {testResult ? (
         <p
-          className={`border px-5 py-4 text-sm font-semibold ${
-            testResult.tone === "success"
-              ? "border-[rgba(5,150,105,0.18)] bg-[rgba(5,150,105,0.05)] text-chart-4"
-              : "border-[rgba(180,35,53,0.18)] bg-[rgba(180,35,53,0.04)] text-(--accent)"
+          className={`notice ${
+            testResult.tone === "success" ? "notice-success" : "notice-danger"
           }`}
           role={testResult.tone === "error" ? "alert" : "status"}
         >
@@ -643,18 +638,18 @@ function DnsRecordsTable({
 }) {
   if (records.length === 0) {
     return (
-      <p className="text-sm leading-6 text-muted-foreground">
+      <p className="text-sm leading-6 text-(--secondary)">
         Resend did not list any records for {domain}. Open Resend to see them.
       </p>
     );
   }
 
   return (
-    <div className="overflow-x-auto border border-(--border)">
+    <div className="overflow-x-auto rounded-2xl border border-(--border)">
       <table className="w-full min-w-[640px] border-collapse text-left text-sm">
         <caption className="sr-only">DNS records to add for {domain}</caption>
         <thead>
-          <tr className="border-b border-(--border) bg-(--surface) text-xs uppercase tracking-[0.14em] text-(--tertiary)">
+          <tr className="border-b border-(--border) bg-(--surface) text-xs text-(--tertiary)">
             <th className="px-4 py-3 font-semibold" scope="col">
               Type
             </th>
@@ -683,13 +678,13 @@ function DnsRecordsTable({
                   </span>
                 ) : null}
               </td>
-              <td className="px-4 py-3 [font-family:var(--font-mono)] text-[0.8rem] break-all text-(--fg)">
+              <td className="px-4 py-3 font-mono text-[0.8rem] break-all text-(--fg)">
                 {record.name}
               </td>
-              <td className="px-4 py-3 [font-family:var(--font-mono)] text-[0.8rem] break-all text-(--fg)">
+              <td className="px-4 py-3 font-mono text-[0.8rem] break-all text-(--fg)">
                 {record.value}
               </td>
-              <td className="px-4 py-3 text-muted-foreground">
+              <td className="px-4 py-3 text-(--secondary)">
                 {record.status === "verified" ? "Found" : "Not found yet"}
               </td>
             </tr>

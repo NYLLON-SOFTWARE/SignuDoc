@@ -23,7 +23,7 @@ export default async function PrivacyPage() {
       title="Privacy Policy"
     >
       <section className="space-y-3">
-        <h2 className="text-xl font-semibold tracking-[-0.03em] text-(--fg)">
+        <h2 className="text-xl font-extrabold tracking-[-0.02em] text-(--fg)">
           1. Scope and service design
         </h2>
         <p>
@@ -41,7 +41,7 @@ export default async function PrivacyPage() {
       </section>
 
       <section className="space-y-4">
-        <h2 className="text-xl font-semibold tracking-[-0.03em] text-(--fg)">
+        <h2 className="text-xl font-extrabold tracking-[-0.02em] text-(--fg)">
           2. Information we collect
         </h2>
         <p>We may collect the following categories of information:</p>
@@ -81,7 +81,7 @@ export default async function PrivacyPage() {
       </section>
 
       <section className="space-y-4">
-        <h2 className="text-xl font-semibold tracking-[-0.03em] text-(--fg)">
+        <h2 className="text-xl font-extrabold tracking-[-0.02em] text-(--fg)">
           3. Where the information comes from
         </h2>
         <p>We collect information directly from you when you:</p>
@@ -100,7 +100,7 @@ export default async function PrivacyPage() {
       </section>
 
       <section className="space-y-4">
-        <h2 className="text-xl font-semibold tracking-[-0.03em] text-(--fg)">
+        <h2 className="text-xl font-extrabold tracking-[-0.02em] text-(--fg)">
           4. How we use information
         </h2>
         <p>We may use information to:</p>
@@ -122,7 +122,7 @@ export default async function PrivacyPage() {
       </section>
 
       <section className="space-y-4">
-        <h2 className="text-xl font-semibold tracking-[-0.03em] text-(--fg)">
+        <h2 className="text-xl font-extrabold tracking-[-0.02em] text-(--fg)">
           5. How we share information
         </h2>
         <p>
@@ -145,7 +145,7 @@ export default async function PrivacyPage() {
       </section>
 
       <section className="space-y-3">
-        <h2 className="text-xl font-semibold tracking-[-0.03em] text-(--fg)">
+        <h2 className="text-xl font-extrabold tracking-[-0.02em] text-(--fg)">
           6. Retention
         </h2>
         <p>
@@ -169,7 +169,7 @@ export default async function PrivacyPage() {
       </section>
 
       <section className="space-y-3">
-        <h2 className="text-xl font-semibold tracking-[-0.03em] text-(--fg)">
+        <h2 className="text-xl font-extrabold tracking-[-0.02em] text-(--fg)">
           7. Security
         </h2>
         <p>
@@ -182,7 +182,7 @@ export default async function PrivacyPage() {
       </section>
 
       <section className="space-y-4">
-        <h2 className="text-xl font-semibold tracking-[-0.03em] text-(--fg)">
+        <h2 className="text-xl font-extrabold tracking-[-0.02em] text-(--fg)">
           8. Your privacy rights
         </h2>
         <p>
@@ -213,13 +213,13 @@ export default async function PrivacyPage() {
       </section>
 
       <section className="space-y-4">
-        <h2 className="text-xl font-semibold tracking-[-0.03em] text-(--fg)">
+        <h2 className="text-xl font-extrabold tracking-[-0.02em] text-(--fg)">
           9. How to exercise your rights
         </h2>
         <p>
           To request access, correction, deletion, or account closure, email{" "}
           <Link
-            className="font-semibold text-(--fg) underline decoration-[rgba(17,17,17,0.24)] underline-offset-4"
+            className="font-semibold text-(--accent-ink) underline decoration-[rgba(83,64,214,0.35)] underline-offset-4"
             href={`mailto:${privacyAddress}`}
           >
             {privacyAddress}
@@ -242,7 +242,7 @@ export default async function PrivacyPage() {
       </section>
 
       <section className="space-y-3">
-        <h2 className="text-xl font-semibold tracking-[-0.03em] text-(--fg)">
+        <h2 className="text-xl font-extrabold tracking-[-0.02em] text-(--fg)">
           10. Cookies and local storage
         </h2>
         <p>
@@ -257,7 +257,7 @@ export default async function PrivacyPage() {
       </section>
 
       <section className="space-y-3">
-        <h2 className="text-xl font-semibold tracking-[-0.03em] text-(--fg)">
+        <h2 className="text-xl font-extrabold tracking-[-0.02em] text-(--fg)">
           11. Children and international use
         </h2>
         <p>
@@ -275,7 +275,7 @@ export default async function PrivacyPage() {
       </section>
 
       <section className="space-y-3">
-        <h2 className="text-xl font-semibold tracking-[-0.03em] text-(--fg)">
+        <h2 className="text-xl font-extrabold tracking-[-0.02em] text-(--fg)">
           12. Changes and contact
         </h2>
         <p>
@@ -286,14 +286,14 @@ export default async function PrivacyPage() {
         <p>
           Privacy questions, requests, and complaints may be sent to{" "}
           <Link
-            className="font-semibold text-(--fg) underline decoration-[rgba(17,17,17,0.24)] underline-offset-4"
+            className="font-semibold text-(--accent-ink) underline decoration-[rgba(83,64,214,0.35)] underline-offset-4"
             href={`mailto:${privacyAddress}`}
           >
             {privacyAddress}
           </Link>{" "}
           or through the{" "}
           <Link
-            className="font-semibold text-(--fg) underline decoration-[rgba(17,17,17,0.24)] underline-offset-4"
+            className="font-semibold text-(--accent-ink) underline decoration-[rgba(83,64,214,0.35)] underline-offset-4"
             href="/contact"
           >
             Contact

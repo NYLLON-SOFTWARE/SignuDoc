@@ -1,8 +1,10 @@
 "use client";
 
+import { FileTextIcon, UploadIcon } from "lucide-react";
 import { useRouter } from "next/navigation";
 import {
   startTransition,
+  useEffect,
   useRef,
   useState,
   type ChangeEvent,
@@ -13,7 +15,13 @@ import {
 import { FieldShell, ShellButton } from "@/components/shared/form-shell";
 import { PageHeader } from "@/components/shared/page-header";
 import { StepIndicator } from "@/components/shared/step-indicator";
+import { Button } from "@/components/ui/button";
+import { cn } from "@/lib/cn";
 import { cacheDraftPdfBlob } from "@/lib/draft-pdf-cache";
+import {
+  renderPdfThumbnail,
+  uploadEnvelopeThumbnail,
+} from "@/lib/pdf-thumbnail";
 import { assertPdfPreviewRenderable } from "@/lib/pdfjs-client";
 import { type CreateEnvelopeResponse } from "@/lib/schemas/envelope";
 
@@ -91,6 +99,7 @@ function UploadShellLayout({
   onRemoveFile,
   onTitleChange,
   onContinue,
+  previewUrl,
   summary,
   title,
 }: {
@@ -104,29 +113,29 @@ function UploadShellLayout({
   onOpenFilePicker: () => void;
   onRemoveFile: () => void;
   onTitleChange: (event: ChangeEvent<HTMLInputElement>) => void;
+  previewUrl: string | null;
   summary: UploadSummary | null;
   title: string;
 }) {
   const dropzoneClasses = isBusy
-    ? "border-[rgba(37,99,235,0.35)] bg-[rgba(37,99,235,0.04)]"
+    ? "border-(--accent) bg-(--accent-softer)"
     : errorMessage
-      ? "border-[rgba(180,35,53,0.28)] bg-[rgba(180,35,53,0.03)]"
+      ? "border-[rgba(180,35,24,0.4)] bg-(--danger-soft)"
       : isDragActive
-        ? "border-[rgba(180,35,53,0.36)] bg-[rgba(180,35,53,0.03)]"
-        : "border-(--border) bg-(--surface)";
+        ? "border-(--accent) bg-(--accent-softer)"
+        : "border-(--border-strong) bg-(--surface) hover:border-(--accent) hover:bg-(--accent-softer)";
 
   return (
-    <div className="space-y-8">
+    <div className="space-y-5">
       <PageHeader
         description="Step 1 of 4 - Upload document"
-        eyebrow="Envelope workflow"
         title="New envelope"
       />
 
       <StepIndicator current={1} steps={envelopeSteps} />
 
       <section
-        className="editorial-panel p-6 sm:p-8"
+        className="panel p-5 sm:p-8"
         data-animate="enter"
         data-animate-delay="2"
       >
@@ -142,7 +151,10 @@ function UploadShellLayout({
           <div
             aria-busy={isBusy}
             aria-label="Document upload dropzone"
-            className={`cursor-pointer border border-dashed px-6 py-10 text-center transition sm:px-10 sm:py-14 ${dropzoneClasses}`}
+            className={cn(
+              "cursor-pointer rounded-[1.25rem] border-2 border-dashed px-6 py-10 text-center transition sm:px-10 sm:py-12",
+              dropzoneClasses,
+            )}
             onClick={onOpenFilePicker}
             onDragLeave={isBusy ? undefined : () => undefined}
             onDragOver={undefined}
@@ -156,34 +168,41 @@ function UploadShellLayout({
                 <>
                   <div
                     aria-label="Upload progress"
-                    className="h-3 w-full overflow-hidden rounded-full bg-white"
+                    className="h-2 w-full max-w-sm overflow-hidden rounded-full bg-white"
                     role="progressbar"
                   >
-                    <div className="h-full w-2/3 animate-pulse rounded-full bg-chart-1" />
+                    <div className="h-full w-2/3 animate-pulse rounded-full bg-(--accent)" />
                   </div>
-                  <div className="space-y-2">
-                    <p className="text-lg font-semibold tracking-[-0.03em] text-(--fg)">
+                  <div className="space-y-1.5">
+                    <p className="text-lg font-bold tracking-[-0.02em] text-(--fg)">
                       Uploading...
                     </p>
-                    <p className="text-sm leading-6 text-muted-foreground">
+                    <p className="text-sm leading-6 text-(--secondary)">
                       Validating the PDF before you continue to signer setup.
                     </p>
                   </div>
                 </>
               ) : (
                 <>
-                  <div className="space-y-2">
-                    <p className="text-lg font-semibold tracking-[-0.03em] text-(--fg)">
+                  <span className="inline-flex size-12 items-center justify-center rounded-2xl bg-(--accent-soft) text-(--accent)">
+                    <UploadIcon
+                      aria-hidden="true"
+                      className="size-5"
+                      strokeWidth={2.2}
+                    />
+                  </span>
+                  <div className="space-y-1.5">
+                    <p className="text-lg font-bold tracking-[-0.02em] text-(--fg)">
                       Drag and drop your PDF here
                     </p>
-                    <p className="text-sm text-muted-foreground">
+                    <p className="text-sm text-(--secondary)">
                       or{" "}
-                      <span className="font-semibold text-(--fg) underline decoration-[rgba(17,17,17,0.3)] underline-offset-4">
+                      <span className="font-bold text-(--accent-ink) underline decoration-[rgba(83,64,214,0.35)] underline-offset-4">
                         click to browse
                       </span>
                     </p>
                   </div>
-                  <p className="text-xs font-semibold uppercase tracking-[0.22em] text-(--tertiary)">
+                  <p className="text-[0.8125rem] font-medium text-(--tertiary)">
                     PDF only - 20 MB max
                   </p>
                 </>
@@ -193,34 +212,48 @@ function UploadShellLayout({
 
           {errorMessage ? (
             <div
-              className="rounded-[24px] border border-[rgba(180,35,53,0.18)] bg-[rgba(180,35,53,0.04)] px-5 py-4"
+              className="rounded-2xl bg-(--danger-soft) px-5 py-4"
               role="alert"
             >
-              <p className="text-sm font-semibold text-(--accent)">
+              <p className="text-sm font-semibold text-(--danger)">
                 {errorMessage}
               </p>
             </div>
           ) : null}
 
           {summary ? (
-            <section className="border border-(--border) bg-(--surface) px-5 py-4">
-              <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
-                <div className="space-y-1">
-                  <p className="text-sm font-semibold text-(--fg)">
-                    {summary.fileName}
-                  </p>
-                  <p className="text-sm text-muted-foreground">
-                    {summary.sizeLabel}
-                  </p>
-                </div>
-                <button
-                  className="inline-flex min-h-11 items-center justify-center rounded-none border border-(--border) bg-white px-4 [font-family:var(--font-mono)] text-[0.72rem] font-semibold uppercase tracking-[0.18em] text-muted-foreground transition hover:border-black hover:text-(--fg)"
-                  onClick={onRemoveFile}
-                  type="button"
-                >
-                  Remove
-                </button>
+            <section className="well flex items-center gap-4 p-3.5 pr-4">
+              <span className="flex h-[4.5rem] w-14 shrink-0 items-center justify-center">
+                {previewUrl ? (
+                  // A blob: URL drawn in this browser from the chosen file.
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img
+                    alt=""
+                    className="max-h-full max-w-full rounded-[0.375rem] bg-white shadow-[0_1px_2px_rgba(28,29,43,0.08),0_4px_10px_rgba(28,29,43,0.10)] ring-1 ring-[rgba(28,29,43,0.06)]"
+                    src={previewUrl}
+                  />
+                ) : (
+                  <span className="inline-flex size-11 items-center justify-center rounded-xl bg-white text-(--accent)">
+                    <FileTextIcon aria-hidden="true" className="size-5" />
+                  </span>
+                )}
+              </span>
+              <div className="min-w-0 flex-1 space-y-0.5">
+                <p className="truncate text-sm font-bold text-(--fg)">
+                  {summary.fileName}
+                </p>
+                <p className="text-[0.8125rem] text-(--tertiary)">
+                  {summary.sizeLabel}
+                </p>
               </div>
+              <Button
+                onClick={onRemoveFile}
+                size="sm"
+                type="button"
+                variant="outline"
+              >
+                Remove
+              </Button>
             </section>
           ) : null}
 
@@ -294,9 +327,44 @@ export function UploadShell({ directUploadPrefix = null }: UploadShellProps) {
   const [isCreatingDraft, setIsCreatingDraft] = useState(false);
   const [autoFilledTitle, setAutoFilledTitle] = useState<string | null>(null);
   const [isDragActive, setIsDragActive] = useState(false);
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  // The first page of the chosen file as a small picture: shown beside the
+  // file name here, then saved as the envelope's dashboard thumbnail.
+  const thumbnailRef = useRef<Promise<Blob | null> | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (previewUrl) {
+        URL.revokeObjectURL(previewUrl);
+      }
+    };
+  }, [previewUrl]);
+
+  function startThumbnail(file: File | null) {
+    setPreviewUrl(null);
+
+    if (!file) {
+      thumbnailRef.current = null;
+      return;
+    }
+
+    const thumbnail = file
+      .arrayBuffer()
+      .then((buffer) => renderPdfThumbnail(new Uint8Array(buffer)))
+      .catch(() => null);
+
+    thumbnailRef.current = thumbnail;
+
+    void thumbnail.then((blob) => {
+      if (blob && thumbnailRef.current === thumbnail) {
+        setPreviewUrl(URL.createObjectURL(blob));
+      }
+    });
+  }
 
   function resetSelection(clearTitle: boolean) {
+    startThumbnail(null);
     setSummary(null);
     setErrorMessage(null);
     setIsCreatingDraft(false);
@@ -336,14 +404,18 @@ export function UploadShell({ directUploadPrefix = null }: UploadShellProps) {
     if (!isClientVisiblePdf(file)) {
       setErrorMessage(errorMessageMap["invalid-type"]);
       setSummary(null);
+      startThumbnail(null);
       return;
     }
 
     if (file.size > MAX_FILE_SIZE_BYTES) {
       setErrorMessage(errorMessageMap["too-large"]);
       setSummary(null);
+      startThumbnail(null);
       return;
     }
+
+    startThumbnail(file);
 
     const titleSuggestion = getTitleSuggestion(file.name);
 
@@ -412,6 +484,11 @@ export function UploadShell({ directUploadPrefix = null }: UploadShellProps) {
     setIsCreatingDraft(true);
     setErrorMessage(null);
 
+    // Taken now, with the file. The file can still be removed and another
+    // chosen while the draft is being created, and that one's picture must
+    // not end up on this draft.
+    const thumbnailForDraft = thumbnailRef.current;
+
     try {
       try {
         await assertPdfPreviewRenderable(summary.file);
@@ -441,6 +518,7 @@ export function UploadShell({ directUploadPrefix = null }: UploadShellProps) {
 
         if (response.status === 400) {
           setSummary(null);
+          startThumbnail(null);
         }
 
         setIsCreatingDraft(false);
@@ -455,6 +533,15 @@ export function UploadShell({ directUploadPrefix = null }: UploadShellProps) {
           error,
         );
       }
+
+      // Not waited for: the dashboard draws one later if this is lost.
+      const createdEnvelopeId = payload.data.envelopeId;
+
+      void thumbnailForDraft?.then((thumbnail) =>
+        thumbnail
+          ? uploadEnvelopeThumbnail(createdEnvelopeId, thumbnail)
+          : false,
+      );
 
       const redirectPath = payload.data.redirectPath;
 
@@ -508,6 +595,7 @@ export function UploadShell({ directUploadPrefix = null }: UploadShellProps) {
         onOpenFilePicker={openFilePicker}
         onRemoveFile={handleRemoveFile}
         onTitleChange={handleTitleChange}
+        previewUrl={previewUrl}
         summary={summary}
         title={title}
       />

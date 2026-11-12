@@ -23,7 +23,7 @@ export default async function AccessibilityPage() {
       title="Accessibility Statement"
     >
       <section className="space-y-3">
-        <h2 className="text-xl font-semibold tracking-[-0.03em] text-(--fg)">
+        <h2 className="text-xl font-extrabold tracking-[-0.02em] text-(--fg)">
           Commitment
         </h2>
         <p>
@@ -41,7 +41,7 @@ export default async function AccessibilityPage() {
       </section>
 
       <section className="space-y-4">
-        <h2 className="text-xl font-semibold tracking-[-0.03em] text-(--fg)">
+        <h2 className="text-xl font-extrabold tracking-[-0.02em] text-(--fg)">
           What currently works best
         </h2>
         <ul className="list-disc space-y-2 pl-6">
@@ -63,7 +63,7 @@ export default async function AccessibilityPage() {
       </section>
 
       <section className="space-y-4">
-        <h2 className="text-xl font-semibold tracking-[-0.03em] text-(--fg)">
+        <h2 className="text-xl font-extrabold tracking-[-0.02em] text-(--fg)">
           Known limitations
         </h2>
         <ul className="list-disc space-y-2 pl-6">
@@ -86,14 +86,14 @@ export default async function AccessibilityPage() {
       </section>
 
       <section className="space-y-3">
-        <h2 className="text-xl font-semibold tracking-[-0.03em] text-(--fg)">
+        <h2 className="text-xl font-extrabold tracking-[-0.02em] text-(--fg)">
           Alternative assistance
         </h2>
         <p>
           If you need help creating, sending, reviewing, or signing a document,
           email{" "}
           <Link
-            className="font-semibold text-(--fg) underline decoration-[rgba(17,17,17,0.24)] underline-offset-4"
+            className="font-semibold text-(--accent-ink) underline decoration-[rgba(83,64,214,0.35)] underline-offset-4"
             href={`mailto:${supportAddress}`}
           >
             {supportAddress}
@@ -110,7 +110,7 @@ export default async function AccessibilityPage() {
       </section>
 
       <section className="space-y-3">
-        <h2 className="text-xl font-semibold tracking-[-0.03em] text-(--fg)">
+        <h2 className="text-xl font-extrabold tracking-[-0.02em] text-(--fg)">
           Standards and ongoing work
         </h2>
         <p>
@@ -127,21 +127,21 @@ export default async function AccessibilityPage() {
       </section>
 
       <section className="space-y-3">
-        <h2 className="text-xl font-semibold tracking-[-0.03em] text-(--fg)">
+        <h2 className="text-xl font-extrabold tracking-[-0.02em] text-(--fg)">
           Feedback
         </h2>
         <p>
           Accessibility feedback helps us prioritize the right fixes. If you
           find a barrier, email{" "}
           <Link
-            className="font-semibold text-(--fg) underline decoration-[rgba(17,17,17,0.24)] underline-offset-4"
+            className="font-semibold text-(--accent-ink) underline decoration-[rgba(83,64,214,0.35)] underline-offset-4"
             href={`mailto:${supportAddress}`}
           >
             {supportAddress}
           </Link>{" "}
           or use the{" "}
           <Link
-            className="font-semibold text-(--fg) underline decoration-[rgba(17,17,17,0.24)] underline-offset-4"
+            className="font-semibold text-(--accent-ink) underline decoration-[rgba(83,64,214,0.35)] underline-offset-4"
             href="/contact"
           >
             Contact

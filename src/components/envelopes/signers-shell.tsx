@@ -262,12 +262,12 @@ function SignerCard({
       : `Receives the document after Signer ${order - 1} finishes.`;
 
   return (
-    <li className="border border-(--border) bg-white p-5 sm:p-6">
+    <li className="well p-4 sm:p-5">
       <div className="flex flex-col gap-4">
-        <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
-          <div className="space-y-3">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+          <div className="space-y-1.5">
             <span
-              className="inline-flex w-fit items-center gap-2 rounded-full px-3 py-1 text-xs font-semibold uppercase tracking-[0.22em]"
+              className="pill"
               style={{
                 backgroundColor: palette.tint,
                 color: palette.color,
@@ -280,7 +280,7 @@ function SignerCard({
               />
               Signer {order}
             </span>
-            <p className="text-sm leading-6 text-muted-foreground">
+            <p className="text-[0.8125rem] leading-5 text-(--secondary)">
               {routeLabel}
             </p>
           </div>
@@ -288,27 +288,27 @@ function SignerCard({
           <div className="flex flex-wrap items-center gap-2">
             <button
               aria-label={`Move signer ${order} earlier`}
-              className="inline-flex min-h-11 items-center justify-center rounded-none border border-(--border) bg-white px-4 [font-family:var(--font-mono)] text-[0.72rem] font-semibold uppercase tracking-[0.18em] text-muted-foreground transition hover:border-black hover:text-(--fg) disabled:cursor-not-allowed disabled:text-(--placeholder)"
+              className="btn-quiet"
               disabled={disabled || !canMoveEarlier}
               onClick={() => onMove("earlier")}
               type="button"
             >
-              <ChevronLeftIcon className="mr-1 size-4" />
+              <ChevronLeftIcon aria-hidden="true" className="-ml-1 size-4" />
               Earlier
             </button>
             <button
               aria-label={`Move signer ${order} later`}
-              className="inline-flex min-h-11 items-center justify-center rounded-none border border-(--border) bg-white px-4 [font-family:var(--font-mono)] text-[0.72rem] font-semibold uppercase tracking-[0.18em] text-muted-foreground transition hover:border-black hover:text-(--fg) disabled:cursor-not-allowed disabled:text-(--placeholder)"
+              className="btn-quiet"
               disabled={disabled || !canMoveLater}
               onClick={() => onMove("later")}
               type="button"
             >
               Later
-              <ChevronRightIcon className="ml-1 size-4" />
+              <ChevronRightIcon aria-hidden="true" className="-mr-1 size-4" />
             </button>
             <button
               aria-label={`Remove signer ${order}`}
-              className="inline-flex min-h-11 items-center justify-center rounded-none border border-(--border) bg-white px-4 [font-family:var(--font-mono)] text-[0.72rem] font-semibold uppercase tracking-[0.18em] text-muted-foreground transition hover:border-black hover:text-(--fg) disabled:cursor-not-allowed disabled:text-(--placeholder)"
+              className="btn-quiet btn-quiet-danger"
               disabled={disabled || !canRemove}
               onClick={onRemove}
               type="button"
@@ -318,17 +318,15 @@ function SignerCard({
           </div>
         </div>
 
-        <div className="grid gap-4 md:grid-cols-2">
-          <label className="grid auto-rows-min gap-2 text-sm">
-            <span className="font-semibold text-(--fg)">Name</span>
+        <div className="grid gap-x-4 gap-y-1 md:grid-cols-2">
+          <label className="grid auto-rows-min gap-1.5">
+            <span className="text-[0.8125rem] font-semibold text-(--secondary)">
+              Name
+            </span>
             <input
               aria-invalid={nameError ? true : undefined}
               aria-label={`Signer ${order} name`}
-              className={`min-h-12 rounded-none border bg-popover px-4 text-(--fg) outline-none placeholder:text-(--placeholder) disabled:cursor-not-allowed disabled:bg-[rgba(247,247,248,0.92)] ${
-                nameError
-                  ? "border-[rgba(180,35,53,0.36)]"
-                  : "border-(--border)"
-              }`}
+              className="field-input"
               disabled={disabled}
               onChange={(event: ChangeEvent<HTMLInputElement>) =>
                 onChange("name", event.target.value)
@@ -340,7 +338,7 @@ function SignerCard({
             />
             <span
               aria-live="polite"
-              className={`min-h-4 text-xs font-semibold text-(--accent) ${
+              className={`min-h-4 text-xs font-semibold text-(--danger) ${
                 nameError ? "" : "invisible"
               }`}
               role={nameError ? "alert" : undefined}
@@ -349,16 +347,14 @@ function SignerCard({
             </span>
           </label>
 
-          <label className="grid auto-rows-min gap-2 text-sm">
-            <span className="font-semibold text-(--fg)">Email</span>
+          <label className="grid auto-rows-min gap-1.5">
+            <span className="text-[0.8125rem] font-semibold text-(--secondary)">
+              Email
+            </span>
             <input
               aria-invalid={emailError ? true : undefined}
               aria-label={`Signer ${order} email`}
-              className={`min-h-12 rounded-none border bg-popover px-4 text-(--fg) outline-none placeholder:text-(--placeholder) disabled:cursor-not-allowed disabled:bg-[rgba(247,247,248,0.92)] ${
-                emailError
-                  ? "border-[rgba(180,35,53,0.36)]"
-                  : "border-(--border)"
-              }`}
+              className="field-input"
               disabled={disabled}
               onChange={(event: ChangeEvent<HTMLInputElement>) =>
                 onChange("email", event.target.value)
@@ -370,7 +366,7 @@ function SignerCard({
             />
             <span
               aria-live="polite"
-              className={`min-h-4 text-xs font-semibold text-(--accent) ${
+              className={`min-h-4 text-xs font-semibold text-(--danger) ${
                 emailError ? "" : "invisible"
               }`}
               role={emailError ? "alert" : undefined}
@@ -380,15 +376,13 @@ function SignerCard({
           </label>
         </div>
 
-        <fieldset className="grid gap-3 border-t border-(--border) pt-4 text-sm">
+        <fieldset className="grid gap-3 rounded-2xl bg-white p-4 text-sm text-(--fg) sm:p-5">
           <legend className="sr-only">Extra check before signing</legend>
-          <p className="font-semibold text-(--fg)">
+          <p className="font-bold text-(--fg)">
             Extra check before signing{" "}
-            <span className="font-normal text-muted-foreground">
-              (optional)
-            </span>
+            <span className="font-normal text-(--secondary)">(optional)</span>
           </p>
-          <p className="text-xs leading-5 text-muted-foreground">
+          <p className="text-[0.8125rem] leading-5 text-(--secondary)">
             By default anyone holding the emailed link can sign. Add a check
             when the signer&apos;s identity matters.
           </p>
@@ -396,7 +390,7 @@ function SignerCard({
             <input
               aria-label={`Email signer ${order} a one-time code`}
               checked={signer.requireEmailCode}
-              className="mt-1 size-4"
+              className="mt-0.5 size-4.5 shrink-0 cursor-pointer accent-(--accent)"
               disabled={disabled}
               onChange={(event: ChangeEvent<HTMLInputElement>) =>
                 onChecksChange({ requireEmailCode: event.target.checked })
@@ -406,7 +400,7 @@ function SignerCard({
             <span>Email a one-time code when they open the link</span>
           </label>
           <label className="grid gap-2">
-            <span>
+            <span className="text-[0.8125rem] font-semibold text-(--secondary)">
               Access code you will give them yourself, for example by phone
               {signer.hasAccessCode && !signer.removeAccessCode
                 ? " (a code is set; type a new one to change it)"
@@ -417,7 +411,7 @@ function SignerCard({
                 aria-invalid={accessCodeError ? true : undefined}
                 aria-label={`Signer ${order} access code`}
                 autoComplete="off"
-                className="min-h-11 flex-1 rounded-none border border-(--border) bg-popover px-4 text-(--fg) outline-none placeholder:text-(--placeholder)"
+                className="field-input flex-1"
                 disabled={disabled}
                 maxLength={64}
                 onChange={(event: ChangeEvent<HTMLInputElement>) =>
@@ -436,7 +430,7 @@ function SignerCard({
               />
               {signer.hasAccessCode && !signer.removeAccessCode ? (
                 <button
-                  className="min-h-11 border border-(--border) px-4 text-xs font-semibold text-muted-foreground hover:border-black hover:text-(--fg)"
+                  className="btn-quiet btn-quiet-danger min-h-12"
                   disabled={disabled}
                   onClick={() =>
                     onChecksChange({ accessCode: "", removeAccessCode: true })
@@ -449,7 +443,7 @@ function SignerCard({
             </div>
             {accessCodeError ? (
               <span
-                className="text-xs font-semibold text-(--accent)"
+                className="text-xs font-semibold text-(--danger)"
                 role="alert"
               >
                 {accessCodeError}
@@ -611,7 +605,7 @@ export function SignersShell({
 
   if (initialState === "error") {
     return (
-      <div className="space-y-6">
+      <div className="space-y-5">
         <PageHeader
           description="Step 2 of 4 - Add signers"
           title="New envelope"
@@ -631,42 +625,36 @@ export function SignersShell({
   }
 
   return (
-    <div className="space-y-8">
+    <div className="space-y-5">
       <PageHeader
         description="Step 2 of 4 - Add signers"
-        eyebrow="Envelope workflow"
         title="New envelope"
       />
 
       <StepIndicator current={2} steps={envelopeSteps} />
 
       <section
-        className="editorial-panel p-6 sm:p-8"
+        className="panel p-5 sm:p-8"
         data-animate="enter"
         data-animate-delay="2"
       >
-        <div className="space-y-6">
-          <div className="space-y-2 border-b border-(--border) pb-5">
-            <p className="text-base font-semibold text-(--fg)">
+        <div className="space-y-5">
+          <div className="space-y-1">
+            <h2 className="text-lg font-extrabold text-(--fg)">
               Signers will receive the document in this order.
-            </p>
-            <p className="text-sm leading-6 text-muted-foreground">
+            </h2>
+            <p className="text-sm leading-6 text-(--secondary)">
               Up to 10 signers per document.
             </p>
           </div>
 
           {submissionError ? (
-            <div
-              className="rounded-[24px] border border-[rgba(180,35,53,0.18)] bg-[rgba(180,35,53,0.04)] px-5 py-4"
-              role="alert"
-            >
-              <p className="text-sm font-semibold text-(--accent)">
-                {submissionError}
-              </p>
+            <div className="notice notice-danger" role="alert">
+              <p>{submissionError}</p>
             </div>
           ) : null}
 
-          <ol className="space-y-4">
+          <ol className="space-y-3">
             {signers.map((signer, index) => {
               const signerErrors = errorsBySignerId[signer.localId] ?? {};
               const nameError =
@@ -706,9 +694,9 @@ export function SignersShell({
             })}
           </ol>
 
-          <div className="space-y-2">
+          <div className="flex flex-wrap items-center gap-3">
             <button
-              className="inline-flex min-h-11 items-center justify-center rounded-none border border-(--border) bg-(--surface) px-5 [font-family:var(--font-mono)] text-[0.72rem] font-semibold uppercase tracking-[0.18em] text-(--fg) transition hover:border-black hover:bg-white disabled:cursor-not-allowed disabled:text-(--placeholder)"
+              className="inline-flex min-h-11 items-center justify-center rounded-[0.875rem] bg-(--accent-soft) px-4.5 text-sm font-bold text-(--accent-ink) transition hover:bg-[#e0dbfb] disabled:cursor-not-allowed disabled:opacity-50"
               disabled={!canAddSigner || isSubmitting}
               onClick={handleAddSigner}
               type="button"
@@ -716,13 +704,13 @@ export function SignersShell({
               + Add another signer
             </button>
             {!canAddSigner ? (
-              <p className="text-xs font-semibold uppercase tracking-[0.22em] text-(--tertiary)">
+              <p className="text-[0.8125rem] font-semibold text-(--tertiary)">
                 Maximum reached
               </p>
             ) : null}
           </div>
 
-          <div className="flex flex-col gap-3 pt-2 sm:flex-row sm:justify-end">
+          <div className="flex flex-col-reverse gap-3 pt-2 sm:flex-row sm:justify-end">
             <ShellButton href="/envelopes/new" variant="secondary">
               ← Back
             </ShellButton>

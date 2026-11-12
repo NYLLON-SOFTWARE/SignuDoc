@@ -1,6 +1,14 @@
 "use client";
 
 import {
+  CalendarIcon,
+  CaseSensitiveIcon,
+  SignatureIcon,
+  SquareCheckIcon,
+  TypeIcon,
+  type LucideIcon,
+} from "lucide-react";
+import {
   useEffect,
   useRef,
   useState,
@@ -17,6 +25,7 @@ import {
   type ReplaceFieldsResponse,
 } from "@/lib/schemas/field";
 import { CanvasShell } from "@/components/layout/canvas-shell";
+import { Button } from "@/components/ui/button";
 import {
   ChevronLeftIcon,
   ChevronRightIcon,
@@ -308,23 +317,23 @@ function PrepareLiveShellError({ envelopeId }: { envelopeId: string }) {
       title='"Document"'
     >
       <div className="flex min-h-[calc(100vh-73px)] items-center justify-center p-4 sm:p-6 lg:p-8">
-        <section className="app-surface-strong w-full max-w-[520px] p-8 text-center sm:p-10">
-          <div className="mx-auto inline-flex size-16 items-center justify-center rounded-full bg-[rgba(180,35,53,0.1)] text-lg font-semibold text-(--accent)">
+        <section className="panel w-full max-w-[520px] p-8 text-center sm:p-10">
+          <div className="mx-auto inline-flex size-14 items-center justify-center rounded-2xl bg-(--danger-soft) text-lg font-extrabold text-(--danger)">
             !
           </div>
-          <h1 className="mt-6 text-[28px] font-semibold tracking-[-0.04em] text-(--fg)">
+          <h1 className="mt-5 text-2xl font-extrabold tracking-[-0.03em] text-(--fg)">
             Couldn&apos;t load this document
           </h1>
-          <p className="mt-3 text-sm leading-6 text-muted-foreground">
+          <p className="mt-2 text-sm leading-6 text-(--secondary)">
             Something went wrong. Please try again.
           </p>
-          <button
-            className="mt-8 inline-flex min-h-11 items-center justify-center rounded-full bg-(--accent) px-5 text-sm font-semibold text-white shadow-[0_14px_28px_rgba(180,35,53,0.22)] transition hover:bg-(--accent-hover)"
+          <Button
+            className="mt-7"
             onClick={() => window.location.reload()}
             type="button"
           >
             Retry
-          </button>
+          </Button>
         </section>
       </div>
     </CanvasShell>
@@ -633,14 +642,12 @@ function PrepareLiveShellContent({
       stepLabel="Step 3 of 4"
       title={`"${record.title}"`}
     >
-      <div className="grid min-h-[calc(100vh-73px)] lg:grid-cols-[280px_minmax(0,1fr)_320px]">
-        <aside className="hidden border-r border-(--border) bg-[rgba(251,248,242,0.88)] lg:block">
-          <div className="flex h-full flex-col gap-8 p-5">
-            <section className="space-y-4">
-              <p className="text-xs font-semibold uppercase tracking-[0.24em] text-(--tertiary)">
-                Fields
-              </p>
-              <div className="grid gap-3">
+      <div className="grid min-h-[calc(100vh-73px)] lg:grid-cols-[272px_minmax(0,1fr)_304px]">
+        <aside className="hidden lg:block">
+          <div className="sticky top-[4.5rem] flex max-h-[calc(100vh-4.5rem)] flex-col gap-4 overflow-y-auto py-5 pl-5">
+            <section className="panel space-y-3 rounded-[1.25rem] p-4">
+              <p className="section-eyebrow px-1">Fields</p>
+              <div className="grid gap-2">
                 {fieldTools.map((tool) => (
                   <FieldToolButton
                     isActive={armedTool === tool.type}
@@ -659,16 +666,16 @@ function PrepareLiveShellContent({
               </div>
             </section>
 
-            <section className="space-y-4 border-t border-(--border) pt-6">
-              <div className="flex items-center justify-between">
-                <p className="text-xs font-semibold uppercase tracking-[0.24em] text-(--tertiary)">
-                  Signers
-                </p>
+            <section className="panel space-y-3 rounded-[1.25rem] p-4">
+              <div className="flex items-center justify-between px-1">
+                <p className="section-eyebrow">Signers</p>
                 <span className="text-xs font-medium text-(--tertiary)">
-                  {fields.length} fields placed
+                  {fields.length === 1
+                    ? "1 field placed"
+                    : `${String(fields.length)} fields placed`}
                 </span>
               </div>
-              <div className="space-y-3">
+              <div className="space-y-2">
                 {signers.map((signer) => {
                   const signerFields = fields.filter(
                     (field) => field.signerId === signer.id,
@@ -692,8 +699,8 @@ function PrepareLiveShellContent({
           </div>
         </aside>
 
-        <section className="flex min-w-0 flex-col gap-4 p-4 sm:p-6 lg:p-8">
-          <div className="editorial-panel px-4 py-3 sm:px-5">
+        <section className="flex min-w-0 flex-col gap-4 p-4 sm:p-5">
+          <div className="panel rounded-[1.25rem] px-4 py-3">
             <div className="flex flex-col gap-3 lg:grid lg:grid-cols-[1fr_auto_1fr] lg:items-center">
               <div className="flex justify-center lg:justify-start">
                 <DocumentZoomControls
@@ -719,7 +726,7 @@ function PrepareLiveShellContent({
               <div className="flex items-center justify-center gap-3">
                 <button
                   aria-label="Previous page"
-                  className="inline-flex size-11 items-center justify-center rounded-none border border-(--border) bg-white text-muted-foreground transition hover:border-black hover:bg-white disabled:cursor-not-allowed disabled:text-(--placeholder)"
+                  className="btn-quiet size-10 px-0"
                   disabled={activePage === 1}
                   onClick={() =>
                     changePage(
@@ -734,17 +741,15 @@ function PrepareLiveShellContent({
                 >
                   <ChevronLeftIcon className="size-4" />
                 </button>
-                <div className="min-w-[132px] text-center">
-                  <p className="text-xs font-semibold uppercase tracking-[0.22em] text-(--tertiary)">
-                    Document page
-                  </p>
-                  <p className="mt-1 text-sm font-semibold text-(--fg)">
+                <div className="min-w-[7.5rem] text-center">
+                  <p className="sr-only">Document page</p>
+                  <p className="text-sm font-bold text-(--fg)">
                     {`Page ${activePage} of ${pageCount}`}
                   </p>
                 </div>
                 <button
                   aria-label="Next page"
-                  className="inline-flex size-11 items-center justify-center rounded-none border border-(--border) bg-white text-muted-foreground transition hover:border-black hover:bg-white disabled:cursor-not-allowed disabled:text-(--placeholder)"
+                  className="btn-quiet size-10 px-0"
                   disabled={activePage === pageCount}
                   onClick={() =>
                     changePage(
@@ -771,15 +776,15 @@ function PrepareLiveShellContent({
             </div>
           </div>
 
-          <div className="editorial-panel p-4 lg:hidden">
-            <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
-              <label className="grid gap-2 text-sm">
-                <span className="font-semibold text-(--fg)">
+          <div className="panel rounded-[1.25rem] p-4 lg:hidden">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+              <label className="grid flex-1 gap-1.5">
+                <span className="text-[0.8125rem] font-semibold text-(--secondary)">
                   Selected signer
                 </span>
                 <select
                   aria-label="Selected signer"
-                  className="min-h-12 rounded-none border border-(--border) bg-popover px-4 text-(--fg)"
+                  className="field-input"
                   onChange={(event) => setSelectedSignerId(event.target.value)}
                   value={selectedSignerId}
                 >
@@ -790,19 +795,20 @@ function PrepareLiveShellContent({
                   ))}
                 </select>
               </label>
-              <button
-                className="inline-flex min-h-11 items-center justify-center rounded-none border border-(--border) bg-(--surface) px-5 [font-family:var(--font-mono)] text-[0.72rem] font-semibold uppercase tracking-[0.18em] text-(--fg) transition hover:border-black hover:bg-white"
+              <Button
+                className="min-h-12"
                 onClick={() => setIsMobileToolsOpen(true)}
                 type="button"
+                variant="secondary"
               >
                 Open field tools
-              </button>
+              </Button>
             </div>
           </div>
 
-          <div className="editorial-panel p-3 sm:p-4">
+          <div className="panel overflow-hidden rounded-[1.25rem]">
             <div
-              className={`relative overflow-auto border border-(--border) bg-(--surface) p-3 sm:p-5 ${
+              className={`relative overflow-auto p-3 sm:p-6 ${
                 zoomLevel > DEFAULT_DOCUMENT_ZOOM_LEVEL && !armedTool
                   ? isDocumentPanning
                     ? "cursor-grabbing"
@@ -820,7 +826,7 @@ function PrepareLiveShellContent({
                 className={`mx-auto ${zoomLevel > DEFAULT_DOCUMENT_ZOOM_LEVEL ? "w-full" : "flex justify-center"}`}
               >
                 <div
-                  className="relative border border-[rgba(17,17,17,0.08)] bg-white"
+                  className="relative overflow-hidden rounded-md bg-white shadow-[0_1px_2px_rgba(28,29,43,0.08),0_12px_32px_rgba(28,29,43,0.12)]"
                   style={{
                     width: `${zoomLevel * 100}%`,
                   }}
@@ -847,7 +853,7 @@ function PrepareLiveShellContent({
                     {armedTool ? (
                       <button
                         aria-label={`Place ${getFieldTool(armedTool).label} on page ${activePage}`}
-                        className="absolute inset-0 z-10 cursor-copy rounded-[28px] bg-transparent"
+                        className="absolute inset-0 z-10 cursor-copy bg-transparent"
                         onClick={(event) =>
                           placeField(
                             event,
@@ -871,11 +877,11 @@ function PrepareLiveShellContent({
 
                     {fields.length === 0 ? (
                       <div className="absolute inset-0 z-1 flex items-center justify-center px-6">
-                        <div className="max-w-[300px] border border-dashed border-[rgba(17,17,17,0.12)] bg-white/92 px-6 py-8 text-center">
-                          <p className="text-lg font-semibold tracking-[-0.03em] text-(--fg)">
+                        <div className="max-w-[300px] rounded-[1.25rem] border-2 border-dashed border-(--border-strong) bg-white/92 px-6 py-7 text-center">
+                          <p className="text-lg font-extrabold tracking-[-0.02em] text-(--fg)">
                             No fields placed yet
                           </p>
-                          <p className="mt-3 text-sm leading-6 text-muted-foreground">
+                          <p className="mt-2 text-sm leading-6 text-(--secondary)">
                             Pick a field, then click the page to place it for
                             the selected signer.
                           </p>
@@ -919,11 +925,11 @@ function PrepareLiveShellContent({
                     })}
 
                     {armedTool ? (
-                      <div className="pointer-events-none absolute inset-x-4 bottom-4 z-11 border border-[rgba(180,35,53,0.12)] bg-white/94 px-4 py-3 sm:inset-x-6 sm:bottom-6">
-                        <p className="text-xs font-semibold uppercase tracking-[0.22em] text-(--accent)">
+                      <div className="pointer-events-none absolute inset-x-4 bottom-4 z-11 rounded-2xl bg-white/95 px-4 py-3 shadow-(--shadow-lift) ring-1 ring-[rgba(83,64,214,0.18)] sm:inset-x-6 sm:bottom-6">
+                        <p className="text-[0.8125rem] font-bold text-(--accent-ink)">
                           Ready to place
                         </p>
-                        <p className="mt-2 text-sm text-muted-foreground">
+                        <p className="mt-1 text-sm text-(--secondary)">
                           Click the page to place{" "}
                           <span className="font-semibold text-(--fg)">
                             {getFieldTool(armedTool).label}
@@ -943,7 +949,7 @@ function PrepareLiveShellContent({
           </div>
 
           {selectedField ? (
-            <div className="editorial-panel p-4 lg:hidden">
+            <div className="panel rounded-[1.25rem] p-4 lg:hidden">
               <FieldEditor
                 field={selectedField}
                 onDelete={() =>
@@ -969,13 +975,11 @@ function PrepareLiveShellContent({
           </div>
         </section>
 
-        <aside className="hidden border-l border-(--border) bg-white/92 lg:block">
-          <div className="flex h-full flex-col gap-6 p-5">
-            <section className="space-y-4">
-              <p className="text-xs font-semibold uppercase tracking-[0.24em] text-(--tertiary)">
-                Inspector
-              </p>
-              <div className="border border-(--border) bg-(--surface) p-4">
+        <aside className="hidden lg:block">
+          <div className="sticky top-[4.5rem] flex max-h-[calc(100vh-4.5rem)] flex-col gap-4 overflow-y-auto py-5 pr-5">
+            <section className="panel space-y-3 rounded-[1.25rem] p-4">
+              <p className="section-eyebrow px-1">Inspector</p>
+              <div>
                 {selectedField ? (
                   <FieldEditor
                     field={selectedField}
@@ -1016,30 +1020,28 @@ function PrepareLiveShellContent({
         <div className="fixed inset-0 z-40 lg:hidden">
           <button
             aria-label="Close field tools"
-            className="absolute inset-0 bg-[rgba(17,17,17,0.36)]"
+            className="absolute inset-0 bg-[rgba(28,29,43,0.32)]"
             onClick={() => setIsMobileToolsOpen(false)}
             type="button"
           />
           <div
             aria-label="Field tools"
-            className="absolute inset-x-0 bottom-0 rounded-t-[32px] border border-(--border) bg-[rgba(255,255,255,0.94)] px-4 py-5 shadow-[0_-24px_60px_rgba(17,17,17,0.18)]"
+            className="absolute inset-x-0 bottom-0 rounded-t-[1.75rem] bg-white px-4 py-5 shadow-[0_-24px_60px_rgba(28,29,43,0.18)]"
             role="dialog"
           >
-            <div className="mx-auto mb-4 h-1.5 w-14 rounded-full bg-(--border)" />
+            <div className="mx-auto mb-4 h-1.5 w-12 rounded-full bg-(--surface-strong)" />
             <div className="space-y-4">
               <div className="flex items-center justify-between">
-                <p className="text-xs font-semibold uppercase tracking-[0.24em] text-(--tertiary)">
-                  Fields
-                </p>
+                <p className="section-eyebrow">Fields</p>
                 <button
-                  className="text-sm font-semibold text-muted-foreground"
+                  className="text-sm font-bold text-(--accent-ink)"
                   onClick={() => setIsMobileToolsOpen(false)}
                   type="button"
                 >
                   Done
                 </button>
               </div>
-              <div className="grid gap-3 sm:grid-cols-2">
+              <div className="grid gap-2 sm:grid-cols-2">
                 {fieldTools.map((tool) => (
                   <FieldToolButton
                     isActive={armedTool === tool.type}
@@ -1064,22 +1066,44 @@ function PrepareLiveShellContent({
   );
 }
 
+const fieldToolIcons: Record<PrepareFieldType, LucideIcon> = {
+  checkbox: SquareCheckIcon,
+  date: CalendarIcon,
+  initials: CaseSensitiveIcon,
+  signature: SignatureIcon,
+  text: TypeIcon,
+};
+
 function FieldToolButton({ isActive, onSelect, tool }: FieldToolButtonProps) {
+  const Icon = fieldToolIcons[tool.type];
+
   return (
     <button
       aria-label={tool.label}
       aria-pressed={isActive}
-      className={`flex min-h-12 items-center justify-between rounded-none border px-4 text-left text-sm font-semibold transition ${
+      className={`flex min-h-12 items-center gap-3 rounded-[0.875rem] px-2.5 text-left text-sm font-bold transition ${
         isActive
-          ? "border-[rgba(180,35,53,0.28)] bg-[rgba(180,35,53,0.08)] text-(--fg)"
-          : "border-(--border) bg-(--surface) text-(--fg) hover:border-[rgba(17,17,17,0.16)] hover:bg-white"
+          ? "bg-(--accent) text-white shadow-(--shadow-sm)"
+          : "bg-(--surface) text-(--fg) hover:bg-(--accent-softer) hover:text-(--accent-ink)"
       }`}
       onClick={onSelect}
       type="button"
     >
-      <span>{tool.label}</span>
-      <span className="text-xs uppercase tracking-[0.16em] text-(--tertiary)">
-        Place
+      <span
+        aria-hidden="true"
+        className={`inline-flex size-8 shrink-0 items-center justify-center rounded-[0.625rem] ${
+          isActive ? "bg-white/20 text-white" : "bg-white text-(--accent)"
+        }`}
+      >
+        <Icon className="size-4" strokeWidth={2.2} />
+      </span>
+      <span className="flex-1">{tool.label}</span>
+      <span
+        className={`pr-1.5 text-xs font-semibold ${
+          isActive ? "text-white/85" : "text-(--tertiary)"
+        }`}
+      >
+        {isActive ? "Placing" : "Place"}
       </span>
     </button>
   );
@@ -1095,17 +1119,17 @@ function SignerCard({
   return (
     <button
       aria-pressed={isActive}
-      className={`w-full border px-4 py-4 text-left transition ${
+      className={`w-full rounded-[0.875rem] px-3 py-3 text-left transition ${
         isActive
-          ? "border-black bg-white"
-          : "border-(--border) bg-white hover:border-[rgba(17,17,17,0.16)]"
+          ? "bg-(--accent-softer) ring-2 ring-(--accent)"
+          : "bg-(--surface) hover:bg-(--accent-softer)"
       }`}
       onClick={onSelect}
       type="button"
     >
       <div className="flex items-start gap-3">
         <span
-          className="mt-0.5 inline-flex size-10 items-center justify-center rounded-full text-sm font-semibold"
+          className="mt-0.5 inline-flex size-9 shrink-0 items-center justify-center rounded-full text-[0.8125rem] font-bold"
           style={{
             backgroundColor: signer.tint,
             color: signer.color,
@@ -1117,15 +1141,14 @@ function SignerCard({
             .join("")}
         </span>
         <div className="min-w-0">
-          <p className="text-sm font-semibold text-(--fg)">{signer.name}</p>
-          <p className="mt-1 text-xs text-muted-foreground">
+          <p className="truncate text-sm font-bold text-(--fg)">{signer.name}</p>
+          <p className="mt-0.5 text-xs text-(--secondary)">
             {fieldCount} field{fieldCount === 1 ? "" : "s"} placed
           </p>
           <p
-            className="mt-2 text-xs font-semibold uppercase tracking-[0.18em]"
-            style={{
-              color: hasSignatureField ? signer.color : "var(--accent)",
-            }}
+            className={`mt-1.5 text-xs font-bold ${
+              hasSignatureField ? "text-(--success)" : "text-(--danger)"
+            }`}
           >
             {hasSignatureField ? "Signature ready" : "Signature needed"}
           </p>
@@ -1145,11 +1168,11 @@ function EmptyFieldInspector({
   const activeTool = armedTool ? getFieldTool(armedTool) : null;
 
   return (
-    <div className="border border-dashed border-(--border) bg-[rgba(247,247,248,0.92)] px-4 py-5">
-      <p className="text-sm font-semibold text-(--fg)">
+    <div className="well px-4 py-4">
+      <p className="text-sm font-bold text-(--fg)">
         {activeTool ? `${activeTool.label} ready to place` : "No field selected"}
       </p>
-      <p className="mt-3 text-sm leading-6 text-muted-foreground">
+      <p className="mt-1.5 text-sm leading-6 text-(--secondary)">
         {activeTool
           ? `Click the document to place ${activeTool.label.toLowerCase()} for ${selectedSigner.name}.`
           : "Select a field on the page to edit its settings, or choose a field tool on the left to place a new one."}
@@ -1168,13 +1191,11 @@ function SelectedSignerPanel({
   const activeTool = armedTool ? getFieldTool(armedTool) : null;
 
   return (
-    <section className="space-y-4 border border-(--border) bg-(--surface) p-4">
-      <p className="text-xs font-semibold uppercase tracking-[0.24em] text-(--tertiary)">
-        Selected signer
-      </p>
-      <div className="flex items-center gap-3">
+    <section className="panel space-y-3 rounded-[1.25rem] p-4">
+      <p className="section-eyebrow px-1">Selected signer</p>
+      <div className="flex items-center gap-3 px-1">
         <span
-          className="inline-flex size-10 items-center justify-center rounded-full text-sm font-semibold"
+          className="inline-flex size-10 shrink-0 items-center justify-center rounded-full text-sm font-bold"
           style={{
             backgroundColor: selectedSigner.tint,
             color: selectedSigner.color,
@@ -1186,10 +1207,10 @@ function SelectedSignerPanel({
             .join("")}
         </span>
         <div className="min-w-0">
-          <p className="text-sm font-semibold text-(--fg)">
+          <p className="truncate text-sm font-bold text-(--fg)">
             {selectedSigner.name}
           </p>
-          <p className="mt-1 text-sm text-muted-foreground">
+          <p className="mt-0.5 text-[0.8125rem] text-(--secondary)">
             {activeTool
               ? `Placing ${activeTool.label.toLowerCase()}`
               : "New fields will be assigned here"}
@@ -1215,10 +1236,8 @@ function SaveStatusIndicator({
   return (
     <div
       aria-live="polite"
-      className={`inline-flex min-h-11 items-center gap-3 border px-3 py-2 text-sm ${
-        isError
-          ? "border-[rgba(180,35,53,0.18)] bg-[rgba(180,35,53,0.06)]"
-          : "border-(--border) bg-white"
+      className={`inline-flex min-h-10 items-center gap-2.5 rounded-full px-3.5 py-1.5 text-[0.8125rem] ${
+        isError ? "bg-(--danger-soft)" : "bg-(--surface)"
       }`}
       role={isError ? "alert" : "status"}
     >
@@ -1226,16 +1245,16 @@ function SaveStatusIndicator({
         aria-hidden="true"
         className={`inline-flex size-5 items-center justify-center rounded-full ${
           isError
-            ? "bg-[rgba(180,35,53,0.12)] text-(--accent)"
+            ? "bg-white text-(--danger)"
             : isSaving
-              ? "bg-[rgba(17,17,17,0.04)] text-(--fg)"
-              : "bg-[rgba(24,132,74,0.12)] text-[rgb(24,132,74)]"
+              ? "text-(--secondary)"
+              : "bg-(--success-soft) text-(--success)"
         }`}
       >
         {isError ? (
-          <span className="text-[13px] font-semibold leading-none">!</span>
+          <span className="text-[13px] font-bold leading-none">!</span>
         ) : isSaving ? (
-          <span className="size-3.5 animate-spin rounded-full border-2 border-[rgba(17,17,17,0.18)] border-t-(--fg)" />
+          <span className="size-3.5 animate-spin rounded-full border-2 border-(--border-strong) border-t-(--accent)" />
         ) : (
           <svg
             aria-hidden="true"
@@ -1254,16 +1273,16 @@ function SaveStatusIndicator({
         )}
       </span>
       <div className="min-w-0">
-        <p className="font-semibold text-(--fg)">
+        <p className="font-bold text-(--fg)">
           {isError ? "Save failed" : isSaving ? "Saving..." : "Saved"}
         </p>
         {saveError ? (
-          <p className="truncate text-xs text-(--accent)">{saveError}</p>
+          <p className="truncate text-xs text-(--danger)">{saveError}</p>
         ) : null}
       </div>
       {isError ? (
         <button
-          className="inline-flex min-h-9 items-center justify-center border border-[rgba(180,35,53,0.14)] bg-white px-3 [font-family:var(--font-mono)] text-[0.68rem] font-semibold uppercase tracking-[0.16em] text-(--accent)"
+          className="btn-quiet btn-quiet-danger min-h-8 px-3 text-xs"
           onClick={onRetrySave}
           type="button"
         >
@@ -1286,78 +1305,84 @@ function FieldEditor({
 
   return (
     <section aria-label="Field settings" role="region">
-      <div>
-        <p className="text-xs font-semibold uppercase tracking-[0.22em] text-(--tertiary)">
-          Field settings
+      <div className="px-1">
+        <p className="section-eyebrow">Field settings</p>
+        <p className="mt-1 text-base font-extrabold text-(--fg)">
+          {tool.label}
         </p>
-        <p className="mt-2 text-sm font-semibold text-(--fg)">{tool.label}</p>
       </div>
 
       <div className="mt-4 space-y-4">
         <div>
-          <p className="text-xs font-semibold uppercase tracking-[0.2em] text-(--tertiary)">
+          <p className="px-1 text-[0.8125rem] font-semibold text-(--secondary)">
             Assigned to
           </p>
-          <div className="mt-3 grid gap-2 sm:grid-cols-2">
-            {signers.map((signer) => (
-              <button
-                className={`min-h-11 rounded-none border px-3 text-sm font-semibold transition ${
-                  field.signerId === signer.id
-                    ? "border-transparent bg-(--fg) text-white"
-                    : "border-(--border) bg-(--surface) text-(--fg) hover:bg-white"
-                }`}
-                key={signer.id}
-                onClick={() => onSignerChange(signer.id)}
-                type="button"
-              >
-                {signer.name}
-              </button>
-            ))}
+          <div className="mt-2 grid gap-2">
+            {signers.map((signer) => {
+              const isAssigned = field.signerId === signer.id;
+
+              return (
+                <button
+                  aria-pressed={isAssigned}
+                  className={`flex min-h-11 items-center gap-2.5 rounded-xl px-3 text-left text-sm font-bold transition ${
+                    isAssigned
+                      ? "bg-(--accent-softer) text-(--fg) ring-2 ring-(--accent)"
+                      : "bg-(--surface) text-(--fg) hover:bg-(--accent-softer)"
+                  }`}
+                  key={signer.id}
+                  onClick={() => onSignerChange(signer.id)}
+                  type="button"
+                >
+                  <span
+                    aria-hidden="true"
+                    className="size-2.5 shrink-0 rounded-full"
+                    style={{ backgroundColor: signer.color }}
+                  />
+                  <span className="truncate">{signer.name}</span>
+                </button>
+              );
+            })}
           </div>
         </div>
 
         {isOptionalField ? (
           <div>
-            <div className="border border-(--border) bg-(--surface) px-4 py-3">
-              <p className="text-xs font-semibold uppercase tracking-[0.2em] text-(--tertiary)">
-                Required
-              </p>
-              <div className="mt-3 grid gap-2 sm:grid-cols-2">
-                {[
-                  {
-                    label: "Required",
-                    value: true,
-                  },
-                  {
-                    label: "Optional",
-                    value: false,
-                  },
-                ].map((option) => (
-                  <button
-                    className={`min-h-11 rounded-none border px-3 text-sm font-semibold transition ${
-                      field.required === option.value
-                        ? "border-transparent bg-(--fg) text-white"
-                        : "border-(--border) bg-(--surface) text-(--fg) hover:bg-white"
-                    }`}
-                    key={option.label}
-                    onClick={() => onSetRequired(option.value)}
-                    type="button"
-                  >
-                    {option.label}
-                  </button>
-                ))}
-              </div>
+            <p className="px-1 text-[0.8125rem] font-semibold text-(--secondary)">
+              Required
+            </p>
+            <div className="segmented mt-2 flex w-full">
+              {[
+                {
+                  label: "Required",
+                  value: true,
+                },
+                {
+                  label: "Optional",
+                  value: false,
+                },
+              ].map((option) => (
+                <button
+                  aria-pressed={field.required === option.value}
+                  className="segmented-item flex-1"
+                  key={option.label}
+                  onClick={() => onSetRequired(option.value)}
+                  type="button"
+                >
+                  {option.label}
+                </button>
+              ))}
             </div>
           </div>
         ) : null}
 
-        <button
-          className="inline-flex min-h-11 w-full items-center justify-center rounded-none border border-[rgba(180,35,53,0.16)] bg-[rgba(180,35,53,0.08)] px-5 [font-family:var(--font-mono)] text-[0.72rem] font-semibold uppercase tracking-[0.18em] text-(--accent) transition hover:bg-[rgba(180,35,53,0.14)]"
+        <Button
+          className="w-full bg-(--danger-soft) text-(--danger) hover:bg-[#fbd9d6]"
           onClick={onDelete}
           type="button"
+          variant="ghost"
         >
           Delete
-        </button>
+        </Button>
       </div>
     </section>
   );

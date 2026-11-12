@@ -10,11 +10,10 @@ export default function AppError({
 }) {
   return (
     <StatusPanel
-      description="The shared sender shell is mounted, but this page failed to load. Try the route again."
-      eyebrow="App shell"
+      description="Something went wrong while loading this page. Please try again."
       footer={
         <button
-          className="inline-flex min-h-11 items-center justify-center rounded-full border border-(--border) px-5 text-sm font-semibold text-(--fg) transition hover:bg-(--surface)"
+          className="btn-quiet min-h-11 px-5"
           onClick={reset}
           type="button"
         >

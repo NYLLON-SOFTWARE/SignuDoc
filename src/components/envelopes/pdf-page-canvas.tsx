@@ -245,14 +245,14 @@ export function PdfPageCanvas({
         ref={canvasRef}
       />
       {renderState !== "ready" ? (
-        <div className="absolute inset-0 z-1 flex items-center justify-center rounded-[28px] bg-white/92 px-6 text-center">
-          <div className="max-w-[320px] rounded-[24px] border border-(--border) bg-(--surface) px-5 py-4 shadow-(--shadow-card)">
-            <p className="text-sm font-semibold text-(--fg)">
+        <div className="absolute inset-0 z-1 flex items-center justify-center bg-white/92 px-6 text-center">
+          <div className="well max-w-[320px] px-5 py-4">
+            <p className="text-sm font-bold text-(--fg)">
               {renderState === "error"
                 ? "We couldn't render this PDF page."
                 : "Rendering document page..."}
             </p>
-            <p className="mt-2 text-sm leading-6 text-muted-foreground">
+            <p className="mt-1.5 text-sm leading-6 text-(--secondary)">
               {renderState === "error"
                 ? "Reload the page or try this draft again in a moment."
                 : "Preparing the source PDF so placed fields stay aligned with the stored page size."}

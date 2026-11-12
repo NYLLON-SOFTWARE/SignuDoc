@@ -2,14 +2,8 @@
 
 import Link from "next/link";
 import { useState, type ReactNode } from "react";
-import {
-  CircleUserRound,
-  LayoutDashboard,
-  LogOut,
-} from "lucide-react";
+import { CircleUserRound, LayoutDashboard, LogOut } from "lucide-react";
 
-import { Avatar, AvatarFallback } from "@/components/ui/avatar";
-import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -60,54 +54,37 @@ export function PublicSessionMenu({
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
-        <Button
+        <button
           aria-label="Open account menu"
           className={cn(
-            "rounded-none border border-(--border) bg-white text-(--fg) shadow-none hover:border-black hover:bg-white hover:text-(--fg)",
+            "inline-flex size-10 shrink-0 items-center justify-center rounded-full bg-[#ffd9c2] text-[0.8125rem] font-bold text-[#7a3412] transition hover:ring-4 hover:ring-[rgba(28,29,43,0.06)]",
             buttonClassName,
           )}
-          size="icon-sm"
-          variant="outline"
+          type="button"
         >
-          <Avatar className="size-8 rounded-none bg-[#fff8f8] text-(--accent)">
-            <AvatarFallback className="bg-[#fff8f8] text-sm font-semibold text-(--accent)">
-              {initials ? (
-                initials
-              ) : (
-                <CircleUserRound className="size-4 text-(--accent)" />
-              )}
-            </AvatarFallback>
-          </Avatar>
-        </Button>
+          {initials ? initials : <CircleUserRound className="size-4" />}
+        </button>
       </DropdownMenuTrigger>
       <DropdownMenuContent
         align={align}
-        className={cn(
-          "w-56 rounded-none border border-(--border) bg-white p-2 shadow-none",
-          contentClassName,
-        )}
+        className={cn("w-60", contentClassName)}
       >
         <DropdownMenuLabel className="px-3 py-2">
-          <p className="truncate text-sm font-semibold text-(--fg)">
+          <p className="truncate text-sm font-bold text-(--fg)">
             {session.user.name}
           </p>
-          <p className="mt-1 truncate text-xs font-normal text-(--tertiary)">
+          <p className="mt-0.5 truncate text-xs font-normal text-(--tertiary)">
             {session.user.email}
           </p>
         </DropdownMenuLabel>
         <DropdownMenuSeparator />
         <DropdownMenuItem asChild>
-          <Link
-            className="rounded-xl px-3 py-2 text-sm font-medium text-(--fg)"
-            href="/dashboard"
-            prefetch
-          >
+          <Link href="/dashboard" prefetch>
             <LayoutDashboard className="size-4" />
             Dashboard
           </Link>
         </DropdownMenuItem>
         <DropdownMenuItem
-          className="rounded-xl px-3 py-2 text-sm font-medium text-(--accent)"
           disabled={isSigningOut}
           onSelect={(event) => {
             event.preventDefault();

@@ -207,9 +207,9 @@ export function InteractivePlacedField({
       aria-pressed={isSelected}
       className={`absolute z-2 flex touch-none select-none items-center justify-center overflow-visible border-2 text-center text-[11px] font-semibold shadow-(--shadow-card) transition ${
         isSelected
-          ? "ring-2 ring-[rgba(17,17,17,0.12)]"
-          : "hover:ring-1 hover:ring-[rgba(17,17,17,0.08)]"
-      } cursor-grab ${isCheckbox ? "rounded-none p-0" : "rounded-none px-2 py-1"}`}
+          ? "ring-4 ring-[rgba(28,29,43,0.10)]"
+          : "hover:ring-2 hover:ring-[rgba(28,29,43,0.08)]"
+      } cursor-grab ${isCheckbox ? "rounded-[0.25rem] p-0" : "rounded-[0.375rem] px-2 py-1"}`}
       onKeyDown={handleKeyboardSelect}
       onPointerCancel={endGesture}
       onPointerDown={(event) => beginGesture(event, "move")}
@@ -238,7 +238,7 @@ export function InteractivePlacedField({
         ? resizeHandles.map((handle) => (
             <button
               aria-label={`Resize ${label} field from ${handle.corner}`}
-              className={`absolute ${handle.positionClassName} ${handle.cursorClassName} z-1 size-4 rounded-full bg-white shadow-[0_4px_10px_rgba(17,17,17,0.18)]`}
+              className={`absolute ${handle.positionClassName} ${handle.cursorClassName} z-1 size-4 rounded-full bg-white shadow-[0_4px_10px_rgba(28,29,43,0.18)]`}
               key={handle.corner}
               onPointerCancel={endGesture}
               onPointerDown={(event) => beginGesture(event, "resize", handle.corner)}

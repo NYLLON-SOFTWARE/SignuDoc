@@ -33,13 +33,14 @@ type ShellButtonProps = {
   loading?: boolean;
   onClick?: () => void;
   type?: "button" | "submit";
-  variant?: "ghost" | "primary" | "secondary";
+  variant?: "danger" | "ghost" | "primary" | "secondary";
 };
 
 const variantMap: Record<
   NonNullable<ShellButtonProps["variant"]>,
   NonNullable<React.ComponentProps<typeof Button>["variant"]>
 > = {
+  danger: "destructive",
   primary: "default",
   secondary: "outline",
   ghost: "ghost",
@@ -64,7 +65,7 @@ export function FieldShell({
   return (
     <Field className="gap-2 text-sm">
       <FieldLabel
-        className="text-[0.84rem] font-semibold tracking-[-0.02em] text-(--fg)"
+        className="text-[0.8125rem] font-semibold text-(--secondary)"
         htmlFor={inputId}
       >
         {label}
@@ -75,7 +76,7 @@ export function FieldShell({
         autoComplete={autoComplete}
         className={cn(
           "read-only:text-muted-foreground",
-          error ? "border-[rgba(180,35,53,0.36)]" : "border-(--border)",
+          error ? "border-(--danger)" : "",
         )}
         disabled={disabled}
         id={inputId}
@@ -88,7 +89,7 @@ export function FieldShell({
       />
       {error ? (
         <FieldError
-          className="text-xs font-semibold text-(--accent)"
+          className="text-xs font-semibold text-(--danger)"
           id={name ? `${name}-description` : undefined}
         >
           {error}
@@ -117,7 +118,7 @@ export function ShellButton({
 }: ShellButtonProps) {
   const buttonVariant = variantMap[variant];
   const shellButtonClassName = cn(
-    "rounded-none [font-family:var(--font-mono)] text-[0.74rem] font-bold uppercase tracking-[0.18em] shadow-none",
+    "min-h-12 px-5.5 text-[0.9375rem]",
     className,
   );
   const content = (
@@ -168,7 +169,7 @@ export function StaticShellButton({
     <span
       className={cn(
         buttonVariants({ variant: variantMap[variant] }),
-        "rounded-none [font-family:var(--font-mono)] text-[0.74rem] font-bold uppercase tracking-[0.18em] shadow-none",
+        "min-h-12 px-5.5 text-[0.9375rem]",
         className,
       )}
     >

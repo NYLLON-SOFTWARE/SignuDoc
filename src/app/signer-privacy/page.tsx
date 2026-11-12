@@ -41,7 +41,7 @@ export default async function SignerPrivacyPage() {
       title="Privacy notice for signers"
     >
       <section className="space-y-3">
-        <h2 className="text-xl font-semibold tracking-[-0.03em] text-(--fg)">
+        <h2 className="text-xl font-extrabold tracking-[-0.02em] text-(--fg)">
           Who is responsible
         </h2>
         <p>
@@ -62,7 +62,7 @@ export default async function SignerPrivacyPage() {
       </section>
 
       <section className="space-y-3">
-        <h2 className="text-xl font-semibold tracking-[-0.03em] text-(--fg)">
+        <h2 className="text-xl font-extrabold tracking-[-0.02em] text-(--fg)">
           What is collected
         </h2>
         <ul className="list-disc space-y-2 pl-6">
@@ -81,7 +81,7 @@ export default async function SignerPrivacyPage() {
       </section>
 
       <section className="space-y-3">
-        <h2 className="text-xl font-semibold tracking-[-0.03em] text-(--fg)">
+        <h2 className="text-xl font-extrabold tracking-[-0.02em] text-(--fg)">
           Why, and on what basis
         </h2>
         <p>
@@ -95,7 +95,7 @@ export default async function SignerPrivacyPage() {
       </section>
 
       <section className="space-y-3">
-        <h2 className="text-xl font-semibold tracking-[-0.03em] text-(--fg)">
+        <h2 className="text-xl font-extrabold tracking-[-0.02em] text-(--fg)">
           Who else handles it
         </h2>
         <p>
@@ -110,7 +110,7 @@ export default async function SignerPrivacyPage() {
       </section>
 
       <section className="space-y-3">
-        <h2 className="text-xl font-semibold tracking-[-0.03em] text-(--fg)">
+        <h2 className="text-xl font-extrabold tracking-[-0.02em] text-(--fg)">
           How long it is kept
         </h2>
         <p>
@@ -120,7 +120,7 @@ export default async function SignerPrivacyPage() {
       </section>
 
       <section className="space-y-3">
-        <h2 className="text-xl font-semibold tracking-[-0.03em] text-(--fg)">
+        <h2 className="text-xl font-extrabold tracking-[-0.02em] text-(--fg)">
           Your rights
         </h2>
         <p>

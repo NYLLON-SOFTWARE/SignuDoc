@@ -1,19 +1,12 @@
 "use client";
 
 import Link from "next/link";
-import { IBM_Plex_Mono } from "next/font/google";
 
 import { useBranding } from "@/components/layout/branding-provider";
 import { SIGNUDOC_NAME, SIGNUDOC_URL } from "@/lib/branding";
 import { PUBLIC_COPYRIGHT_YEAR, publicFooterLinks } from "@/lib/legal";
 import { cn } from "@/lib/cn";
 import { PERMITTED_USE_PATH } from "@/lib/permitted-uses";
-
-const ibmPlexMono = IBM_Plex_Mono({
-  display: "swap",
-  subsets: ["latin"],
-  weight: ["400", "500", "600", "700"],
-});
 
 type PublicLegalFooterProps = {
   className?: string;
@@ -35,10 +28,9 @@ export function PublicLegalFooter({
   linkClassName,
 }: PublicLegalFooterProps) {
   const branding = useBranding();
-  const monoClassName = ibmPlexMono.className;
   const resolvedLinkClassName =
     linkClassName ??
-    `${monoClassName} text-xs text-[#71717a] transition-colors hover:text-black`;
+    "text-[0.8125rem] font-medium text-(--tertiary) transition-colors hover:text-(--accent-ink)";
   // The hosted service links to its own pages. Any other install links to
   // whatever terms and privacy policy its organization has published.
   const links: FooterLink[] = branding.hosted
@@ -80,27 +72,17 @@ export function PublicLegalFooter({
   });
 
   return (
-    <footer
-      className={cn(
-        "relative z-10 border-t border-[#d4d4d4] bg-white",
-        className,
-      )}
-    >
-      <div
-        className={cn(
-          "mx-auto max-w-[1200px] px-6 py-8 sm:px-8 lg:px-10",
-          contentClassName,
-        )}
-      >
+    <footer className={cn("relative z-10", className)}>
+      <div className={cn("page-width py-7", contentClassName)}>
         <div className="flex flex-col items-center justify-between gap-4 sm:flex-row">
-          <p className={`${monoClassName} text-xs text-[#71717a]`}>
+          <p className="text-[0.8125rem] text-(--tertiary)">
             © {PUBLIC_COPYRIGHT_YEAR} {branding.productName}
           </p>
 
           {links.length > 0 ? (
             <nav
               aria-label="Footer"
-              className="flex flex-wrap items-center justify-center gap-6"
+              className="flex flex-wrap items-center justify-center gap-x-6 gap-y-2"
             >
               {links.map((link) =>
                 link.external ? (
@@ -126,14 +108,9 @@ export function PublicLegalFooter({
             </nav>
           ) : null}
 
-          {branding.hosted ? (
-            <div className="hidden items-center gap-2 sm:flex">
-              <span className="h-[2px] w-8 bg-[#e50000]" />
-              <span className="inline-block h-[6px] w-[6px] rounded-full bg-[#e50000]" />
-            </div>
-          ) : (
+          {branding.hosted ? null : (
             <a
-              className={`${monoClassName} text-xs text-[#71717a] transition-colors hover:text-black`}
+              className={resolvedLinkClassName}
               href={SIGNUDOC_URL}
               rel="noreferrer"
               target="_blank"

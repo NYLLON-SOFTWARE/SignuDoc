@@ -40,9 +40,9 @@ export function AuthShell({ children }: AuthShellProps) {
   const showNavAction = navAction.href !== "/signup" || signupAvailable;
 
   return (
-    <div className="flex min-h-screen flex-col bg-white">
-      <header className="border-b border-(--border) bg-white">
-        <div className="editorial-shell flex items-center justify-between gap-4 px-0 py-5">
+    <div className="flex min-h-screen flex-col">
+      <header>
+        <div className="page-width flex items-center justify-between gap-4 py-4">
           <Brand href="/" />
           <nav
             aria-label="Public navigation"
@@ -51,7 +51,7 @@ export function AuthShell({ children }: AuthShellProps) {
             <PublicSessionMenu>
               {showNavAction ? (
                 <Link
-                  className="editorial-meta transition-colors hover:text-(--fg)"
+                  className="btn-quiet min-h-10 px-4 text-sm"
                   href={navAction.href}
                   prefetch
                 >
@@ -63,7 +63,7 @@ export function AuthShell({ children }: AuthShellProps) {
         </div>
       </header>
 
-      <main className="editorial-shell flex flex-1 items-start justify-center px-0 py-12 sm:py-16">
+      <main className="page-width flex flex-1 items-start justify-center py-8 sm:py-14">
         <div className="flex w-full justify-center" data-animate="enter">
           {children}
         </div>
