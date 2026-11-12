@@ -12,8 +12,12 @@ import {
   type TransactionalEmailMessage,
 } from "../services/email.ts";
 import { withUserEmailLegalFooter } from "../services/email-legal-footer.ts";
-import { assertServiceConfig } from "../services/service-config.ts";
-import { getEnv, type EnvSource } from "../utils/env.ts";
+import { requireConfigValue } from "../services/service-config.ts";
+import {
+  getEnv,
+  resolveDeploymentOrigins,
+  type EnvSource,
+} from "../utils/env.ts";
 
 type CreateAppAuthOptions = {
   database?: Pool;
@@ -26,7 +30,6 @@ type AppAuth = ReturnType<typeof createAppAuth>;
 let cachedAuth: AppAuth | null = null;
 
 const LOOPBACK_HOST_ALIASES = ["127.0.0.1", "localhost"] as const;
-const AUTH_ENV_KEYS = ["BETTER_AUTH_SECRET", "BETTER_AUTH_URL"] as const;
 
 function isLoopbackHost(hostname: string): boolean {
   return (
@@ -124,16 +127,33 @@ function buildChangeEmailConfirmationMessage(input: {
   };
 }
 
+// The email service is created when a message is sent, not when auth is set
+// up. Email that is not configured yet then fails that one message (and is
+// logged) instead of taking sign-in down with it.
 function sendAuthEmailInBackground(
-  emailService: EmailService,
+  getEmailService: () => EmailService,
   message: TransactionalEmailMessage,
 ) {
-  void emailService.send(message).catch((error) => {
-    console.error(
-      `Failed to send auth email "${message.template}" to ${message.to}:`,
-      error,
-    );
-  });
+  void Promise.resolve()
+    .then(() => getEmailService().send(message))
+    .catch((error: unknown) => {
+      console.error(
+        `Failed to send auth email "${message.template}" to ${message.to}:`,
+        error,
+      );
+    });
+}
+
+// In production, new passwords are checked against the Have I Been Pwned
+// breach list, which needs outbound HTTPS to api.pwnedpasswords.com. If the
+// check cannot be reached, sign-up fails rather than accepting the password.
+// PASSWORD_BREACH_CHECK=off turns it off for networks without that access
+// and for the end-to-end test.
+function isPasswordBreachCheckEnabled(env: EnvSource): boolean {
+  return (
+    env.NODE_ENV === "production" &&
+    env.PASSWORD_BREACH_CHECK?.trim().toLowerCase() !== "off"
+  );
 }
 
 export function createAppAuth({
@@ -141,13 +161,26 @@ export function createAppAuth({
   env = process.env,
   includeNextCookies = true,
 }: CreateAppAuthOptions = {}) {
-  assertServiceConfig("auth", AUTH_ENV_KEYS, env);
-
   const appEnv = getEnv(env);
   const authEnv = appEnv.auth;
-  const emailService = createEmailService({ env });
+  const secret = requireConfigValue(
+    "auth",
+    "BETTER_AUTH_SECRET",
+    authEnv.betterAuthSecret,
+  );
+  const baseURL = requireConfigValue(
+    "auth",
+    "BETTER_AUTH_URL",
+    authEnv.betterAuthUrl,
+  );
+  let cachedEmailService: EmailService | null = null;
+  const emailService = () => {
+    cachedEmailService ??= createEmailService({ env });
+
+    return cachedEmailService;
+  };
   const plugins = [
-    ...(env.NODE_ENV === "production"
+    ...(isPasswordBreachCheckEnabled(env)
       ? [
           haveIBeenPwned({
             customPasswordCompromisedMessage:
@@ -157,21 +190,27 @@ export function createAppAuth({
       : []),
     ...(includeNextCookies ? [nextCookies()] : []),
   ];
-  const secret = authEnv.betterAuthSecret!;
-
   return betterAuth({
     trustedOrigins: async () => {
       const trustedOrigins = new Set<string>();
 
       addTrustedOrigin(trustedOrigins, appEnv.appUrl);
-      addTrustedOrigin(trustedOrigins, authEnv.betterAuthUrl);
+      addTrustedOrigin(trustedOrigins, baseURL);
+
+      // On Vercel the same deployment also answers on its own vercel.app
+      // URLs, which are the same app and so are trusted too.
+      for (const origin of resolveDeploymentOrigins(env)) {
+        addTrustedOrigin(trustedOrigins, origin);
+      }
 
       return Array.from(trustedOrigins);
     },
     advanced: {
-      useSecureCookies: env.NODE_ENV === "production",
+      // Secure cookies whenever the site is served over HTTPS, which is
+      // always in production except for a build run on localhost.
+      useSecureCookies: baseURL.startsWith("https://"),
     },
-    baseURL: authEnv.betterAuthUrl!,
+    baseURL,
     database,
     emailVerification: {
       sendOnSignIn: true,

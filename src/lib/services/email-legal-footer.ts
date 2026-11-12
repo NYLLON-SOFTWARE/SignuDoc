@@ -1,9 +1,7 @@
 import { publicLegalLinks } from "../legal.ts";
 import { getEnv, type EnvSource } from "../utils/env.ts";
 import { escapeHtml } from "../utils/html.ts";
-import { assertServiceConfig } from "./service-config.ts";
-
-const APP_URL_ENV_KEYS = ["APP_URL"] as const;
+import { requireConfigValue } from "./service-config.ts";
 
 type EmailBodyContent = {
   htmlBody: string;
@@ -11,12 +9,11 @@ type EmailBodyContent = {
 };
 
 function getAbsoluteLegalLinks(env: EnvSource = process.env) {
-  assertServiceConfig("app", APP_URL_ENV_KEYS, env);
-  const { appUrl } = getEnv(env);
+  const appUrl = requireConfigValue("app", "APP_URL", getEnv(env).appUrl);
 
   return publicLegalLinks.map((link) => ({
     ...link,
-    url: new URL(link.href, appUrl!).toString(),
+    url: new URL(link.href, appUrl).toString(),
   }));
 }
 

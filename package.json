@@ -19,12 +19,14 @@
     "lint": "eslint .",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
+    "test": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test \"src/**/*.test.ts\" \"db/**/*.test.mjs\"",
     "test:e2e": "playwright test"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1012.0",
     "@aws-sdk/s3-request-presigner": "^3.1012.0",
     "@pdf-lib/fontkit": "^1.1.1",
+    "@vercel/functions": "^3.11.1",
     "better-auth": "^1.7.21",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",

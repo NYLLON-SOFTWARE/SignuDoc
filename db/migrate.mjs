@@ -16,6 +16,12 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 
 import pg from "pg";
 
+import {
+  DATABASE_URL_VARIABLES,
+  normalizeDatabaseUrl,
+  resolveMigrationDatabaseUrl,
+} from "./database-url.mjs";
+
 const DEFAULT_MIGRATIONS_DIR = path.join(
   path.dirname(fileURLToPath(import.meta.url)),
   "migrations",
@@ -23,37 +29,6 @@ const DEFAULT_MIGRATIONS_DIR = path.join(
 
 // Arbitrary constant shared by every migrator so two builds cannot run at once.
 const ADVISORY_LOCK_ID = 746108321;
-
-// A direct connection is preferred: session-level advisory locks and DDL do
-// not work reliably through a transaction-mode pooler.
-const DATABASE_URL_VARIABLES = [
-  "DATABASE_URL_UNPOOLED",
-  "POSTGRES_URL_NON_POOLING",
-  "DATABASE_URL",
-  "POSTGRES_URL",
-];
-
-function readConfiguredValue(env, name) {
-  const value = env[name]?.trim();
-
-  if (!value || value.toLowerCase().startsWith("replace-with-")) {
-    return undefined;
-  }
-
-  return value;
-}
-
-export function resolveMigrationDatabaseUrl(env = process.env) {
-  for (const name of DATABASE_URL_VARIABLES) {
-    const value = readConfiguredValue(env, name);
-
-    if (value) {
-      return { name, value };
-    }
-  }
-
-  return null;
-}
 
 export async function listMigrationFiles(
   migrationsDir = DEFAULT_MIGRATIONS_DIR,
@@ -70,7 +45,7 @@ export async function runMigrations({
 }) {
   const client = new pg.Client({
     application_name: "signudoc-migrate",
-    connectionString,
+    connectionString: normalizeDatabaseUrl(connectionString),
     connectionTimeoutMillis: 15_000,
   });
 
@@ -168,7 +143,7 @@ async function main() {
 
     if (optional) {
       console.warn(
-        `${message} Skipping; the app applies pending migrations on first use instead.`,
+        `${message} Skipping. Run "npm run db:migrate" once a database is connected, or deploy again.`,
       );
       return;
     }

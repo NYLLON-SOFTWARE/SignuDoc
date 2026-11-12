@@ -14,7 +14,7 @@ permissions:
 
 jobs:
   check:
-    name: Typecheck, lint, build
+    name: Typecheck, lint, unit tests, build
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -25,14 +25,11 @@ jobs:
       - run: npm ci
       - run: npm run typecheck
       - run: npm run lint
-      # The build prerenders the legal pages, which read these values. They
-      # are placeholders, not secrets.
+      - run: npm test
+      # The build prerenders the legal pages, which read the support address.
       - run: npm run build
         env:
           NEXT_TELEMETRY_DISABLED: "1"
-          APP_URL: https://ci.signudoc.example
-          BETTER_AUTH_URL: https://ci.signudoc.example
-          BETTER_AUTH_SECRET: ci-only-placeholder-secret-0123456789abcdef
           SUPPORT_EMAIL: support@ci.signudoc.example
 
   e2e:

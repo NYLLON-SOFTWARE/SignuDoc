@@ -1,9 +1,7 @@
 import { SIGNING_LINK_TTL_SECONDS } from "../types/domain.ts";
 import { getEnv, type EnvSource } from "../utils/env.ts";
-import { assertServiceConfig } from "./service-config.ts";
+import { requireConfigValue } from "./service-config.ts";
 import { issueOpaqueToken } from "./opaque-tokens.ts";
-
-const SIGNING_LINK_ENV_KEYS = ["APP_URL"] as const;
 
 export type IssuedSigningLink = {
   exp: number;
@@ -25,12 +23,8 @@ type SigningLinkConfig = {
 function getSigningLinkConfig({
   env = process.env,
 }: SigningLinkOptions = {}): SigningLinkConfig {
-  assertServiceConfig("signing links", SIGNING_LINK_ENV_KEYS, env);
-
-  const appEnv = getEnv(env);
-
   return {
-    appUrl: appEnv.appUrl!,
+    appUrl: requireConfigValue("signing links", "APP_URL", getEnv(env).appUrl),
     defaultTtlSeconds: SIGNING_LINK_TTL_SECONDS,
   };
 }

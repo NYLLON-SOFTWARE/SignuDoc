@@ -57,12 +57,10 @@ import {
   createStorageService,
   type StorageService,
 } from "./services/storage.ts";
-import { assertServiceConfig } from "./services/service-config.ts";
+import { requireConfigValue } from "./services/service-config.ts";
 import { RECIPIENT_DOWNLOAD_LINK_TTL_SECONDS } from "./types/domain.ts";
 import { getEnv } from "./utils/env.ts";
 import { escapeHtml } from "./utils/html.ts";
-
-const APP_URL_ENV_KEYS = ["APP_URL"] as const;
 
 type SigningRequestMeta = {
   ipAddress?: string | null;
@@ -234,9 +232,9 @@ function normalizeSenderName(sender: SenderRow): string {
 }
 
 function getEnvelopeUrl(envelopeId: string): string {
-  assertServiceConfig("app", APP_URL_ENV_KEYS, process.env);
+  const appUrl = requireConfigValue("app", "APP_URL", getEnv().appUrl);
 
-  return new URL(`/envelopes/${envelopeId}`, getEnv().appUrl!).toString();
+  return new URL(`/envelopes/${envelopeId}`, appUrl).toString();
 }
 
 const RECIPIENT_DOWNLOAD_LINK_TTL_DAYS =
