@@ -9,6 +9,10 @@ import { defineConfig, devices } from "@playwright/test";
 //   npm run test:e2e
 //
 // The test database is wiped on every run. It must have "e2e" in its name.
+//
+// The app is built and started in production mode, so the test sees the same
+// headers, bundles and Content Security Policy as a real deployment. Set
+// E2E_DEV=1 to run against "next dev" instead, which starts faster.
 const port = Number(process.env.E2E_PORT ?? 3100);
 const baseURL = `http://localhost:${String(port)}`;
 
@@ -41,7 +45,10 @@ export default defineConfig({
     trace: "retain-on-failure",
   },
   webServer: {
-    command: `npx next dev --port ${String(port)}`,
+    command:
+      process.env.E2E_DEV === "1"
+        ? `npx next dev --port ${String(port)}`
+        : `npx next build && npx next start --port ${String(port)}`,
     env: {
       APP_URL: baseURL,
       BETTER_AUTH_SECRET: "e2e-only-secret-not-used-anywhere-else-0123456789",
@@ -50,11 +57,14 @@ export default defineConfig({
       EMAIL_CAPTURE_DIR: e2eOutboxDir,
       EMAIL_DRIVER: "capture",
       NEXT_TELEMETRY_DISABLED: "1",
+      // The breach check calls an outside service; the test must not.
+      PASSWORD_BREACH_CHECK: "off",
       STORAGE_DRIVER: "local",
       STORAGE_LOCAL_DIR: path.join(e2eDataDir, "storage"),
+      SUPPORT_EMAIL: "support@signudoc.localhost",
     },
     reuseExistingServer: false,
-    timeout: 180_000,
+    timeout: 300_000,
     url: `${baseURL}/login`,
   },
   workers: 1,

@@ -5,7 +5,7 @@ import path from "node:path";
 import { Resend } from "resend";
 
 import { type EmailTemplateKind } from "../types/domain.ts";
-import { getEnv, type EnvSource } from "../utils/env.ts";
+import { getEnv, isLocalDeployment, type EnvSource } from "../utils/env.ts";
 import { assertServiceConfig } from "./service-config.ts";
 
 const EMAIL_ENV_KEYS = [
@@ -120,7 +120,9 @@ export function resolveEmailDriver(env: EnvSource = process.env): EmailDriver {
  * JSON file so a person (or the end-to-end test) can read the links in it.
  */
 function createCaptureEmailService(env: EnvSource): EmailService {
-  if (env.NODE_ENV === "production") {
+  // Allowed in development, and for a production build that is being run on
+  // localhost (which is what the end-to-end test does). Never on a real site.
+  if (env.NODE_ENV === "production" && !isLocalDeployment(env)) {
     throw new Error(
       "EMAIL_DRIVER=capture drops every email and cannot be used in production.",
     );
