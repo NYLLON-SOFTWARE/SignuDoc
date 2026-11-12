@@ -385,13 +385,16 @@ test("a new install is set up, a sender sends a PDF and a recipient signs it", a
       .toBeGreaterThan(0);
 
     // The picture is stored beside the PDF, as a JPEG, and only the account
-    // that sent the document can read it.
+    // that sent the document can read it. The browser is told to keep no
+    // copy, as it is for the document itself.
     await expect
       .poll(async () => (await page.request.get(thumbnailPath)).status())
       .toBe(200);
-    expect(
-      (await page.request.get(thumbnailPath)).headers()["content-type"],
-    ).toBe("image/jpeg");
+
+    const thumbnailHeaders = (await page.request.get(thumbnailPath)).headers();
+
+    expect(thumbnailHeaders["content-type"]).toBe("image/jpeg");
+    expect(thumbnailHeaders["cache-control"]).toBe("private, no-store");
 
     const anonymousContext = await browser.newContext();
 

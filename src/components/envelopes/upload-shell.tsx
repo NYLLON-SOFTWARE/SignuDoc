@@ -484,6 +484,11 @@ export function UploadShell({ directUploadPrefix = null }: UploadShellProps) {
     setIsCreatingDraft(true);
     setErrorMessage(null);
 
+    // Taken now, with the file. The file can still be removed and another
+    // chosen while the draft is being created, and that one's picture must
+    // not end up on this draft.
+    const thumbnailForDraft = thumbnailRef.current;
+
     try {
       try {
         await assertPdfPreviewRenderable(summary.file);
@@ -532,7 +537,7 @@ export function UploadShell({ directUploadPrefix = null }: UploadShellProps) {
       // Not waited for: the dashboard draws one later if this is lost.
       const createdEnvelopeId = payload.data.envelopeId;
 
-      void thumbnailRef.current?.then((thumbnail) =>
+      void thumbnailForDraft?.then((thumbnail) =>
         thumbnail
           ? uploadEnvelopeThumbnail(createdEnvelopeId, thumbnail)
           : false,

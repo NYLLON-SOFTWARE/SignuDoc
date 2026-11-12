@@ -47,10 +47,10 @@ export async function GET(
       database: getDb(),
     });
     const headers = new Headers({
-      // The original PDF of an envelope never changes, so neither does this.
-      // An hour keeps the dashboard quick without holding a deleted draft's
-      // picture in the browser for long.
-      "cache-control": "private, max-age=3600",
+      // As private as the document it was drawn from, and served the same
+      // way: the browser keeps no copy, so showing it always takes a
+      // signed-in request from the account that owns the envelope.
+      ...privateNoStore,
       "content-disposition": "inline",
       // Stored as a JPEG whatever the upload claimed to be, and served as
       // nothing else.
