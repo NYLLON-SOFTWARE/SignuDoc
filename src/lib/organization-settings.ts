@@ -105,6 +105,38 @@ const FIELD_MESSAGES: Record<OrganizationSettingsField, string> = {
 };
 
 /**
+ * Drops the fields the form shows but cannot change, before anything is
+ * checked. The form sends them back as displayed, and a value fixed by the
+ * environment need not pass the form's rules: RESEND_FROM_EMAIL may carry a
+ * display name ("Acme <sign@acme.com>"), which is not a bare address.
+ */
+function withoutLockedFields(
+  rawInput: unknown,
+  current: ResolvedSettings,
+): unknown {
+  if (typeof rawInput !== "object" || rawInput === null) {
+    return rawInput;
+  }
+
+  const input: Record<string, unknown> = { ...rawInput };
+
+  if (current.senderAddressFromEnv) {
+    delete input.senderAddress;
+  }
+
+  if (current.supportAddressFromEnv) {
+    delete input.supportAddress;
+  }
+
+  if (current.hosted) {
+    delete input.privacyUrl;
+    delete input.termsUrl;
+  }
+
+  return input;
+}
+
+/**
  * Validates and saves the Organization form. Addresses that are fixed by an
  * environment variable are left as they are stored, since the stored value
  * is not the one in use.
@@ -114,7 +146,9 @@ export async function updateOrganizationSettings(
   current: ResolvedSettings,
   database: DbExecutor = getDb(),
 ): Promise<AppSettings> {
-  const parsed = organizationSettingsSchema.safeParse(rawInput);
+  const parsed = organizationSettingsSchema.safeParse(
+    withoutLockedFields(rawInput, current),
+  );
   const fieldErrors: Partial<Record<OrganizationSettingsField, string>> = {};
 
   if (!parsed.success) {
@@ -131,11 +165,17 @@ export async function updateOrganizationSettings(
   }
 
   const input = parsed.data;
-  const { domains, invalid } = parseEmailDomainList(input.allowedEmailDomains);
+  // The list of domains only means something, and is only shown, when
+  // sign-up is limited to domains. Under any other rule the stored list is
+  // kept as it is, and whatever was left in the hidden field is not judged.
+  const domainRule = input.signupMode === "domains";
+  const { domains, invalid } = parseEmailDomainList(
+    domainRule ? input.allowedEmailDomains : "",
+  );
 
   if (invalid.length > 0) {
     fieldErrors.allowedEmailDomains = `Not a domain: ${invalid.slice(0, 3).join(", ")}`;
-  } else if (input.signupMode === "domains" && domains.length === 0) {
+  } else if (domainRule && domains.length === 0) {
     fieldErrors.allowedEmailDomains = FIELD_MESSAGES.allowedEmailDomains;
   }
 
@@ -145,7 +185,7 @@ export async function updateOrganizationSettings(
 
   return saveSettings(
     {
-      allowedEmailDomains: domains,
+      ...(domainRule ? { allowedEmailDomains: domains } : {}),
       organizationName: input.organizationName,
       signupMode: input.signupMode,
       ...(current.hosted

@@ -223,7 +223,7 @@ export function OrganizationSettings({
                 </label>
               ))}
             </div>
-            {values.signupMode === "domains" ? (
+            {values.signupMode === "domains" || errors.allowedEmailDomains ? (
               <div className="max-w-xl">
                 <FieldShell
                   disabled={isSaving}
