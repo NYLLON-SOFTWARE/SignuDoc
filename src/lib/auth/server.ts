@@ -15,6 +15,8 @@ import {
   type TransactionalEmailMessage,
 } from "../services/email.ts";
 import { withUserEmailLegalFooter } from "../services/email-legal-footer.ts";
+import { consumeRateLimit } from "../security/rate-limit.ts";
+import { getClientIpHeaderNames } from "../security/request.ts";
 import { requireConfigValue } from "../services/service-config.ts";
 import { getBranding, getSettings, getSetupState } from "../settings.ts";
 import { evaluateSignup } from "../signup-policy.ts";
@@ -309,6 +311,9 @@ export function createAppAuth({
       return Array.from(trustedOrigins);
     },
     advanced: {
+      // Where the visitor's address is read from, for rate limits and
+      // sessions: the same headers the rest of the app trusts.
+      ipAddress: { ipAddressHeaders: getClientIpHeaderNames(env) },
       // Secure cookies whenever the site is served over HTTPS, which is
       // always in production except for a build run on localhost.
       useSecureCookies: baseURL.startsWith("https://"),
@@ -390,6 +395,25 @@ export function createAppAuth({
           });
         }
       }),
+    },
+    // Better Auth limits its own routes (three sign-in or sign-up attempts
+    // in ten seconds, for one). Its counts go in the same Postgres table as
+    // the app's other limits, so they hold across instances.
+    rateLimit: {
+      customStorage: {
+        consume: async (key, rule) => {
+          const decision = await consumeRateLimit({
+            key: `auth:${key}`,
+            limit: rule.max,
+            windowMs: rule.window * 1000,
+          });
+
+          return {
+            allowed: decision.allowed,
+            retryAfter: decision.allowed ? null : decision.retryAfterSeconds,
+          };
+        },
+      },
     },
     session: {
       cookieCache: {

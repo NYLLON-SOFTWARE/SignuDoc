@@ -22,7 +22,7 @@ export async function POST(
   context: SigningDeclineRouteContext,
 ) {
   const { token } = await context.params;
-  const rateLimitResponse = applyRateLimit({
+  const rateLimitResponse = await applyRateLimit({
     category: "signing_decline",
     key: buildRateLimitKey([
       "signing-decline",

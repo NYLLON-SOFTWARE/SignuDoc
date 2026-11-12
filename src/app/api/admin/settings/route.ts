@@ -28,7 +28,7 @@ export async function PUT(request: Request) {
   }
 
   const session = sessionResult;
-  const rateLimitResponse = applyRateLimit({
+  const rateLimitResponse = await applyRateLimit({
     category: "organization_settings_update",
     key: buildRateLimitKey(["organization-settings", session.user.id]),
     limit: 30,

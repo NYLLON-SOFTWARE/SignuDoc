@@ -37,7 +37,7 @@ export async function POST(
   const session = sessionResult;
   const { id } = await context.params;
   const ipAddress = getClientIpAddress(request.headers);
-  const rateLimitResponse = applyRateLimit({
+  const rateLimitResponse = await applyRateLimit({
     category: "draft_envelope_send",
     key: buildRateLimitKey(["envelope-send", session.user.id]),
     limit: 10,

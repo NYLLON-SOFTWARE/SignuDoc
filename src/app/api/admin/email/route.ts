@@ -59,7 +59,7 @@ export async function POST(request: Request) {
   }
 
   const session = sessionResult;
-  const rateLimitResponse = applyRateLimit({
+  const rateLimitResponse = await applyRateLimit({
     category: "email_setup_action",
     key: buildRateLimitKey(["email-setup", session.user.id]),
     limit: 20,

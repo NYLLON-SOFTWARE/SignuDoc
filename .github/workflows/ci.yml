@@ -56,6 +56,11 @@ jobs:
           node-version-file: .nvmrc
           cache: npm
       - run: npm ci
+      # The tests that need a real Postgres: the rate limit statement and
+      # the cleanup job's lock.
+      - run: npm run test:db
+        env:
+          E2E_DATABASE_URL: postgres://signudoc:signudoc@127.0.0.1:5432/signudoc_e2e
       - run: npx playwright install --with-deps chromium
       - run: npm run test:e2e
         env:

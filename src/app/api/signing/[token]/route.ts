@@ -14,7 +14,7 @@ type SigningRouteContext = {
 
 export async function GET(request: Request, context: SigningRouteContext) {
   const { token } = await context.params;
-  const rateLimitResponse = applyRateLimit({
+  const rateLimitResponse = await applyRateLimit({
     category: "signing_token_read",
     key: buildRateLimitKey([
       "signing-read",

@@ -20,6 +20,7 @@
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "test": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test \"src/**/*.test.ts\" \"db/**/*.test.mjs\"",
+    "test:db": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test --test-concurrency=1 \"src/**/*.dbtest.ts\"",
     "test:e2e": "playwright test"
   },
   "dependencies": {

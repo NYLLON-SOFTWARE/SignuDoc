@@ -60,7 +60,7 @@ async function createAdminAccount(input: {
 
 export async function POST(request: Request) {
   const ipAddress = getClientIpAddress(request.headers);
-  const rateLimitResponse = applyRateLimit({
+  const rateLimitResponse = await applyRateLimit({
     category: "setup_submit",
     key: buildRateLimitKey(["setup", ipAddress ?? "unknown"]),
     limit: 10,

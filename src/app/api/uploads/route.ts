@@ -23,7 +23,7 @@ export async function POST(request: Request) {
   }
 
   const session = sessionResult;
-  const rateLimitResponse = applyRateLimit({
+  const rateLimitResponse = await applyRateLimit({
     category: "direct_upload_authorize",
     key: buildRateLimitKey(["direct-upload", session.user.id]),
     limit: 30,

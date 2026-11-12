@@ -26,7 +26,7 @@ export async function GET(
   context: PublicDownloadRouteContext,
 ) {
   const { token } = await context.params;
-  const rateLimitResponse = applyRateLimit({
+  const rateLimitResponse = await applyRateLimit({
     category: "public_download",
     key: buildRateLimitKey([
       "public-download",

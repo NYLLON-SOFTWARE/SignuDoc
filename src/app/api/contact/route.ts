@@ -25,7 +25,7 @@ export async function POST(request: Request) {
 
   const ipAddress = getClientIpAddress(request.headers);
   const userAgent = getRequestUserAgent(request.headers);
-  const rateLimitResponse = applyRateLimit({
+  const rateLimitResponse = await applyRateLimit({
     category: "contact_form_submit",
     key: buildRateLimitKey([
       "contact-form",

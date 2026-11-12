@@ -35,7 +35,7 @@ export async function POST(request: Request) {
   }
 
   const session = sessionResult;
-  const rateLimitResponse = applyRateLimit({
+  const rateLimitResponse = await applyRateLimit({
     category: "draft_envelope_create",
     key: buildRateLimitKey(["draft-create", session.user.id]),
     limit: 20,
