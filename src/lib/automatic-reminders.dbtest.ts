@@ -6,7 +6,11 @@ import type pg from "pg";
 
 import { openTestDatabase } from "./db/test-database.ts";
 import { runEnvelopeSchedule } from "./envelope-schedule.ts";
-import { changeEnvelopeReminders, EnvelopeMutationError } from "./envelopes.ts";
+import {
+  changeEnvelopeDeadline,
+  changeEnvelopeReminders,
+  EnvelopeMutationError,
+} from "./envelopes.ts";
 import { verifyAuditChain } from "./services/audit.ts";
 import type {
   EmailService,
@@ -131,11 +135,15 @@ async function auditEvents(envelopeId: string) {
   return result.rows.map((row) => row.event);
 }
 
-function recordingEmailService(failWith?: Error) {
+function recordingEmailService(
+  failWith?: Error,
+  beforeFailing?: (message: TransactionalEmailMessage) => Promise<void>,
+) {
   const sent: TransactionalEmailMessage[] = [];
   const service: EmailService = {
     async send(message) {
       if (failWith) {
+        await beforeFailing?.(message);
         throw failWith;
       }
 
@@ -252,6 +260,36 @@ test("a reminder whose email fails leaves the signer's link as it was", async ()
       .length,
     1,
   );
+});
+
+test("a deadline moved while a reminder's email fails stays moved", async () => {
+  const due = await createSentEnvelope({ reminderIntervalDays: 1 });
+  let newDeadline: number | undefined;
+  const failing = recordingEmailService(
+    new Error("mail is down"),
+    async (message) => {
+      if (message.to.startsWith(due.signerId)) {
+        newDeadline = (
+          await changeEnvelopeDeadline(
+            due.userId,
+            due.envelopeId,
+            { expiresInDays: 7, senderEmail: "sam@example.test" },
+            { database },
+          )
+        ).expiresAt;
+      }
+    },
+  );
+
+  await run(SENT_AT + DAY, failing.service);
+
+  const signer = await readSigner(due.signerId);
+
+  // The link the signer already holds is the one that works, and it lasts
+  // until the new deadline, not until the one it was issued with.
+  assert.ok(newDeadline);
+  assert.equal(signer.signing_token_hash, due.tokenHash);
+  assert.equal(signer.signing_token_expires_at, newDeadline);
 });
 
 test("a run that is out of time leaves the rest for the next one", async () => {

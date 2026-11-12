@@ -6,6 +6,7 @@ import {
   EnvelopeDeadlinePassedError,
   formatDeadline,
   isEnvelopeExpired,
+  nextSignerLinkExpiresAt,
   parseDeadlineDays,
   signingLinkLifetimeSeconds,
 } from "./envelope-deadline.ts";
@@ -60,6 +61,16 @@ test("a signing link lives until the envelope's deadline", () => {
   assert.throws(
     () => signingLinkLifetimeSeconds(NOW, NOW),
     EnvelopeDeadlinePassedError,
+  );
+});
+
+test("the next signer's link ends at the envelope's deadline", () => {
+  assert.equal(nextSignerLinkExpiresAt(NOW + 5 * DAY, NOW), NOW + 5 * DAY);
+  // The deadline passed while the signer before them was submitting.
+  assert.equal(nextSignerLinkExpiresAt(NOW - 5, NOW), NOW + 60);
+  assert.equal(
+    nextSignerLinkExpiresAt(null, NOW),
+    NOW + SIGNING_LINK_TTL_SECONDS,
   );
 });
 

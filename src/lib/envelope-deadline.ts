@@ -75,6 +75,24 @@ export function signingLinkLifetimeSeconds(
   return envelopeExpiresAt - issuedAt;
 }
 
+/**
+ * When the link of a signer whose turn starts now should end: at the
+ * envelope's deadline. The signer before them finished inside the deadline
+ * a moment ago, so a minute is kept in hand instead of refusing.
+ *
+ * Give it the deadline as read under the envelope's lock. A sender can move
+ * the deadline while a signer is submitting, and a deadline read earlier
+ * would hand the next signer a link that ends at the old one.
+ */
+export function nextSignerLinkExpiresAt(
+  envelopeExpiresAt: number | null | undefined,
+  turnStartsAt: number,
+): number {
+  return typeof envelopeExpiresAt === "number"
+    ? Math.max(envelopeExpiresAt, turnStartsAt + 60)
+    : turnStartsAt + SIGNING_LINK_TTL_SECONDS;
+}
+
 const deadlineFormatter = new Intl.DateTimeFormat("en-US", {
   day: "numeric",
   hour: "numeric",

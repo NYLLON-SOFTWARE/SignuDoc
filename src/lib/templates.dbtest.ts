@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, readdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { after, before, test } from "node:test";
@@ -30,6 +30,7 @@ import {
   deleteTemplate,
   getUseTemplateDataForUser,
   listTemplatesForUser,
+  MAX_TEMPLATES_PER_USER,
   saveEnvelopeAsTemplate,
   TemplateError,
 } from "./templates.ts";
@@ -535,6 +536,105 @@ test("the database refuses a template without signers", async () => {
   await assert.rejects(insert("[]"), /templates_roles_check/);
   await assert.rejects(insert('{"name":"x"}'), /templates_roles_check/);
   await insert('[{"id":"r1","name":"Client"}]');
+});
+
+test("a template whose document cannot be deleted is kept, to be deleted again", async () => {
+  const userId = await createUser();
+  const { envelopeId } = await createPreparedDraft(userId);
+  const template = await saveEnvelopeAsTemplate(
+    userId,
+    envelopeId,
+    { name: "Lease" },
+    { database, storageService },
+  );
+  const key = buildTemplatePdfKey({ templateId: template.id, userId });
+  const storageDown: StorageService = {
+    ...storageService,
+    async deleteObject() {
+      throw new Error("storage is down");
+    },
+  };
+
+  await assert.rejects(
+    deleteTemplate(userId, template.id, {
+      database,
+      storageService: storageDown,
+    }),
+    assertTemplateError(503),
+  );
+
+  // Still listed, so the document is still known and can be asked for again.
+  assert.equal(await fileExists(key), true);
+  assert.deepEqual(
+    (await listTemplatesForUser(userId, database)).map((entry) => entry.id),
+    [template.id],
+  );
+
+  await deleteTemplate(userId, template.id, { database, storageService });
+
+  assert.equal(await fileExists(key), false);
+  assert.deepEqual(await listTemplatesForUser(userId, database), []);
+});
+
+test("saves at the same moment cannot pass the most an account may keep", async () => {
+  const userId = await createUser();
+  const { envelopeId } = await createPreparedDraft(userId);
+
+  // One short of full.
+  await database.query(
+    `
+      insert into templates (
+        id, user_id, name, source_pdf_key, source_pdf_filename,
+        source_pdf_size_bytes, page_count, roles, fields, created_at,
+        updated_at
+      )
+      select
+        gen_random_uuid(), $1, 'Filler ' || n, 'test/filler-' || n || '.pdf',
+        'filler.pdf', 10, 1, '[{"id":"r1","name":"Client"}]'::jsonb,
+        '[]'::jsonb, 1, 1
+      from generate_series(1, $2::int) as n
+    `,
+    [userId, MAX_TEMPLATES_PER_USER - 1],
+  );
+
+  const saves = await Promise.allSettled(
+    ["First", "Second"].map((name) =>
+      saveEnvelopeAsTemplate(
+        userId,
+        envelopeId,
+        { name },
+        { database, storageService },
+      ),
+    ),
+  );
+  const stored = saves.flatMap((save) =>
+    save.status === "fulfilled" ? [save.value] : [],
+  );
+  const refused = saves.flatMap((save) =>
+    save.status === "rejected" ? [save.reason as unknown] : [],
+  );
+
+  assert.equal(stored.length, 1);
+  assert.equal(refused.length, 1);
+  assertTemplateError(409)(refused[0]);
+  assert.equal(
+    (
+      await database.query<{ total: number }>(
+        `select count(*)::int as total from templates where user_id = $1`,
+        [userId],
+      )
+    ).rows[0]?.total,
+    MAX_TEMPLATES_PER_USER,
+  );
+
+  // The save that was refused took its copy of the document back.
+  const keptDocuments = (
+    await readdir(path.join(storageDir, "users", userId, "templates"), {
+      recursive: true,
+    })
+  ).filter((entry) => entry.endsWith("original.pdf"));
+
+  assert.deepEqual(keptDocuments, [path.join(stored[0]!.id, "original.pdf")]);
 });
 
 test("closing the account removes its templates and their documents", async () => {

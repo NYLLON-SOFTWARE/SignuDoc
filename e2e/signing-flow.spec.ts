@@ -373,6 +373,19 @@ test("a new install is set up, a sender sends a PDF and a recipient signs it", a
     await page
       .getByRole("textbox", { name: "Choices" })
       .fill("Monthly\nYearly");
+
+    // The field editor is on the page twice, for narrow and for wide
+    // windows. The one that was not typed in shows what was saved, so
+    // typing in it after the window changes width cannot undo the choices.
+    await page.setViewportSize({ height: 900, width: 800 });
+    await expect(page.getByRole("textbox", { name: "Choices" })).toHaveValue(
+      "Monthly\nYearly",
+    );
+    await page.setViewportSize({ height: 900, width: 1440 });
+    await expect(page.getByRole("textbox", { name: "Choices" })).toHaveValue(
+      "Monthly\nYearly",
+    );
+
     await placeField("Radio button", 0.25, 0.4);
     await page
       .getByRole("textbox", { name: "What this button means" })
@@ -383,6 +396,11 @@ test("a new install is set up, a sender sends a PDF and a recipient signs it", a
     await page
       .getByRole("textbox", { name: "What this button means" })
       .fill("No");
+    await page.setViewportSize({ height: 900, width: 800 });
+    await expect(
+      page.getByRole("textbox", { name: "What this button means" }),
+    ).toHaveValue("No");
+    await page.setViewportSize({ height: 900, width: 1440 });
     await expect(page.getByRole("button", { name: "Next →" })).toBeEnabled();
     await page.getByRole("button", { name: "Next →" }).click();
     await expect(page).toHaveURL(/\/review$/);

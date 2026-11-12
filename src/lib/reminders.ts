@@ -131,11 +131,16 @@ export class ReminderMutationError extends Error {
   }
 }
 
-/** The envelope, and only for its owner when a user is given. */
+/**
+ * The envelope, and only for its owner when a user is given. With a lock,
+ * inside a transaction, the envelope's row is held until the transaction
+ * ends, so its deadline cannot be moved in between.
+ */
 async function getReminderEnvelope(
   envelopeId: string,
   userId: string | null,
   database: DbExecutor,
+  { lock = false }: { lock?: boolean } = {},
 ): Promise<ReminderEnvelopeRow | null> {
   return queryOne<ReminderEnvelopeRow>(
     database,
@@ -154,6 +159,7 @@ async function getReminderEnvelope(
       JOIN "user" u ON u.id = e.user_id
       WHERE e.id = $1
         AND ($2::text IS NULL OR e.user_id = $2)
+      ${lock ? "FOR UPDATE OF e" : ""}
     `,
     [envelopeId, userId],
   );
@@ -313,7 +319,12 @@ async function persistReminder(
     issuedAt: dispatchedAt,
   });
   return withTransaction(async (tx) => {
-    const persistedEnvelope = await getReminderEnvelope(envelopeId, userId, tx);
+    const persistedEnvelope = await getReminderEnvelope(
+      envelopeId,
+      userId,
+      tx,
+      { lock: true },
+    );
 
     if (!persistedEnvelope) {
       throw new ReminderMutationError("This envelope is unavailable.", 404);
@@ -326,7 +337,8 @@ async function persistReminder(
       );
     }
 
-    // The deadline may have been moved since the link was issued.
+    // The deadline may have been moved since the link was issued. From
+    // here on it cannot be: the envelope's row is locked.
     if (persistedEnvelope.expiresAt !== envelope.expiresAt) {
       throw new ReminderMutationError(
         "This envelope's deadline just changed. Try again.",
@@ -521,7 +533,13 @@ async function deliverReminder(
           UPDATE signers
           SET
             signing_token_hash = $1,
-            signing_token_expires_at = $2,
+            -- The old link gets its old end back, unless the sender moved
+            -- the deadline while the email was failing: then the link
+            -- already ends at the new deadline, and keeps it.
+            signing_token_expires_at = CASE
+              WHEN signing_token_expires_at = $8 THEN $2
+              ELSE signing_token_expires_at
+            END,
             last_notified_at = $3,
             last_nudged_at = $4,
             updated_at = $5
@@ -537,6 +555,7 @@ async function deliverReminder(
           persisted.previousSigner.updatedAt,
           persisted.previousSigner.id,
           persisted.envelopeId,
+          persisted.issuedLink.exp,
         ],
       );
 

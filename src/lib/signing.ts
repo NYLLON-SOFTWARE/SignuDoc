@@ -82,7 +82,10 @@ import {
 } from "./types/domain.ts";
 import { getEnv } from "./utils/env.ts";
 import { escapeHtml } from "./utils/html.ts";
-import { isEnvelopeExpired } from "./envelope-deadline.ts";
+import {
+  isEnvelopeExpired,
+  nextSignerLinkExpiresAt,
+} from "./envelope-deadline.ts";
 import { describeEntryProblem, judgeRadioGroups } from "./field-choices.ts";
 import {
   buildElectronicRecordsDisclosure,
@@ -204,7 +207,9 @@ type ResolvedSigningContext = {
 
 type SubmitSigningOptions = {
   database?: DbPool;
+  emailService?: EmailService;
   requestMeta?: SigningRequestMeta;
+  storageService?: StorageService;
   /** The extra checks this browser has passed for the link (from its cookie). */
   verifiedMethods?: readonly SignerCheckMethod[];
 };
@@ -1649,7 +1654,9 @@ export async function submitSigningForToken(
   input: unknown,
   {
     database = getDb(),
+    emailService: givenEmailService,
     requestMeta = {},
+    storageService: givenStorageService,
     verifiedMethods = [],
   }: SubmitSigningOptions = {},
 ): Promise<SigningSubmitResponse> {
@@ -1668,8 +1675,8 @@ export async function submitSigningForToken(
     );
   }
 
-  const emailService = createEmailService();
-  const storageService = createStorageService();
+  const emailService = givenEmailService ?? createEmailService();
+  const storageService = givenStorageService ?? createStorageService();
   const currentSignerId = context.signer.id;
 
   if (!currentSignerId) {
@@ -1877,15 +1884,9 @@ export async function submitSigningForToken(
         );
       }
 
-      nextSignerLink = await issueSigningLink({
-        // Until the envelope's deadline. The signer who just finished was
-        // inside it a moment ago, so a minute is kept in hand.
-        expiresInSeconds:
-          typeof context.envelope.expiresAt === "number"
-            ? Math.max(60, context.envelope.expiresAt - submittedAt)
-            : undefined,
-        issuedAt: submittedAt,
-      });
+      // Only the link itself. When it ends is settled further down, from
+      // the deadline as it stands once the envelope is locked.
+      nextSignerLink = await issueSigningLink({ issuedAt: submittedAt });
     }
 
     for (const upload of drawnSignatureUploads) {
@@ -1923,16 +1924,34 @@ export async function submitSigningForToken(
     });
 
     if (nextSigner && nextSignerLink) {
+      // The deadline the next signer is given. The sender can move it while
+      // this signer submits, and moving it only reaches the signer whose
+      // turn it is then. So it is read here, where this update holds the
+      // envelope's row and a change of deadline has to wait its turn.
+      let nextSignerDeadline = context.envelope.expiresAt ?? null;
+
       await withTransaction(async (tx) => {
-        await tx.query(
+        const lockedEnvelope = await queryOne<{ expiresAt: number | null }>(
+          tx,
           `
             UPDATE envelopes
             SET updated_at = $1
             WHERE id = $2
               AND status = 'sent'
+            RETURNING expires_at AS "expiresAt"
           `,
           [submittedAt, context.envelope.id],
         );
+
+        if (!lockedEnvelope) {
+          // Voided or declined since the page was opened.
+          throw new SigningMutationError(
+            "This signing link is no longer active.",
+            409,
+          );
+        }
+
+        nextSignerDeadline = lockedEnvelope.expiresAt;
 
         for (const update of fieldUpdates.values()) {
           const result = await tx.query(
@@ -2009,7 +2028,7 @@ export async function submitSigningForToken(
           `,
           [
             nextSignerLink.tokenHash,
-            nextSignerLink.exp,
+            nextSignerLinkExpiresAt(lockedEnvelope.expiresAt, submittedAt),
             submittedAt,
             submittedAt,
             submittedAt,
@@ -2047,7 +2066,7 @@ export async function submitSigningForToken(
           buildSigningInvitationEmail({
             branding: await getBranding(),
             envelopeTitle: context.envelope.title,
-            expiresAt: context.envelope.expiresAt,
+            expiresAt: nextSignerDeadline,
             senderName: normalizeSenderName(context.sender),
             signerEmail: nextSigner.email,
             signerName: nextSigner.name,

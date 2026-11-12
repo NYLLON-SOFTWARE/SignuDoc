@@ -49,6 +49,40 @@ export function parseOptionLines(text: string): string[] {
   return options;
 }
 
+/**
+ * What the editor's box for a dropdown's choices should show: the text as
+ * it was typed there, for as long as that text still gives the saved
+ * choices, and otherwise the saved choices.
+ *
+ * The box keeps what was typed so that a trailing space or an empty line
+ * survives in mid-thought. But the field editor is on the page twice, for
+ * narrow and for wide screens, and only one of the two is typed in. What
+ * the other one holds goes stale, and it must not be what the sender types
+ * on top of after the window changes width.
+ */
+export function optionsTextToShow(
+  typedText: string,
+  savedOptions: readonly string[] | null | undefined,
+): string {
+  const saved = savedOptions ?? [];
+  const typed = parseOptionLines(typedText);
+
+  return typed.length === saved.length &&
+    typed.every((option, index) => option === saved[index])
+    ? typedText
+    : saved.join("\n");
+}
+
+/** The same for the box that holds a radio button's label. */
+export function labelTextToShow(
+  typedText: string,
+  savedLabel: string | null | undefined,
+): string {
+  const saved = savedLabel ?? "";
+
+  return typedText.trim() === saved ? typedText : saved;
+}
+
 type ChoiceField = {
   groupId?: string | null;
   options?: readonly string[] | null;

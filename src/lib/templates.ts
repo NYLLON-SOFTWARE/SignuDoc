@@ -6,6 +6,7 @@ import {
   getDb,
   queryMany,
   queryOne,
+  withTransaction,
 } from "./db/connection.ts";
 import {
   createDraftEnvelope,
@@ -57,6 +58,25 @@ type TemplateOptions = {
   database?: DbPool;
   storageService?: StorageService;
 };
+
+/** Refuses another template for a user who already has the most allowed. */
+async function assertRoomForTemplate(
+  userId: string,
+  database: DbExecutor,
+): Promise<void> {
+  const existing = await queryOne<{ total: number }>(
+    database,
+    `SELECT count(*)::int AS total FROM templates WHERE user_id = $1`,
+    [userId],
+  );
+
+  if ((existing?.total ?? 0) >= MAX_TEMPLATES_PER_USER) {
+    throw new TemplateError(
+      `You have ${String(MAX_TEMPLATES_PER_USER)} templates, which is the most an account can keep. Delete one to save another.`,
+      409,
+    );
+  }
+}
 
 type TemplateRow = {
   createdAt: number;
@@ -301,18 +321,10 @@ export async function saveEnvelopeAsTemplate(
         : [];
     }),
   );
-  const existing = await queryOne<{ total: number }>(
-    database,
-    `SELECT count(*)::int AS total FROM templates WHERE user_id = $1`,
-    [userId],
-  );
 
-  if ((existing?.total ?? 0) >= MAX_TEMPLATES_PER_USER) {
-    throw new TemplateError(
-      `You have ${String(MAX_TEMPLATES_PER_USER)} templates, which is the most an account can keep. Delete one to save another.`,
-      409,
-    );
-  }
+  // Before the document is copied, so a full account costs no upload. It is
+  // counted again when the template is stored.
+  await assertRoomForTemplate(userId, database);
 
   let document: Awaited<ReturnType<typeof getDraftEnvelopeDocumentForUser>>;
 
@@ -343,35 +355,44 @@ export async function saveEnvelopeAsTemplate(
   });
 
   try {
-    await database.query(
-      `
-        INSERT INTO templates (
-          id,
-          user_id,
-          name,
-          source_pdf_key,
-          source_pdf_filename,
-          source_pdf_size_bytes,
-          page_count,
-          roles,
-          fields,
-          created_at,
-          updated_at
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9::jsonb, $10, $10)
-      `,
-      [
-        templateId,
+    await withTransaction(async (tx) => {
+      // Two saves at the same moment would both pass the count above. Here
+      // the saves of one user take turns, and each counts what the one
+      // before it stored.
+      await tx.query("SELECT pg_advisory_xact_lock(hashtextextended($1, 13))", [
         userId,
-        parsedInput.name,
-        sourcePdfKey,
-        document.fileName,
-        document.body.length,
-        envelope.pageCount,
-        JSON.stringify(roles),
-        JSON.stringify(fields),
-        now,
-      ],
-    );
+      ]);
+      await assertRoomForTemplate(userId, tx);
+      await tx.query(
+        `
+          INSERT INTO templates (
+            id,
+            user_id,
+            name,
+            source_pdf_key,
+            source_pdf_filename,
+            source_pdf_size_bytes,
+            page_count,
+            roles,
+            fields,
+            created_at,
+            updated_at
+          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9::jsonb, $10, $10)
+        `,
+        [
+          templateId,
+          userId,
+          parsedInput.name,
+          sourcePdfKey,
+          document.fileName,
+          document.body.length,
+          envelope.pageCount,
+          JSON.stringify(roles),
+          JSON.stringify(fields),
+          now,
+        ],
+      );
+    }, database);
   } catch (error) {
     // Nothing points at the copy, so nothing would ever remove it.
     await storageService.deleteObject(sourcePdfKey).catch(() => undefined);
@@ -502,25 +523,41 @@ export async function deleteTemplate(
     storageService = createStorageService(),
   }: TemplateOptions = {},
 ): Promise<void> {
-  const deleted = await queryOne<{ sourcePdfKey: string }>(
+  const template = await queryOne<{ sourcePdfKey: string }>(
     database,
     `
-      DELETE FROM templates
+      SELECT source_pdf_key AS "sourcePdfKey"
+      FROM templates
       WHERE id = $1 AND user_id = $2
-      RETURNING source_pdf_key AS "sourcePdfKey"
     `,
     [templateId, userId],
   );
 
-  if (!deleted) {
+  if (!template) {
     throw new TemplateError("Template not found.", 404);
   }
 
-  // Envelopes made from the template have their own copies of the document.
-  await storageService.deleteObject(deleted.sourcePdfKey).catch((error) => {
+  // The document goes first and the template only once it is gone. If
+  // storage fails, the template is still listed, and deleting it again
+  // tries again. The other way round, a failure would leave a document that
+  // nothing points to, which nothing would ever remove. Envelopes made from
+  // the template have their own copies of the document.
+  try {
+    await storageService.deleteObject(template.sourcePdfKey);
+  } catch (error) {
     console.error(
       `Failed to delete the document of template ${templateId}:`,
       error,
     );
-  });
+
+    throw new TemplateError(
+      "The template's document could not be deleted, so the template was kept. Try again in a moment.",
+      503,
+    );
+  }
+
+  await database.query(`DELETE FROM templates WHERE id = $1 AND user_id = $2`, [
+    templateId,
+    userId,
+  ]);
 }

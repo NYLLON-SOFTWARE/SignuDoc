@@ -9,10 +9,37 @@ import {
   findChoiceFieldProblem,
   isNumberEntry,
   judgeRadioGroups,
+  labelTextToShow,
   MAX_FIELD_OPTIONS,
   NUMBER_ENTRY_MESSAGE,
+  optionsTextToShow,
   parseOptionLines,
 } from "./field-choices.ts";
+
+test("an editor box shows what was typed only while it still stands for what is saved", () => {
+  const saved = ["Monthly", "Yearly"];
+
+  // Mid-thought: the empty line and the trailing space are kept.
+  assert.equal(
+    optionsTextToShow("Monthly\nYearly \n", saved),
+    "Monthly\nYearly \n",
+  );
+  // The other copy of the editor: never typed in, or typed in a while ago.
+  assert.equal(optionsTextToShow("", saved), "Monthly\nYearly");
+  assert.equal(
+    optionsTextToShow("Monthly\nYearly", [...saved, "Once"]),
+    "Monthly\nYearly\nOnce",
+  );
+  assert.equal(optionsTextToShow("Yearly\nMonthly", saved), "Monthly\nYearly");
+  assert.equal(optionsTextToShow("Old", null), "");
+  assert.equal(optionsTextToShow(" \n", []), " \n");
+
+  assert.equal(labelTextToShow("Yes ", "Yes"), "Yes ");
+  assert.equal(labelTextToShow("", "Yes"), "Yes");
+  assert.equal(labelTextToShow("Ye", "Yes"), "Yes");
+  assert.equal(labelTextToShow("Old", undefined), "");
+  assert.equal(labelTextToShow("  ", null), "  ");
+});
 
 test("a number field takes plain and comma-grouped numbers and nothing else", () => {
   for (const entry of [

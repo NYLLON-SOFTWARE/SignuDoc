@@ -27,9 +27,11 @@ import { type PrepareEnvelopeData } from "@/lib/envelopes";
 import {
   describeChoiceFieldProblem,
   findChoiceFieldProblem,
+  labelTextToShow,
   MAX_FIELD_OPTIONS,
   MAX_FIELD_OPTION_LENGTH,
   MAX_RADIO_GROUP_BUTTONS,
+  optionsTextToShow,
   parseOptionLines,
 } from "@/lib/field-choices";
 import {
@@ -1425,7 +1427,13 @@ function FieldEditor({
   );
   const optionCount = field.options?.length ?? 0;
   // The editor is on the page twice, once for narrow screens and once in
-  // the side panel, so its inputs cannot share fixed ids.
+  // the side panel, and only one of the two is typed in. What the other
+  // holds goes stale, so each shows its own text only while that still
+  // stands for the saved value. Otherwise, after the window changes width,
+  // typing would put the stale text back over what was saved.
+  const shownLabel = labelTextToShow(labelDraft, field.label);
+  const shownOptions = optionsTextToShow(optionsDraft, field.options);
+  // For the same reason its inputs cannot share fixed ids.
   const editorId = useId();
   const optionsId = `${editorId}-options`;
   const labelId = `${editorId}-label`;
@@ -1490,7 +1498,7 @@ function FieldEditor({
               }}
               placeholder={"Yes\nNo\nNot sure"}
               spellCheck={false}
-              value={optionsDraft}
+              value={shownOptions}
             />
             <p
               className={`mt-1.5 px-1 text-xs leading-5 ${
@@ -1525,7 +1533,7 @@ function FieldEditor({
                 onSetLabel(event.target.value.trim() || undefined);
               }}
               placeholder="Yes"
-              value={labelDraft}
+              value={shownLabel}
             />
             <p
               className={`mt-1.5 px-1 text-xs leading-5 ${

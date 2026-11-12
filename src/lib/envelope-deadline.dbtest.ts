@@ -5,6 +5,7 @@ import { after, before, test } from "node:test";
 import type pg from "pg";
 
 import { openTestDatabase } from "./db/test-database.ts";
+import { formatDeadline } from "./envelope-deadline.ts";
 import { runEnvelopeSchedule } from "./envelope-schedule.ts";
 import { changeEnvelopeDeadline, EnvelopeMutationError } from "./envelopes.ts";
 import { ReminderMutationError, sendManualEnvelopeNudge } from "./reminders.ts";
@@ -14,7 +15,12 @@ import type {
   TransactionalEmailMessage,
 } from "./services/email.ts";
 import { issueSigningLink } from "./services/signing-links.ts";
-import { recordSignerConsent, SigningAccessError } from "./signing.ts";
+import type { StorageService } from "./services/storage.ts";
+import {
+  recordSignerConsent,
+  SigningAccessError,
+  submitSigningForToken,
+} from "./signing.ts";
 import { ELECTRONIC_RECORDS_DISCLOSURE_VERSION } from "./electronic-records-disclosure.ts";
 
 // An envelope's deadline against a real Postgres: what a passed deadline
@@ -30,6 +36,8 @@ const createdUsers: string[] = [];
 
 before(async () => {
   database = await openTestDatabase();
+  // The invitation email reads the install's name through the shared pool.
+  globalThis.__signudocPgPool = database;
 });
 
 after(async () => {
@@ -131,13 +139,18 @@ function consent(token: string) {
   );
 }
 
-function recordingEmailService(failWith?: Error) {
+function recordingEmailService(
+  failWith?: Error,
+  whileSending?: (message: TransactionalEmailMessage) => Promise<void>,
+) {
   const sent: TransactionalEmailMessage[] = [];
   const service: EmailService = {
     async send(message) {
       if (failWith) {
         throw failWith;
       }
+
+      await whileSending?.(message);
 
       sent.push(message);
 
@@ -352,4 +365,179 @@ test("a notice whose email fails is tried again on the next run", async () => {
     1,
   );
   assert.deepEqual(await auditEvents(envelopeId), ["expired"]);
+});
+
+test("nothing is marked as told before the notice has gone out", async () => {
+  const now = unixNow();
+  const { envelopeId, userId } = await createSentEnvelope({
+    expiresAt: now - 60,
+  });
+  const seenWhileSending: (number | null)[] = [];
+  // A run that is cut off here, mid-send, must leave the notice still due.
+  const { sent, service } = recordingEmailService(
+    undefined,
+    async (message) => {
+      if (message.to.startsWith(userId)) {
+        seenWhileSending.push(
+          (await readEnvelope(envelopeId)).expiry_notified_at,
+        );
+        assert.deepEqual(await auditEvents(envelopeId), []);
+      }
+    },
+  );
+
+  await runEnvelopeSchedule({ database, emailService: service, now });
+
+  assert.deepEqual(seenWhileSending, [null]);
+  assert.equal(
+    sent.filter((message) => message.to.startsWith(userId)).length,
+    1,
+  );
+  assert.equal((await readEnvelope(envelopeId)).expiry_notified_at, now);
+  assert.deepEqual(await auditEvents(envelopeId), ["expired"]);
+});
+
+test("a deadline moved during the run is not told or noted as passed", async () => {
+  const now = unixNow();
+  // Notices go out oldest deadline first, so this one is sent first.
+  const first = await createSentEnvelope({ expiresAt: now - 2 * DAY });
+  const second = await createSentEnvelope({ expiresAt: now - 60 });
+  const moveDeadline = (envelope: typeof first) =>
+    changeEnvelopeDeadline(
+      envelope.userId,
+      envelope.envelopeId,
+      { expiresInDays: 7, senderEmail: "sam@example.test" },
+      { database },
+    );
+  const { sent, service } = recordingEmailService(
+    undefined,
+    async (message) => {
+      if (message.to.startsWith(first.userId)) {
+        // While the first notice is on its way, both senders move their
+        // deadlines: one too late to stop the notice, one in time.
+        await moveDeadline(first);
+        await moveDeadline(second);
+      }
+    },
+  );
+
+  await runEnvelopeSchedule({ database, emailService: service, now });
+
+  assert.equal(
+    sent.filter((message) => message.to.startsWith(first.userId)).length,
+    1,
+  );
+  assert.equal(
+    sent.some((message) => message.to.startsWith(second.userId)),
+    false,
+  );
+
+  // Neither trail says "expired", and each new deadline is still to be told
+  // about if it passes in turn.
+  for (const envelope of [first, second]) {
+    assert.deepEqual(await auditEvents(envelope.envelopeId), [
+      "deadline_changed",
+    ]);
+    assert.equal(
+      (await readEnvelope(envelope.envelopeId)).expiry_notified_at,
+      null,
+    );
+  }
+});
+
+test("a deadline moved while a signer submits reaches the next signer", async () => {
+  const now = unixNow();
+  const { envelopeId, signerId, token, userId } = await createSentEnvelope({
+    expiresAt: now + DAY,
+  });
+  const nextSignerId = randomUUID();
+  const nextSignerEmail = `${nextSignerId}@example.test`;
+  const fieldId = randomUUID();
+
+  await database.query(
+    `update signers set signing_token_expires_at = $1 where id = $2`,
+    [now + DAY, signerId],
+  );
+  await database.query(
+    `
+      insert into signers (id, envelope_id, name, email, sign_order, status)
+      values ($1, $2, 'Casey Second', $3, 2, 'pending')
+    `,
+    [nextSignerId, envelopeId, nextSignerEmail],
+  );
+  await database.query(
+    `
+      insert into fields (
+        id, envelope_id, signer_id, type, page, x, y, width, height
+      ) values ($1, $2, $3, 'signature', 1, 0.1, 0.1, 0.2, 0.1)
+    `,
+    [fieldId, envelopeId, signerId],
+  );
+  await consent(token);
+
+  let newDeadline: number | undefined;
+  const refuse = async (): Promise<never> => {
+    throw new Error("not used");
+  };
+  const storageService: StorageService = {
+    deleteObject: refuse,
+    getObject: refuse,
+    getObjectStream: refuse,
+    headObject: refuse,
+    // Storing the drawn signature comes after the envelope was read and
+    // before the signature is saved: the gap a sender's change can land in.
+    async putObject({ key }) {
+      newDeadline = (
+        await changeEnvelopeDeadline(
+          userId,
+          envelopeId,
+          { expiresInDays: 7, senderEmail: "sam@example.test" },
+          { database },
+        )
+      ).expiresAt;
+
+      return { bucketName: "test", key };
+    },
+  };
+  const { sent, service } = recordingEmailService();
+
+  await submitSigningForToken(
+    token,
+    {
+      clientTimezoneOffsetMinutes: 0,
+      fields: [
+        {
+          fieldId,
+          imageDataUrl: "data:image/png;base64,iVBORw0KGgo=",
+          inputMethod: "drawn",
+          type: "signature",
+        },
+      ],
+    },
+    { database, emailService: service, storageService },
+  );
+
+  assert.ok(newDeadline && newDeadline >= now + 7 * DAY);
+
+  const nextSigner = await database.query<{
+    signing_token_expires_at: number | null;
+    status: string;
+  }>(`select status, signing_token_expires_at from signers where id = $1`, [
+    nextSignerId,
+  ]);
+
+  // The next signer's link lasts until the deadline as it is now, not as it
+  // was when the signer before them opened the page.
+  assert.equal(nextSigner.rows[0]?.status, "notified");
+  assert.equal(nextSigner.rows[0]?.signing_token_expires_at, newDeadline);
+
+  const invitation = sent.find((message) => message.to === nextSignerEmail);
+
+  assert.equal(invitation?.template, "signing_invitation");
+  assert.ok(
+    invitation?.textBody.includes(
+      `This request expires on ${formatDeadline(newDeadline)}.`,
+    ),
+  );
+  assert.equal((await verifyAuditChain(envelopeId, database)).ok, true);
 });

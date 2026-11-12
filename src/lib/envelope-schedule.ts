@@ -1,7 +1,12 @@
-import { type DbPool, queryMany, withTransaction } from "./db/connection.ts";
+import {
+  type DbPool,
+  queryMany,
+  queryOne,
+  withTransaction,
+} from "./db/connection.ts";
 import { formatDeadline } from "./envelope-deadline.ts";
 import { sendAutomaticEnvelopeReminder } from "./reminders.ts";
-import { lockEnvelopeAuditChain, recordAuditEvent } from "./services/audit.ts";
+import { recordAuditEvent } from "./services/audit.ts";
 import { createEmailService, type EmailService } from "./services/email.ts";
 import { AUTOMATIC_REMINDER_SLACK_SECONDS } from "./services/reminders.ts";
 import { resolveAppUrl } from "./utils/env.ts";
@@ -14,10 +19,17 @@ import { resolveAppUrl } from "./utils/env.ts";
 //   for automatic reminders.
 //
 // It runs from the same cron call as the cleanup (see retention-job.ts), so
-// an install needs no second schedule. Each envelope is claimed in the
-// database before its email goes out, and the claim is given back if the
-// email fails, so a failed run is retried the next day and a second run
-// never sends twice.
+// an install needs no second schedule, and that call's lock means two runs
+// never work at once.
+//
+// A notice about a passed deadline is sent first and noted afterwards. So a
+// notice that did not go out, because the email failed or because the run
+// was cut off, is simply still due on the next run. The cost is that a run
+// cut off between the two can send the notice a second time; the mail
+// provider drops a repeat that reaches it within its idempotency window.
+//
+// A reminder changes the signer's link, so it is saved first and undone if
+// its email fails (see reminders.ts).
 
 const BATCH_SIZE = 200;
 // The job shares one function call with the cleanup, and a mail provider
@@ -84,17 +96,44 @@ async function listExpiredEnvelopesToNotify(
 }
 
 /**
- * Marks the envelope as told and notes the passed deadline in its audit
- * trail. False when there is nothing to tell any more: the sender moved the
- * deadline, the envelope was finished or voided, or another run got here.
+ * True while there is still something to tell: the envelope is out, its
+ * deadline is the one that passed, and the sender has not been told. The
+ * list above can be minutes old by the time an envelope's turn comes, and
+ * the sender may have moved the deadline or voided the envelope since.
  */
-async function claimExpiryNotice(
+async function isExpiryNoticeDue(
+  envelope: ExpiredEnvelopeRow,
+  database: DbPool,
+): Promise<boolean> {
+  const due = await queryOne<{ id: string }>(
+    database,
+    `
+      SELECT id
+      FROM envelopes
+      WHERE id = $1
+        AND status = 'sent'
+        AND expires_at = $2
+        AND expiry_notified_at IS NULL
+    `,
+    [envelope.id, envelope.expiresAt],
+  );
+
+  return due !== null;
+}
+
+/**
+ * Marks the envelope as told and notes the passed deadline in its audit
+ * trail, once the notice has gone out. Nothing is noted when the sender
+ * moved the deadline while the notice was on its way: the new deadline is a
+ * new thing to tell.
+ */
+async function noteExpiryNoticeSent(
   envelope: ExpiredEnvelopeRow,
   now: number,
   database: DbPool,
-): Promise<boolean> {
-  return withTransaction(async (tx) => {
-    const claimed = await tx.query(
+): Promise<void> {
+  await withTransaction(async (tx) => {
+    const noted = await tx.query(
       `
         UPDATE envelopes
         SET expiry_notified_at = $1
@@ -106,8 +145,8 @@ async function claimExpiryNotice(
       [now, envelope.id, envelope.expiresAt],
     );
 
-    if (claimed.rowCount !== 1) {
-      return false;
+    if (noted.rowCount !== 1) {
+      return;
     }
 
     await recordAuditEvent(
@@ -120,46 +159,6 @@ async function claimExpiryNotice(
       },
       tx,
     );
-
-    return true;
-  }, database);
-}
-
-/** Gives a claim back after its email failed, so the next run tries again. */
-async function releaseExpiryNotice(
-  envelope: ExpiredEnvelopeRow,
-  now: number,
-  database: DbPool,
-): Promise<void> {
-  await withTransaction(async (tx) => {
-    await lockEnvelopeAuditChain(envelope.id, tx);
-
-    const removed = await tx.query(
-      `
-        DELETE FROM audit_events
-        WHERE envelope_id = $1
-          AND event = 'expired'
-          AND created_at = $2
-          -- Only while it is still the newest link of the audit chain.
-          AND sequence = (
-            SELECT max(sequence) FROM audit_events WHERE envelope_id = $1
-          )
-      `,
-      [envelope.id, now],
-    );
-
-    // An event chained after it keeps the note in place, and then the
-    // envelope stays marked: the trail must not say "expired" twice.
-    if (removed.rowCount === 1) {
-      await tx.query(
-        `
-          UPDATE envelopes
-          SET expiry_notified_at = NULL
-          WHERE id = $1 AND expiry_notified_at = $2
-        `,
-        [envelope.id, now],
-      );
-    }
   }, database);
 }
 
@@ -202,26 +201,14 @@ async function sendExpiryNotices({
     }
 
     try {
-      if (!(await claimExpiryNotice(envelope, now, database))) {
+      if (!(await isExpiryNoticeDue(envelope, database))) {
         continue;
       }
 
-      try {
-        await emailService().send(buildExpiryNotice(envelope), {
-          idempotencyKey: `expiry-notice/${envelope.id}/${envelope.expiresAt}`,
-        });
-      } catch (error) {
-        await releaseExpiryNotice(envelope, now, database).catch(
-          (releaseError: unknown) => {
-            console.error(
-              `Failed to give back the expiry notice claim for envelope ${envelope.id}:`,
-              releaseError,
-            );
-          },
-        );
-
-        throw error;
-      }
+      await emailService().send(buildExpiryNotice(envelope), {
+        idempotencyKey: `expiry-notice/${envelope.id}/${envelope.expiresAt}`,
+      });
+      await noteExpiryNoticeSent(envelope, now, database);
 
       summary.expiryNoticesSent += 1;
     } catch (error) {
