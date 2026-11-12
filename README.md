@@ -70,7 +70,8 @@ At a minimum, you should review these groups:
 - **Storage**: nothing to set on Vercel once a Blob store is connected; `STORAGE_DRIVER` and `STORAGE_LOCAL_DIR` elsewhere
 - **Email**: `EMAIL_DRIVER`, `RESEND_API_KEY`. The sender and support addresses are chosen in the app; `RESEND_FROM_EMAIL` and `SUPPORT_EMAIL` override them if set.
 - **First run**: `SETUP_TOKEN` (optional), `HOSTED_MODE` (only for running SignuDoc as a public service)
-- **Internal jobs**: `RETENTION_JOB_SECRET`
+- **Daily cleanup**: `CRON_SECRET` (optional, see [Daily cleanup](#daily-cleanup))
+- **Bot protection**: `BOTID` (optional, Vercel only, see [Bot protection](#bot-protection))
 
 See `.env.example` for the full list.
 
@@ -168,8 +169,12 @@ npm run lint
 npm run typecheck
 npm run format
 npm run format:check
+npm test
+npm run test:db
 npm run test:e2e
 ```
+
+`npm test` runs the unit tests, which need nothing else running. `npm run test:db` runs the few tests that need a real Postgres (the rate limit counter and the cleanup job's lock) against the `signudoc_e2e` database.
 
 `npm run test:e2e` runs the Playwright end-to-end test. It starts the app against a separate `signudoc_e2e` database on the same Postgres server, sets the site up as its first visitor, signs up a sender, sends a PDF, signs it as the recipient and downloads the results. Install the browser once with `npx playwright install chromium`.
 
@@ -208,27 +213,37 @@ Self-hosted operators are responsible for:
 - linking to their own terms and privacy policy under Settings, Organization;
 - setting the correct support address and verifying a sending domain for email;
 - configuring retention, consent, and compliance requirements for their own deployment; and
-- scheduling the internal retention job if they want automatic stale-draft cleanup and queued account purges.
+- scheduling the [daily cleanup](#daily-cleanup) if they are not on Vercel, where it is scheduled for them.
 
-## Retention job
+## Daily cleanup
 
-The app includes an internal retention endpoint for scheduled cleanup.
-
-It removes stale draft artifacts and processes queued account-closure purges.
-
-Trigger it with a `POST` request to:
+Once a day the app deletes drafts nobody has touched for 30 days, finishes account deletions that were requested, and clears expired download links and finished rate limit counters. The work is done by a request to:
 
 ```text
 /api/internal/retention
 ```
 
-using:
+- **On Vercel** this is already scheduled: `vercel.json` has a cron job that calls it once a day. There is nothing to set up.
+- **Anywhere else**, have your own scheduler send it a `GET` or `POST` once a day.
 
-```text
-Authorization: Bearer <RETENTION_JOB_SECRET>
-```
+A new install has no secret for this route, so the route looks after itself: it runs at most once an hour, never twice at the same time, and answers with an empty response either way. Someone who finds the URL can only make the day's cleanup happen earlier.
 
-This is a good candidate for a cron job in production.
+To close the route, set a secret. A caller then has to send `Authorization: Bearer <secret>`, and gets a summary of what was cleaned up in return.
+
+- `CRON_SECRET` is the one to use on Vercel, because Vercel sends it on its own cron calls.
+- `RETENTION_JOB_SECRET` does the same for a scheduler of your own. On Vercel, a deployment that sets only this one turns Vercel's cron call away, so store the secret as `CRON_SECRET` there instead.
+
+## Rate limits
+
+Sign-in, sign-up, password reset, the signing pages, uploads and sending are rate limited per visitor. The counts are kept in the `rate_limits` table in Postgres, so they hold across every instance of the app. On Vercel the visitor's address is read from the header Vercel sets itself, which a visitor cannot forge. If the database cannot be reached, each instance falls back to counting in its own memory.
+
+## Bot protection
+
+The app can use [Vercel BotID](https://vercel.com/docs/botid), an invisible check that a request comes from a real browser, on the requests a script would go for: creating an account, signing in, asking for a password reset or verification email, the contact form and first-run setup.
+
+It is off by default. To turn it on, set `BOTID=1` on a Vercel deployment and redeploy; the setting is read when the app is built. BotID's basic check is free on every Vercel plan, and its deeper check is a paid option you switch on in the Vercel dashboard. It does nothing anywhere other than Vercel.
+
+It is opt-in for now because it has not yet been proven against a live Vercel deployment. If you turn it on, try signing in from a private window straight away, and remove `BOTID` and redeploy if that fails. A check that cannot reach Vercel lets the request through, so an outage on that side does not lock people out; the rate limits apply either way.
 
 ## Project structure
 
