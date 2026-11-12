@@ -3,6 +3,7 @@
 import { useEffect, useState, type ChangeEvent, type FormEvent } from "react";
 
 import { FieldShell, ShellButton } from "@/components/shared/form-shell";
+import { PeoplePanel } from "@/components/settings/people-panel";
 import { SignerDataPanel } from "@/components/settings/signer-data-panel";
 import type { EmailDnsRecord, EmailStatus } from "@/lib/email-status";
 import type {
@@ -360,6 +361,10 @@ export function OrganizationSettings({
         </form>
 
         <EmailSetupPanel key={emailRevision} />
+
+        {/* The hosted service's accounts are strangers to each other, not
+            one organization, so it has no list of them here. */}
+        {!values.hosted ? <PeoplePanel /> : null}
 
         <SignerDataPanel />
       </div>
