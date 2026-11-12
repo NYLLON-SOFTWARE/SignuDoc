@@ -22,14 +22,14 @@ The open source project is designed to be self-hostable, and the hosted version 
 - Track draft, sent, completed, declined, and voided envelopes
 - Generate a final signed PDF and audit certificate
 - Send manual reminders to the current signer
-- Run with Supabase Postgres for local and hosted deployments
+- Run on any Postgres database, locally or hosted
 
 ## Built with
 
 - Next.js App Router
 - React + TypeScript
 - Better Auth
-- Supabase Postgres (`pg`)
+- Postgres (`pg`)
 - Cloudflare R2 object storage
 - Resend for transactional email
 - `pdf-lib` and `pdfjs-dist`
@@ -51,41 +51,39 @@ SignuDoc currently targets Node.js 20.9+ and is built on Next.js 16.
 cp .env.example .env
 ```
 
-Then fill in the values in `.env`.
+The example file is ready for local development as it is, apart from `BETTER_AUTH_SECRET`, which you generate with `openssl rand -hex 32`. Locally, uploaded PDFs are kept on disk under `.data/storage` and outgoing email is written to `.data/outbox` as JSON files instead of being sent, so you need no storage or email account to try the whole product.
 
-The app now requires explicit values for every env-backed dependency. Leaving placeholders in place is treated as unconfigured, and the related feature will fail when used.
+A value that still starts with `replace-with-` is treated as not set.
 
 For production deployments:
 
 - `APP_URL` and `BETTER_AUTH_URL` must be absolute HTTPS URLs.
 - `APP_URL` and `BETTER_AUTH_URL` must not point at localhost.
 - `BETTER_AUTH_SECRET` must be a strong secret. The app enforces a minimum length of 32 characters in production.
+- Leave `EMAIL_DRIVER` and `STORAGE_DRIVER` unset, or set them to `resend` and `r2`. The local drivers are for development only.
 
 At a minimum, you should review these groups:
 
 - **App/Auth**: `APP_URL`, `BETTER_AUTH_SECRET`, `BETTER_AUTH_URL`
 - **Database**: `DATABASE_URL`
-- **Storage**: `R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `R2_BUCKET_NAME`
-- **Email**: `RESEND_API_KEY`, `RESEND_FROM_EMAIL`, `SUPPORT_EMAIL`
+- **Storage**: `STORAGE_DRIVER`, `R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `R2_BUCKET_NAME`
+- **Email**: `EMAIL_DRIVER`, `RESEND_API_KEY`, `RESEND_FROM_EMAIL`, `SUPPORT_EMAIL`
 - **Internal jobs**: `RETENTION_JOB_SECRET`
 
 See `.env.example` for the full list.
 
-### 3. Apply the database schema
+### 3. Start the database and apply the schema
 
-This repo already includes the committed `supabase/` directory and migrations.
-
-For a hosted Supabase project, link the repo to your project and push the schema:
-
-```bash
-npx supabase link --project-ref <your-project-ref>
-npm run db:push
-```
-
-If you prefer local Supabase development, Docker is required:
+With Docker installed, this starts Postgres and applies the migrations:
 
 ```bash
 npm run db:start
+```
+
+If you already have a Postgres server, point `DATABASE_URL` at it and run the migrations on their own:
+
+```bash
+npm run db:migrate
 ```
 
 ### 4. Start the dev server
@@ -102,34 +100,21 @@ Open [http://localhost:3000](http://localhost:3000).
 
 Documents, signed PDFs, audit certificates, and drawn signature images are stored in Cloudflare R2 using its S3-compatible API.
 
+For local development, `STORAGE_DRIVER=local` keeps the same files on disk under `.data/storage`.
+
 ### Database
 
-SignuDoc uses Supabase Postgres as its only database. The checked-in `supabase/config.toml` is Postgres-only for local development; Supabase Auth, Storage, Realtime, Edge Runtime, and Inbucket are disabled because SignuDoc uses Better Auth, Cloudflare R2, and Resend.
+SignuDoc uses Postgres as its only database and talks to it with `pg`. Any Postgres 15 or newer works, including Neon and Supabase.
 
-This repo already includes the committed `supabase/` directory and migrations.
-
-For a hosted Supabase project:
-
-```bash
-npx supabase link --project-ref <your-project-ref>
-npm run db:push
-```
-
-Then point `DATABASE_URL` at the Supabase connection string from the dashboard. Because SignuDoc uses a persistent `pg.Pool` in a long-lived Next.js server, use a **Direct connection** string by default. If your network requires IPv4, use the **Session pooler** instead. Avoid the Transaction pooler, which is designed for serverless/edge workloads.
-
-If you want a local Supabase stack instead, Docker is required and the local DB URL is typically:
-
-```bash
-postgresql://postgres:postgres@localhost:54322/postgres
-```
+The schema lives in `db/migrations` as plain SQL files. `npm run db:migrate` applies the ones that have not run yet and records them in the `signudoc_migrations` table, so it is safe to run on every deploy.
 
 ### Email delivery
 
-SignuDoc sends transactional email through Resend only.
+SignuDoc sends transactional email through Resend.
 
 - `RESEND_FROM_EMAIL` must use a verified Resend sending domain or subdomain.
 - `SUPPORT_EMAIL` is used as the default reply-to address for outbound mail **and** as the public support contact displayed on the Terms, Privacy, and Accessibility pages. If it is missing, those pages will fail to render.
-- There is no local email outbox fallback. If email env values are missing or still placeholder-like, email flows fail when used.
+- For local development, `EMAIL_DRIVER=capture` writes each email to `.data/outbox` as a JSON file instead of sending it. Open the newest file to find a verification or signing link. This driver refuses to run in production.
 
 ### Upload constraints
 
@@ -149,13 +134,16 @@ npm run start
 npm run db:start
 npm run db:stop
 npm run db:reset
-npm run db:push
+npm run db:migrate
 npm run auth:generate
 npm run lint
 npm run typecheck
 npm run format
 npm run format:check
+npm run test:e2e
 ```
+
+`npm run test:e2e` runs the Playwright end-to-end test. It starts the app against a separate `signudoc_e2e` database on the same Postgres server, signs up, sends a PDF, signs it as the recipient and downloads the results. Install the browser once with `npx playwright install chromium`.
 
 ## How the workflow fits together
 
