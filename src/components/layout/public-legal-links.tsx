@@ -6,6 +6,7 @@ import { useBranding } from "@/components/layout/branding-provider";
 import { SIGNUDOC_NAME, SIGNUDOC_URL } from "@/lib/branding";
 import { PUBLIC_COPYRIGHT_YEAR, publicFooterLinks } from "@/lib/legal";
 import { cn } from "@/lib/cn";
+import { PERMITTED_USE_PATH } from "@/lib/permitted-uses";
 
 type PublicLegalFooterProps = {
   className?: string;
@@ -48,16 +49,27 @@ export function PublicLegalFooter({
               },
             ]
           : []),
-        ...(branding.privacyUrl
-          ? [
-              {
-                external: true,
-                href: branding.privacyUrl,
-                label: labelVariant === "long" ? "Privacy Policy" : "Privacy",
-              },
-            ]
-          : []),
+        // Without the organization's own policy, signers still get a
+        // notice, built from the install's settings.
+        branding.privacyUrl
+          ? {
+              external: true,
+              href: branding.privacyUrl,
+              label: labelVariant === "long" ? "Privacy Policy" : "Privacy",
+            }
+          : {
+              external: false,
+              href: "/signer-privacy",
+              label: labelVariant === "long" ? "Privacy notice" : "Privacy",
+            },
       ];
+
+  // Which documents may be signed here: on every install.
+  links.push({
+    external: false,
+    href: PERMITTED_USE_PATH,
+    label: labelVariant === "long" ? "What this is for" : "E-signatures",
+  });
 
   return (
     <footer className={cn("relative z-10", className)}>

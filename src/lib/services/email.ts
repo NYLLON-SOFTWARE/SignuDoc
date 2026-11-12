@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { mkdir, rename, writeFile } from "node:fs/promises";
 import path from "node:path";
 
@@ -20,7 +20,31 @@ const DEFAULT_CAPTURE_SENDER_ADDRESS = "dev@signudoc.localhost";
 
 export type EmailDriver = "capture" | "resend";
 
+export type EmailAttachment = {
+  content: Uint8Array;
+  contentType: string;
+  filename: string;
+};
+
+/**
+ * Resend accepts up to 40 MB per message once attachments are base64
+ * encoded, which makes them a third larger. Above this the message goes out
+ * with links only.
+ */
+export const MAX_ATTACHMENT_BYTES = 25 * 1024 * 1024;
+
+export function fitsAsAttachments(
+  attachments: readonly EmailAttachment[],
+): boolean {
+  return (
+    attachments.reduce((total, item) => total + item.content.byteLength, 0) <=
+    MAX_ATTACHMENT_BYTES
+  );
+}
+
 export type TransactionalEmailMessage = {
+  /** Not allowed in sendBatch: Resend's batch endpoint takes none. */
+  attachments?: EmailAttachment[];
   htmlBody?: string;
   replyTo?: string;
   subject: string;
@@ -72,6 +96,15 @@ function buildResendPayload(
   config: EmailAddresses,
 ) {
   return {
+    ...(message.attachments?.length
+      ? {
+          attachments: message.attachments.map((attachment) => ({
+            content: Buffer.from(attachment.content),
+            contentType: attachment.contentType,
+            filename: attachment.filename,
+          })),
+        }
+      : {}),
     from: config.senderAddress,
     html: message.htmlBody,
     replyTo: message.replyTo ?? config.supportAddress ?? undefined,
@@ -156,7 +189,17 @@ function createCaptureEmailService(
       temporaryPath,
       JSON.stringify(
         {
-          ...buildResendPayload(message, config),
+          ...buildResendPayload({ ...message, attachments: undefined }, config),
+          // The files themselves are not written out; their names, sizes
+          // and fingerprints are enough to check what would have been sent.
+          attachments: message.attachments?.map((attachment) => ({
+            bytes: attachment.content.byteLength,
+            contentType: attachment.contentType,
+            filename: attachment.filename,
+            sha256: createHash("sha256")
+              .update(attachment.content)
+              .digest("hex"),
+          })),
           capturedAt: new Date().toISOString(),
           messageId,
           template: message.template,
@@ -239,6 +282,10 @@ export function createEmailService({
     async sendBatch(messages, options) {
       if (messages.length === 0) {
         return [];
+      }
+
+      if (messages.some((message) => message.attachments?.length)) {
+        throw new Error("Messages with attachments must be sent one by one.");
       }
 
       const config = await resolveAddresses();

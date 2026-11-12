@@ -3,13 +3,24 @@ import { ZodError } from "zod";
 
 import { getDb } from "@/lib/db/connection";
 import {
+  verificationRequiredResponse,
+  verifiedMethodsForRequest,
+} from "@/lib/signing-route";
+import {
   SigningAccessError,
+  SigningVerificationRequiredError,
   SigningMutationError,
   submitSigningForToken,
 } from "@/lib/signing";
 import { logRouteError } from "@/lib/security/logging";
-import { applyRateLimit, buildRateLimitKey } from "@/lib/security/route-controls";
-import { getClientIpAddress, getRequestUserAgent } from "@/lib/security/request";
+import {
+  applyRateLimit,
+  buildRateLimitKey,
+} from "@/lib/security/route-controls";
+import {
+  getClientIpAddress,
+  getRequestUserAgent,
+} from "@/lib/security/request";
 
 type SigningSubmitRouteContext = {
   params: Promise<{
@@ -42,6 +53,7 @@ export async function POST(
   try {
     const payload = await submitSigningForToken(token, body, {
       database: getDb(),
+      verifiedMethods: verifiedMethodsForRequest(token, request),
       requestMeta: {
         ipAddress: getClientIpAddress(request.headers),
         userAgent: getRequestUserAgent(request.headers),
@@ -69,6 +81,10 @@ export async function POST(
           status: 400,
         },
       );
+    }
+
+    if (error instanceof SigningVerificationRequiredError) {
+      return verificationRequiredResponse(error);
     }
 
     if (error instanceof SigningAccessError) {

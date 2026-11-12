@@ -2,7 +2,6 @@
 
 import { useEffect, useRef, useState } from "react";
 
-import { useBranding } from "@/components/layout/branding-provider";
 import { DocumentThumbnail } from "@/components/shared/document-thumbnail";
 import { ShellButton } from "@/components/shared/form-shell";
 import { PageHeader } from "@/components/shared/page-header";
@@ -17,6 +16,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import type { ReviewEnvelopeData } from "@/lib/envelopes";
+import { PERMITTED_USE_PATH } from "@/lib/permitted-uses";
 import { getSignerPalette } from "./signer-palette";
 
 const envelopeSteps = ["Upload", "Signers", "Place fields", "Review"];
@@ -38,11 +38,7 @@ type ReviewRecordView = {
 };
 
 type ReviewFieldSummaryLabel =
-  | "Checkbox"
-  | "Date"
-  | "Initials"
-  | "Signature"
-  | "Text";
+  "Checkbox" | "Date" | "Initials" | "Signature" | "Text";
 
 type ReviewSigner = {
   color?: string;
@@ -381,7 +377,6 @@ function SendConfirmationDialog({
   title,
 }: SendConfirmationDialogProps) {
   const [isPermittedUseConfirmed, setIsPermittedUseConfirmed] = useState(false);
-  const { termsUrl } = useBranding();
 
   return (
     <Dialog
@@ -392,15 +387,10 @@ function SendConfirmationDialog({
         }
       }}
     >
-      <DialogContent
-        className="max-w-md sm:p-8"
-        showCloseButton={false}
-      >
+      <DialogContent className="max-w-md sm:p-8" showCloseButton={false}>
         <div className="space-y-4">
           <DialogHeader className="space-y-3">
-            <DialogTitle>
-              Send this envelope?
-            </DialogTitle>
+            <DialogTitle>Send this envelope?</DialogTitle>
             <DialogDescription asChild>
               <div className="space-y-3 text-sm leading-6 text-(--secondary)">
                 <p>
@@ -428,24 +418,16 @@ function SendConfirmationDialog({
               <span className="text-sm leading-6 text-(--secondary)">
                 By sending, you confirm this document is an ordinary business
                 agreement and not a will, court order, legally required consumer
-                disclosure, or other
-                {termsUrl ? (
-                  <>
-                    {" "}
-                    excluded document type described in the{" "}
-                    <a
-                      className="font-semibold text-(--accent-ink) underline decoration-[rgba(83,64,214,0.35)] underline-offset-4"
-                      href={termsUrl}
-                      rel="noreferrer"
-                      target="_blank"
-                    >
-                      Terms of Service
-                    </a>
-                    .
-                  </>
-                ) : (
-                  " document that cannot be signed electronically."
-                )}
+                disclosure, or other{" "}
+                <a
+                  className="font-semibold text-(--accent-ink) underline decoration-[rgba(83,64,214,0.35)] underline-offset-4"
+                  href={PERMITTED_USE_PATH}
+                  rel="noreferrer"
+                  target="_blank"
+                >
+                  document that cannot be signed electronically
+                </a>
+                .
               </span>
             </span>
           </label>

@@ -18,7 +18,11 @@ type FooterLink = {
 function buildFooterLinks(branding: Branding, env: EnvSource): FooterLink[] {
   const candidates: Array<[label: string, url: string | null]> = [
     ["Terms of Service", branding.termsUrl],
-    ["Privacy Policy", branding.privacyUrl],
+    // Without the organization's own policy, the notice built from the
+    // install's settings.
+    branding.privacyUrl || branding.hosted
+      ? ["Privacy Policy", branding.privacyUrl]
+      : ["Privacy notice", getEnv(env).appUrl ? "/signer-privacy" : null],
     ["Contact", branding.contactUrl],
   ];
   const links = candidates.filter((candidate): candidate is [string, string] =>

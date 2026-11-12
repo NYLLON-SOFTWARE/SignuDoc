@@ -19,6 +19,10 @@ export const draftSignerSchema = z.object({
   name: nameSchema,
   email: emailSchema,
   signOrder: z.number().int().positive().optional(),
+  // Extra checks before signing. accessCode: a string sets it, null removes
+  // it, and leaving it out keeps the code already saved.
+  accessCode: z.string().trim().min(4).max(64).nullable().optional(),
+  requireEmailCode: z.boolean().optional(),
 });
 
 export const signerListSchema = z
@@ -69,7 +73,9 @@ export const replaceSignersResponseSchema = z.object({
     z.object({
       email: emailSchema,
       id: idSchema,
+      hasAccessCode: z.boolean(),
       name: nameSchema,
+      requireEmailCode: z.boolean(),
       signOrder: z.number().int().positive(),
     }),
   ),

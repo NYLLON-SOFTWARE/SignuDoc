@@ -313,6 +313,22 @@ test("a new install is set up, a sender sends a PDF and a recipient signs it", a
     watchForContentSecurityPolicyViolations(recipientPage, cspViolations);
 
     await recipientPage.goto(signingLink);
+
+    // Agreement to electronic records comes before anything else.
+    const consent = recipientPage.getByRole("dialog", {
+      name: "Before you sign",
+    });
+
+    await expect(
+      consent.getByRole("button", { name: "Agree and continue" }),
+    ).toBeDisabled();
+    await consent
+      .getByRole("checkbox", {
+        name: "I agree to use electronic records and signatures",
+      })
+      .check();
+    await consent.getByRole("button", { name: "Agree and continue" }).click();
+    await expect(consent).toBeHidden();
     await expect(
       recipientPage.getByRole("img", { name: "Rendered PDF page 1" }),
     ).toBeVisible();
@@ -344,6 +360,21 @@ test("a new install is set up, a sender sends a PDF and a recipient signs it", a
     for (const downloadLink of downloadLinks) {
       await expectPdfResponse(await recipientContext.request.get(downloadLink));
     }
+
+    // The signer's copy comes attached, and the Verify page knows it.
+    const signedAttachment = completionEmail.attachments?.find(
+      (attachment) => !attachment.filename.includes("certificate"),
+    );
+
+    expect(completionEmail.attachments?.length).toBe(2);
+    expect(signedAttachment).toBeDefined();
+
+    const verification = await recipientContext.request.post("/api/verify", {
+      data: { sha256: signedAttachment?.sha256 },
+    });
+
+    expect(verification.ok()).toBe(true);
+    expect(await verification.json()).toMatchObject({ match: true });
 
     await recipientContext.close();
   });

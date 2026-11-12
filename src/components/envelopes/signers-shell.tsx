@@ -30,7 +30,16 @@ type SignersShellProps = {
 
 type SignerField = "email" | "name";
 
-type ShellSigner = {
+type SignerChecks = {
+  /** A new code typed by the sender. Empty means "no change". */
+  accessCode: string;
+  /** A code is saved on the server. */
+  hasAccessCode: boolean;
+  removeAccessCode: boolean;
+  requireEmailCode: boolean;
+};
+
+type ShellSigner = SignerChecks & {
   email: string;
   localId: string;
   name: string;
@@ -39,6 +48,7 @@ type ShellSigner = {
 };
 
 type SignerErrors = {
+  accessCode?: string;
   email?: string;
   name?: string;
 };
@@ -55,8 +65,12 @@ function createSigner(
   },
 ): ShellSigner {
   return {
+    accessCode: "",
     email: overrides?.email ?? "",
+    hasAccessCode: overrides?.hasAccessCode ?? false,
     localId,
+    removeAccessCode: false,
+    requireEmailCode: overrides?.requireEmailCode ?? false,
     name: overrides?.name ?? "",
     signerId: overrides?.signerId,
     touched: {
@@ -74,7 +88,9 @@ function buildInitialModel(record?: DraftSignerStepData): InitialModel {
       .map((signer) =>
         createSigner(signer.id, {
           email: signer.email,
+          hasAccessCode: signer.hasAccessCode,
           name: signer.name,
+          requireEmailCode: signer.requireEmailCode,
           signerId: signer.id,
           touched: { email: true, name: true },
         }),
@@ -119,6 +135,15 @@ function buildSignerErrors(signers: readonly ShellSigner[]) {
       signerErrors.email = duplicateSignerEmailMessage;
     }
 
+    const accessCode = signer.accessCode.trim();
+
+    if (
+      accessCode.length > 0 &&
+      (accessCode.length < 4 || accessCode.length > 64)
+    ) {
+      signerErrors.accessCode = "Use 4 to 64 characters";
+    }
+
     errorsBySignerId[signer.localId] = signerErrors;
   }
 
@@ -126,7 +151,7 @@ function buildSignerErrors(signers: readonly ShellSigner[]) {
 }
 
 function hasSignerErrors(errors: SignerErrors) {
-  return Boolean(errors.name || errors.email);
+  return Boolean(errors.name || errors.email || errors.accessCode);
 }
 
 function reorderSigners(
@@ -158,9 +183,16 @@ function reorderSigners(
 function buildSignerRequest(signers: readonly ShellSigner[]) {
   return {
     signers: signers.map((signer, index) => ({
+      accessCode:
+        signer.accessCode.trim().length > 0
+          ? signer.accessCode.trim()
+          : signer.removeAccessCode
+            ? null
+            : undefined,
       email: signer.email,
       id: signer.signerId,
       name: signer.name,
+      requireEmailCode: signer.requireEmailCode,
       signOrder: index + 1,
     })),
   };
@@ -170,9 +202,7 @@ async function parseJsonResponse<T>(
   response: Response,
 ): Promise<{ data: T | null; error: string | null }> {
   const payload = (await response.json().catch(() => null)) as
-    | { error?: string }
-    | T
-    | null;
+    { error?: string } | T | null;
 
   if (!response.ok) {
     return {
@@ -203,10 +233,14 @@ function SignerCard({
   nameError,
   onChange,
   onBlur,
+  onChecksChange,
   onMove,
   onRemove,
+  accessCodeError,
   signer,
 }: {
+  accessCodeError?: string;
+  onChecksChange: (patch: Partial<SignerChecks>) => void;
   canMoveEarlier: boolean;
   canMoveLater: boolean;
   canRemove: boolean;
@@ -341,6 +375,84 @@ function SignerCard({
             </span>
           </label>
         </div>
+
+        <fieldset className="grid gap-3 border-t border-(--border) pt-4 text-sm">
+          <legend className="sr-only">Extra check before signing</legend>
+          <p className="font-semibold text-(--fg)">
+            Extra check before signing{" "}
+            <span className="font-normal text-muted-foreground">
+              (optional)
+            </span>
+          </p>
+          <p className="text-xs leading-5 text-muted-foreground">
+            By default anyone holding the emailed link can sign. Add a check
+            when the signer&apos;s identity matters.
+          </p>
+          <label className="flex items-start gap-3">
+            <input
+              aria-label={`Email signer ${order} a one-time code`}
+              checked={signer.requireEmailCode}
+              className="mt-1 size-4"
+              disabled={disabled}
+              onChange={(event: ChangeEvent<HTMLInputElement>) =>
+                onChecksChange({ requireEmailCode: event.target.checked })
+              }
+              type="checkbox"
+            />
+            <span>Email a one-time code when they open the link</span>
+          </label>
+          <label className="grid gap-2">
+            <span>
+              Access code you will give them yourself, for example by phone
+              {signer.hasAccessCode && !signer.removeAccessCode
+                ? " (a code is set; type a new one to change it)"
+                : ""}
+            </span>
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+              <input
+                aria-invalid={accessCodeError ? true : undefined}
+                aria-label={`Signer ${order} access code`}
+                autoComplete="off"
+                className="min-h-11 flex-1 rounded-none border border-(--border) bg-popover px-4 text-(--fg) outline-none placeholder:text-(--placeholder)"
+                disabled={disabled}
+                maxLength={64}
+                onChange={(event: ChangeEvent<HTMLInputElement>) =>
+                  onChecksChange({
+                    accessCode: event.target.value,
+                    removeAccessCode: false,
+                  })
+                }
+                placeholder={
+                  signer.hasAccessCode && !signer.removeAccessCode
+                    ? "••••••"
+                    : "No access code"
+                }
+                type="text"
+                value={signer.accessCode}
+              />
+              {signer.hasAccessCode && !signer.removeAccessCode ? (
+                <button
+                  className="min-h-11 border border-(--border) px-4 text-xs font-semibold text-muted-foreground hover:border-black hover:text-(--fg)"
+                  disabled={disabled}
+                  onClick={() =>
+                    onChecksChange({ accessCode: "", removeAccessCode: true })
+                  }
+                  type="button"
+                >
+                  Remove code
+                </button>
+              ) : null}
+            </div>
+            {accessCodeError ? (
+              <span
+                className="text-xs font-semibold text-(--accent)"
+                role="alert"
+              >
+                {accessCodeError}
+              </span>
+            ) : null}
+          </label>
+        </fieldset>
       </div>
     </li>
   );
@@ -387,6 +499,18 @@ export function SignersShell({
               [field]: value,
             }
           : signer,
+      ),
+    );
+  }
+
+  function handleSignerChecksChange(
+    signerLocalId: string,
+    patch: Partial<SignerChecks>,
+  ) {
+    clearSubmitError();
+    setSigners((currentSigners) =>
+      currentSigners.map((signer) =>
+        signer.localId === signerLocalId ? { ...signer, ...patch } : signer,
       ),
     );
   }
@@ -558,6 +682,10 @@ export function SignersShell({
                     handleSignerChange(signer.localId, field, value)
                   }
                   onBlur={(field) => handleSignerBlur(signer.localId, field)}
+                  accessCodeError={errorsBySignerId[signer.localId]?.accessCode}
+                  onChecksChange={(patch) =>
+                    handleSignerChecksChange(signer.localId, patch)
+                  }
                   onMove={(direction) =>
                     handleMoveSigner(signer.localId, direction)
                   }

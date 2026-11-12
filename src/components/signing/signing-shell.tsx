@@ -4,7 +4,11 @@ import { FileTextIcon } from "lucide-react";
 
 import { Brand } from "@/components/layout/brand";
 import { PublicLegalFooter } from "@/components/layout/public-legal-links";
-import type { SigningPayload } from "@/lib/schemas/signing";
+import type {
+  SigningPayload,
+  SigningVerificationState,
+} from "@/lib/schemas/signing";
+import { SignerVerificationScreen } from "./signer-verification-screen";
 import { SigningLiveShell } from "./signing-live-shell";
 
 type SigningUnavailableState =
@@ -13,6 +17,8 @@ type SigningUnavailableState =
 type SigningShellProps = {
   initialState?: SigningUnavailableState;
   record?: SigningPayload;
+  token: string;
+  verification?: SigningVerificationState;
 };
 
 const tokenStateCopy: Record<
@@ -44,9 +50,18 @@ const tokenStateCopy: Record<
   },
 };
 
-export function SigningShell({ initialState, record }: SigningShellProps) {
+export function SigningShell({
+  initialState,
+  record,
+  token,
+  verification,
+}: SigningShellProps) {
   if (record) {
     return <SigningLiveShell record={record} />;
+  }
+
+  if (verification) {
+    return <SignerVerificationScreen state={verification} token={token} />;
   }
 
   const tokenState = tokenStateCopy[initialState ?? "error"];

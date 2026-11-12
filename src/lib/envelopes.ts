@@ -43,7 +43,9 @@ import { getBranding } from "./settings.ts";
 import { importPdfDocument } from "./services/document-import.ts";
 import {
   listAuditEventsForEnvelope,
+  lockEnvelopeAuditChain,
   recordAuditEvent,
+  recordEmailSent,
 } from "./services/audit.ts";
 import { createEmailService } from "./services/email.ts";
 import { withUserEmailLegalFooter } from "./services/email-legal-footer.ts";
@@ -73,6 +75,8 @@ import {
   getManualNudgeAvailableAt,
   isManualNudgeAvailable,
 } from "./services/reminders.ts";
+import { PERMITTED_USE_VERSION } from "./permitted-uses.ts";
+import { hashAccessCode } from "./signer-checks.ts";
 import { escapeHtml } from "./utils/html.ts";
 
 type CreateDraftEnvelopeOptions = {
@@ -220,11 +224,7 @@ export type DashboardEnvelopeListItem = {
 };
 
 type ReviewFieldSummary =
-  | "Checkbox"
-  | "Date"
-  | "Initials"
-  | "Signature"
-  | "Text";
+  "Checkbox" | "Date" | "Initials" | "Signature" | "Text";
 
 export type ReviewSignerSummary = {
   email: string;
@@ -249,9 +249,12 @@ export type ReviewEnvelopeData = {
 
 export type DraftSignerStepSigner = {
   email: string;
+  /** Set on the signers step only. */
+  hasAccessCode?: boolean;
   id: string;
   name: string;
   order: number;
+  requireEmailCode?: boolean;
 };
 
 export type DraftSignerStepData = {
@@ -364,11 +367,15 @@ const TIMELINE_TONE_MAP: Record<
   EnvelopeDetailTimelineItem["tone"]
 > = {
   completed: "success",
+  consented: "neutral",
   created: "accent",
   declined: "danger",
+  email_sent: "neutral",
   reminded_manual: "neutral",
   sent: "neutral",
   signed: "success",
+  verification_failed: "danger",
+  verified: "neutral",
   viewed: "neutral",
   voided: "danger",
 };
@@ -723,6 +730,38 @@ async function listSignersForEnvelopeId(
   );
 }
 
+async function listSignerCheckSettings(
+  envelopeId: string,
+  database: DbExecutor,
+): Promise<Map<string, { hasAccessCode: boolean; requireEmailCode: boolean }>> {
+  const rows = await queryMany<{
+    hasAccessCode: boolean;
+    id: string;
+    requireEmailCode: boolean;
+  }>(
+    database,
+    `
+      SELECT
+        id,
+        access_code_hash IS NOT NULL AS "hasAccessCode",
+        require_email_code AS "requireEmailCode"
+      FROM signers
+      WHERE envelope_id = $1
+    `,
+    [envelopeId],
+  );
+
+  return new Map(
+    rows.map((row) => [
+      row.id,
+      {
+        hasAccessCode: Boolean(row.hasAccessCode),
+        requireEmailCode: Boolean(row.requireEmailCode),
+      },
+    ]),
+  );
+}
+
 async function listEnvelopePagesForEnvelopeId(
   envelopeId: string,
   database: DbExecutor,
@@ -953,6 +992,16 @@ function buildTimelineDescription(event: AuditEventRecord): string {
         : `Declined by ${targetLabel}`;
     case "reminded_manual":
       return `Manual reminder sent to ${targetLabel}`;
+    case "consented":
+      return `${targetLabel} agreed to use electronic records and signatures`;
+    case "verified":
+      return `${targetLabel} confirmed their identity`;
+    case "verification_failed":
+      return `Wrong identity code entered for ${targetLabel}`;
+    case "email_sent":
+      return typeof event.metadata?.recipient === "string"
+        ? `Email accepted for delivery to ${event.metadata.recipient}`
+        : "Email accepted for delivery";
     case "completed":
       return "Final signed PDF and certificate generated";
     case "voided":
@@ -1222,14 +1271,18 @@ export async function getDraftSignerStepDataForUser(
     return null;
   }
 
+  const checks = await listSignerCheckSettings(envelopeId, database);
+
   return {
     envelopeId,
     signers: (await listSignersForEnvelopeId(envelopeId, database)).map(
       (signer) => ({
         email: signer.email,
+        hasAccessCode: checks.get(signer.id)?.hasAccessCode ?? false,
         id: signer.id,
         name: signer.name,
         order: signer.signOrder,
+        requireEmailCode: checks.get(signer.id)?.requireEmailCode ?? false,
       }),
     ),
     status: envelope.status,
@@ -1608,6 +1661,9 @@ export async function sendDraftEnvelope(
           event: "sent",
           ipAddress: input.ipAddress ?? null,
           metadata: {
+            // The send route refuses a send without this confirmation.
+            permittedUseConfirmed: true,
+            permittedUseVersion: PERMITTED_USE_VERSION,
             signerEmail: firstSigner.email,
             signerId: firstSigner.id,
             signerName: firstSigner.name,
@@ -1621,17 +1677,21 @@ export async function sendDraftEnvelope(
     throw error;
   }
 
+  let invitationMessageId: string | undefined;
+
   try {
-    await emailService.send(
-      buildSigningInvitationEmail({
-        branding: await getBranding(),
-        envelopeTitle: envelope.title,
-        senderName: input.senderName,
-        signerEmail: firstSigner.email,
-        signerName: firstSigner.name,
-        signingUrl: issuedLink.url,
-      }),
-    );
+    invitationMessageId = (
+      await emailService.send(
+        buildSigningInvitationEmail({
+          branding: await getBranding(),
+          envelopeTitle: envelope.title,
+          senderName: input.senderName,
+          signerEmail: firstSigner.email,
+          signerName: firstSigner.name,
+          signingUrl: issuedLink.url,
+        }),
+      )
+    ).messageId;
   } catch (error) {
     await withTransaction(async (tx) => {
       await tx.query(
@@ -1667,6 +1727,7 @@ export async function sendDraftEnvelope(
         [envelope.updatedAt, envelopeId],
       );
 
+      await lockEnvelopeAuditChain(envelopeId, tx);
       await tx.query(
         `
           DELETE FROM audit_events
@@ -1674,6 +1735,12 @@ export async function sendDraftEnvelope(
             AND event = 'sent'
             AND created_at = $2
             AND actor_email = $3
+            -- Only while it is still the newest link of the audit chain: an
+            -- event recorded after it (say, the invitation was opened before
+            -- the send failed) chains to it, so it stays as history.
+            AND sequence = (
+              SELECT max(sequence) FROM audit_events WHERE envelope_id = $1
+            )
         `,
         [envelopeId, sentAuditAt, input.senderEmail],
       );
@@ -1686,6 +1753,17 @@ export async function sendDraftEnvelope(
 
     throw error;
   }
+
+  await recordEmailSent(
+    {
+      envelopeId,
+      messageId: invitationMessageId,
+      recipient: firstSigner.email,
+      signerId: firstSigner.id,
+      template: "signing_invitation",
+    },
+    database,
+  );
 
   return sendEnvelopeResponseSchema.parse({
     envelopeId,
@@ -1779,7 +1857,8 @@ export async function voidSentEnvelope(
     voidedAuditEvent,
   ];
   const storedCertificateKeys: string[] = [];
-  let certificate: { key: string };
+  let certificate: { key: string; sha256: string };
+  let recipientCertificateSha256: string;
 
   try {
     certificate = await storeEnvelopeCertificatePdf(
@@ -1813,6 +1892,7 @@ export async function voidSentEnvelope(
       },
     );
     storedCertificateKeys.push(recipientCertificate.key);
+    recipientCertificateSha256 = recipientCertificate.sha256;
   } catch (error) {
     await Promise.all(
       storedCertificateKeys.map((key) =>
@@ -1848,12 +1928,22 @@ export async function voidSentEnvelope(
             status = 'voided',
             evidence_key = $1,
             voided_at = $2,
-            updated_at = $3
+            updated_at = $3,
+            evidence_sha256 = $6,
+            recipient_evidence_sha256 = $7
           WHERE id = $4
             AND user_id = $5
             AND status = 'sent'
         `,
-        [certificate.key, voidedAt, voidedAt, envelopeId, userId],
+        [
+          certificate.key,
+          voidedAt,
+          voidedAt,
+          envelopeId,
+          userId,
+          certificate.sha256,
+          recipientCertificateSha256,
+        ],
       );
 
       if (updatedEnvelope.rowCount !== 1) {
@@ -1880,6 +1970,7 @@ export async function voidSentEnvelope(
         {
           actorEmail: voidedAuditEvent.actorEmail,
           actorType: voidedAuditEvent.actorType,
+          id: voidedAuditEvent.id,
           createdAt: voidedAuditEvent.createdAt,
           envelopeId: voidedAuditEvent.envelopeId,
           event: voidedAuditEvent.event,
@@ -1905,10 +1996,12 @@ export async function voidSentEnvelope(
     notifiedSigners.map(async (signer) => {
       try {
         if (!branding) {
-          throw new Error("Could not load settings for the notification email.");
+          throw new Error(
+            "Could not load settings for the notification email.",
+          );
         }
 
-        await emailService.send(
+        const delivery = await emailService.send(
           buildVoidNotificationEmail({
             branding,
             envelopeId,
@@ -1917,6 +2010,17 @@ export async function voidSentEnvelope(
             signerEmail: signer.email,
             signerName: signer.name,
           }),
+        );
+
+        await recordEmailSent(
+          {
+            envelopeId,
+            messageId: delivery.messageId,
+            recipient: signer.email,
+            signerId: signer.id,
+            template: "void_notification",
+          },
+          database,
         );
       } catch (error) {
         console.error(
@@ -2109,9 +2213,17 @@ export async function replaceDraftEnvelopeSigners(
     usedSignerIds.add(persistedSignerId);
 
     return {
+      // undefined keeps the saved hash; null clears it.
+      accessCodeHash:
+        signer.accessCode === undefined
+          ? undefined
+          : signer.accessCode === null
+            ? null
+            : hashAccessCode(signer.accessCode),
       email: signer.email,
       id: persistedSignerId,
       name: signer.name,
+      requireEmailCode: signer.requireEmailCode,
       signOrder: index + 1,
     };
   });
@@ -2140,7 +2252,9 @@ export async function replaceDraftEnvelopeSigners(
               name = $1,
               email = $2,
               sign_order = $3,
-              updated_at = $4
+              updated_at = $4,
+              access_code_hash = CASE WHEN $7::boolean THEN $8 ELSE access_code_hash END,
+              require_email_code = COALESCE($9, require_email_code)
             WHERE id = $5 AND envelope_id = $6
           `,
           [
@@ -2150,6 +2264,9 @@ export async function replaceDraftEnvelopeSigners(
             updatedAt,
             signer.id,
             envelopeId,
+            signer.accessCodeHash !== undefined,
+            signer.accessCodeHash ?? null,
+            signer.requireEmailCode ?? null,
           ],
         );
       } else {
@@ -2171,9 +2288,11 @@ export async function replaceDraftEnvelopeSigners(
               declined_at,
               decline_reason,
               created_at,
-              updated_at
+              updated_at,
+              access_code_hash,
+              require_email_code
             ) VALUES (
-              $1, $2, $3, $4, $5, 'pending', NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, $6, $7
+              $1, $2, $3, $4, $5, 'pending', NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, $6, $7, $8, $9
             )
           `,
           [
@@ -2184,6 +2303,8 @@ export async function replaceDraftEnvelopeSigners(
             signer.signOrder,
             updatedAt,
             updatedAt,
+            signer.accessCodeHash ?? null,
+            signer.requireEmailCode ?? false,
           ],
         );
       }
@@ -2208,14 +2329,18 @@ export async function replaceDraftEnvelopeSigners(
     );
   }, database);
 
+  const checks = await listSignerCheckSettings(envelopeId, database);
+
   return replaceSignersResponseSchema.parse({
     envelopeId,
     redirectPath: `/envelopes/${envelopeId}/prepare`,
     signers: (await listSignersForEnvelopeId(envelopeId, database)).map(
       (signer) => ({
         email: signer.email,
+        hasAccessCode: checks.get(signer.id)?.hasAccessCode ?? false,
         id: signer.id,
         name: signer.name,
+        requireEmailCode: checks.get(signer.id)?.requireEmailCode ?? false,
         signOrder: signer.signOrder,
       }),
     ),

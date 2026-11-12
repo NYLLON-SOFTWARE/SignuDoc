@@ -4,6 +4,7 @@ import path from "node:path";
 import { e2eOutboxDir } from "../../playwright.config";
 
 export type CapturedEmail = {
+  attachments?: { filename: string; sha256: string }[];
   subject: string;
   template: string;
   text: string;

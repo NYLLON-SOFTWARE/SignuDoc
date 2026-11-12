@@ -161,7 +161,7 @@ function isNoOpEmailChangeMessage(message: string) {
 export function SettingsShell({
   initialProfile = defaultProfileValues,
 }: SettingsShellProps) {
-  const { productName } = useBranding();
+  const closureCopy = useClosureCopy();
   const [profileValues, setProfileValues] = useState(initialProfile);
   const [savedProfileValues, setSavedProfileValues] = useState(initialProfile);
   const [profileErrors, setProfileErrors] = useState<ProfileErrors>({});
@@ -660,10 +660,7 @@ export function SettingsShell({
             <div className="space-y-5">
               <SectionHeading title="Danger zone" />
               <p className="max-w-2xl text-sm leading-6 text-(--secondary)">
-                Before closing your account, download any documents you want to
-                keep. After closure, {productName} may provide a 30-day export window
-                and then delete stored document files and related envelope
-                records.
+                {closureCopy}
               </p>
               <ShellButton
                 className="w-fit border-[rgba(180,35,24,0.35)] text-(--danger) hover:border-(--danger) hover:bg-(--danger-soft) hover:text-(--danger)"
@@ -726,6 +723,14 @@ type AccountClosureDialogProps = {
   onConfirm: () => void;
 };
 
+function useClosureCopy(): string {
+  const { hosted, productName } = useBranding();
+
+  return hosted
+    ? `Before closing your account, download any documents you want to keep. After closure, ${productName} keeps a 30-day export window and then deletes your stored documents and envelope records. Signers keep the copies they were emailed.`
+    : `Before closing your account, download any documents you want to keep. After 30 days your drafts and unfinished envelopes are deleted. Finished documents and their audit trails stay with ${productName}: they move to an administrator, because they are the organization's records.`;
+}
+
 function AccountClosureDialog({
   confirmationValue,
   isReady,
@@ -734,7 +739,7 @@ function AccountClosureDialog({
   onChange,
   onConfirm,
 }: AccountClosureDialogProps) {
-  const { productName } = useBranding();
+  const closureCopy = useClosureCopy();
 
   return (
     <Dialog
@@ -750,10 +755,7 @@ function AccountClosureDialog({
           <DialogHeader className="space-y-3">
             <DialogTitle>Request account closure?</DialogTitle>
             <DialogDescription className="text-sm leading-6 text-(--secondary)">
-              Before closing your account, download any documents you want to
-              keep. After closure, {productName} may provide a 30-day export window
-              and then delete stored document files and related envelope
-              records.
+              {closureCopy}
             </DialogDescription>
           </DialogHeader>
 

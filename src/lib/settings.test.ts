@@ -13,6 +13,7 @@ const stored: AppSettings = {
   emailReadyAt: null,
   organizationName: "Acme Corp",
   privacyUrl: "https://acme.com/privacy",
+  retentionDays: null,
   senderAddress: "sign@acme.com",
   setupCompletedAt: 1_800_000_000,
   signupMode: "domains",

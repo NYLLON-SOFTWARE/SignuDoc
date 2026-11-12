@@ -43,11 +43,20 @@ test("the hosted service links to its own terms, privacy and contact pages", () 
   assert.doesNotMatch(result.textBody, /Sent by|Sent using/);
 });
 
-test("a neutral install with nothing else set says only who sent the message", () => {
+test("a neutral install with nothing else set links its signer privacy notice and says who sent the message", () => {
   const result = withUserEmailLegalFooter(body, neutral, env);
 
-  assert.equal(result.textBody, "Hello\n\nSent by Acme Corp using SignuDoc.");
-  assert.doesNotMatch(result.htmlBody, /<a /);
+  assert.equal(
+    result.textBody,
+    [
+      "Hello",
+      "",
+      "Privacy notice:",
+      "https://sign.acme.com/signer-privacy",
+      "",
+      "Sent by Acme Corp using SignuDoc.",
+    ].join("\n"),
+  );
 });
 
 test("a neutral install links to the organization's own pages and support address", () => {
@@ -91,7 +100,8 @@ test("an install that has not been named yet does not invent a name", () => {
     env,
   );
 
-  assert.equal(result.textBody, "Hello\n\nSent using SignuDoc.");
+  assert.match(result.textBody, /\n\nSent using SignuDoc\.$/);
+  assert.doesNotMatch(result.textBody, /Acme/);
 });
 
 test("the organization's name and links are escaped in the HTML part", () => {

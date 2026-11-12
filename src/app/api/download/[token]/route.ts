@@ -4,6 +4,7 @@ import { getDb } from "@/lib/db/connection";
 import { createDownloadResponse } from "@/lib/download-response";
 import {
   DownloadAccessError,
+  ExpiredDownloadLinkError,
   getPublicEnvelopeDownloadForToken,
 } from "@/lib/downloads";
 import { logRouteError } from "@/lib/security/logging";
@@ -12,6 +13,7 @@ import {
   buildRateLimitKey,
 } from "@/lib/security/route-controls";
 import { getClientIpAddress } from "@/lib/security/request";
+import { resolveAppUrl } from "@/lib/utils/env";
 
 // Public download route for recipient email links only.
 // Sender downloads must go through the authenticated /api/envelopes/[id]/download route.
@@ -56,6 +58,17 @@ export async function GET(
 
     return await createDownloadResponse(download);
   } catch (error) {
+    // The page there offers to email fresh links to the signer.
+    if (error instanceof ExpiredDownloadLinkError) {
+      return NextResponse.redirect(
+        new URL(
+          `/download/${encodeURIComponent(token)}`,
+          resolveAppUrl() ?? request.url,
+        ),
+        { headers: { "cache-control": "private, no-store" }, status: 303 },
+      );
+    }
+
     if (error instanceof DownloadAccessError) {
       return new NextResponse(error.message, {
         headers: {
