@@ -37,6 +37,8 @@ type SignerEnvelopeRow = {
   signerId: string;
   signerName: string;
   signerStatus: string;
+  /** "signer", or "cc" for someone who only received a copy. */
+  role: string;
 };
 
 function parseEmail(email: unknown): string {
@@ -61,6 +63,7 @@ async function listSignerEnvelopes(
         s.name AS "signerName",
         s.email AS "signerEmail",
         s.status AS "signerStatus",
+        s.role AS "role",
         s.signed_at AS "signedAt",
         s.declined_at AS "declinedAt",
         s.decline_reason AS "declineReason",

@@ -12,10 +12,14 @@ import { StatusPanel } from "@/components/shared/status-panel";
 import { StepIndicator } from "@/components/shared/step-indicator";
 import type { DraftSignerStepData } from "@/lib/envelopes";
 import {
+  duplicateCopyRecipientEmailMessage,
   duplicateSignerEmailMessage,
   type ReplaceSignersResponse,
 } from "@/lib/schemas/signer";
-import { MAX_SIGNERS_PER_ENVELOPE } from "@/lib/types/domain";
+import {
+  MAX_COPY_RECIPIENTS_PER_ENVELOPE,
+  MAX_SIGNERS_PER_ENVELOPE,
+} from "@/lib/types/domain";
 import { getSignerPalette } from "./signer-palette";
 
 const envelopeSteps = ["Upload", "Signers", "Place fields", "Review"];
@@ -53,7 +57,17 @@ type SignerErrors = {
   name?: string;
 };
 
+/** Someone who gets the finished document without signing it. */
+type ShellCopyRecipient = {
+  email: string;
+  localId: string;
+  name: string;
+  recipientId?: string;
+  touched: Record<SignerField, boolean>;
+};
+
 type InitialModel = {
+  copyRecipients: ShellCopyRecipient[];
   showAllErrors: boolean;
   signers: ShellSigner[];
 };
@@ -97,9 +111,51 @@ function buildInitialModel(record?: DraftSignerStepData): InitialModel {
       ) ?? [];
 
   return {
+    copyRecipients: (record?.copyRecipients ?? []).map((recipient) => ({
+      email: recipient.email,
+      localId: recipient.id,
+      name: recipient.name,
+      recipientId: recipient.id,
+      touched: { email: true, name: true },
+    })),
     showAllErrors: false,
     signers: signers.length > 0 ? signers : [createSigner("signer-1")],
   };
+}
+
+function buildCopyRecipientErrors(
+  copyRecipients: readonly ShellCopyRecipient[],
+  signers: readonly ShellSigner[],
+) {
+  const errorsByLocalId: Record<string, SignerErrors> = {};
+  const taken = new Set(
+    signers
+      .map((signer) => signer.email.trim().toLowerCase())
+      .filter((email) => email.length > 0),
+  );
+
+  for (const recipient of copyRecipients) {
+    const errors: SignerErrors = {};
+    const normalizedEmail = recipient.email.trim().toLowerCase();
+
+    if (recipient.name.trim().length === 0) {
+      errors.name = "Name is required";
+    }
+
+    if (
+      normalizedEmail.length === 0 ||
+      !validEmailPattern.test(normalizedEmail)
+    ) {
+      errors.email = "Enter a valid email address";
+    } else if (taken.has(normalizedEmail)) {
+      errors.email = duplicateCopyRecipientEmailMessage;
+    }
+
+    taken.add(normalizedEmail);
+    errorsByLocalId[recipient.localId] = errors;
+  }
+
+  return errorsByLocalId;
 }
 
 function buildSignerErrors(signers: readonly ShellSigner[]) {
@@ -180,8 +236,16 @@ function reorderSigners(
   return nextSigners;
 }
 
-function buildSignerRequest(signers: readonly ShellSigner[]) {
+function buildSignerRequest(
+  signers: readonly ShellSigner[],
+  copyRecipients: readonly ShellCopyRecipient[],
+) {
   return {
+    copyRecipients: copyRecipients.map((recipient) => ({
+      email: recipient.email,
+      id: recipient.recipientId,
+      name: recipient.name,
+    })),
     signers: signers.map((signer, index) => ({
       accessCode:
         signer.accessCode.trim().length > 0
@@ -456,6 +520,105 @@ function SignerCard({
   );
 }
 
+function CopyRecipientCard({
+  disabled = false,
+  emailError,
+  index,
+  nameError,
+  onBlur,
+  onChange,
+  onRemove,
+  recipient,
+}: {
+  disabled?: boolean;
+  emailError?: string;
+  index: number;
+  nameError?: string;
+  onBlur: (field: SignerField) => void;
+  onChange: (field: SignerField, value: string) => void;
+  onRemove: () => void;
+  recipient: ShellCopyRecipient;
+}) {
+  const position = index + 1;
+
+  return (
+    <li className="well p-4 sm:p-5">
+      <div className="flex flex-col gap-3">
+        <div className="flex items-center justify-between gap-3">
+          <span className="pill pill-neutral">Copy {position}</span>
+          <button
+            aria-label={`Remove copy recipient ${position}`}
+            className="btn-quiet btn-quiet-danger"
+            disabled={disabled}
+            onClick={onRemove}
+            type="button"
+          >
+            Remove
+          </button>
+        </div>
+
+        <div className="grid gap-x-4 gap-y-1 md:grid-cols-2">
+          <label className="grid auto-rows-min gap-1.5">
+            <span className="text-[0.8125rem] font-semibold text-(--secondary)">
+              Name
+            </span>
+            <input
+              aria-invalid={nameError ? true : undefined}
+              aria-label={`Copy recipient ${position} name`}
+              className="field-input"
+              disabled={disabled}
+              onBlur={() => onBlur("name")}
+              onChange={(event: ChangeEvent<HTMLInputElement>) =>
+                onChange("name", event.target.value)
+              }
+              placeholder="Alex Jones"
+              type="text"
+              value={recipient.name}
+            />
+            <span
+              aria-live="polite"
+              className={`min-h-4 text-xs font-semibold text-(--danger) ${
+                nameError ? "" : "invisible"
+              }`}
+              role={nameError ? "alert" : undefined}
+            >
+              {nameError ?? " "}
+            </span>
+          </label>
+
+          <label className="grid auto-rows-min gap-1.5">
+            <span className="text-[0.8125rem] font-semibold text-(--secondary)">
+              Email
+            </span>
+            <input
+              aria-invalid={emailError ? true : undefined}
+              aria-label={`Copy recipient ${position} email`}
+              className="field-input"
+              disabled={disabled}
+              onBlur={() => onBlur("email")}
+              onChange={(event: ChangeEvent<HTMLInputElement>) =>
+                onChange("email", event.target.value)
+              }
+              placeholder="alex@company.com"
+              type="email"
+              value={recipient.email}
+            />
+            <span
+              aria-live="polite"
+              className={`min-h-4 text-xs font-semibold text-(--danger) ${
+                emailError ? "" : "invisible"
+              }`}
+              role={emailError ? "alert" : undefined}
+            >
+              {emailError ?? " "}
+            </span>
+          </label>
+        </div>
+      </div>
+    </li>
+  );
+}
+
 export function SignersShell({
   envelopeId,
   initialState,
@@ -463,6 +626,12 @@ export function SignersShell({
 }: SignersShellProps) {
   const initialModel = buildInitialModel(record);
   const [signers, setSigners] = useState(initialModel.signers);
+  const [copyRecipients, setCopyRecipients] = useState(
+    initialModel.copyRecipients,
+  );
+  const nextCopyRecipientNumberRef = useRef(
+    initialModel.copyRecipients.length + 1,
+  );
   const [showAllErrors, setShowAllErrors] = useState(
     initialModel.showAllErrors,
   );
@@ -471,11 +640,21 @@ export function SignersShell({
   const nextSignerNumberRef = useRef(initialModel.signers.length + 1);
 
   const errorsBySignerId = buildSignerErrors(signers);
+  const errorsByCopyRecipientId = buildCopyRecipientErrors(
+    copyRecipients,
+    signers,
+  );
   const canAddSigner = signers.length < MAX_SIGNERS_PER_ENVELOPE;
+  const canAddCopyRecipient =
+    copyRecipients.length < MAX_COPY_RECIPIENTS_PER_ENVELOPE;
   const canContinue =
     signers.length > 0 &&
     signers.every(
       (signer) => !hasSignerErrors(errorsBySignerId[signer.localId] ?? {}),
+    ) &&
+    copyRecipients.every(
+      (recipient) =>
+        !hasSignerErrors(errorsByCopyRecipientId[recipient.localId] ?? {}),
     );
 
   function clearSubmitError() {
@@ -526,6 +705,59 @@ export function SignersShell({
             }
           : signer,
       ),
+    );
+  }
+
+  function handleAddCopyRecipient() {
+    if (!canAddCopyRecipient || isSubmitting) {
+      return;
+    }
+
+    clearSubmitError();
+    const number = nextCopyRecipientNumberRef.current;
+    nextCopyRecipientNumberRef.current += 1;
+    setCopyRecipients((current) => [
+      ...current,
+      {
+        email: "",
+        localId: `copy-${number}`,
+        name: "",
+        touched: { email: false, name: false },
+      },
+    ]);
+  }
+
+  function handleCopyRecipientChange(
+    localId: string,
+    patch: Partial<Pick<ShellCopyRecipient, "email" | "name">>,
+  ) {
+    clearSubmitError();
+    setShowAllErrors(false);
+    setCopyRecipients((current) =>
+      current.map((recipient) =>
+        recipient.localId === localId ? { ...recipient, ...patch } : recipient,
+      ),
+    );
+  }
+
+  function handleCopyRecipientBlur(localId: string, field: SignerField) {
+    setCopyRecipients((current) =>
+      current.map((recipient) =>
+        recipient.localId === localId
+          ? { ...recipient, touched: { ...recipient.touched, [field]: true } }
+          : recipient,
+      ),
+    );
+  }
+
+  function handleRemoveCopyRecipient(localId: string) {
+    if (isSubmitting) {
+      return;
+    }
+
+    clearSubmitError();
+    setCopyRecipients((current) =>
+      current.filter((recipient) => recipient.localId !== localId),
     );
   }
 
@@ -582,7 +814,7 @@ export function SignersShell({
 
     try {
       const response = await fetch(`/api/envelopes/${envelopeId}/signers`, {
-        body: JSON.stringify(buildSignerRequest(signers)),
+        body: JSON.stringify(buildSignerRequest(signers, copyRecipients)),
         headers: {
           "content-type": "application/json",
         },
@@ -708,6 +940,76 @@ export function SignersShell({
                 Maximum reached
               </p>
             ) : null}
+          </div>
+
+          <div className="space-y-3 pt-3">
+            <div className="space-y-1">
+              <h2 className="text-lg font-extrabold text-(--fg)">
+                Send a copy to{" "}
+                <span className="text-sm font-normal text-(--secondary)">
+                  (optional)
+                </span>
+              </h2>
+              <p className="text-sm leading-6 text-(--secondary)">
+                These people do not sign. They receive the finished document and
+                its certificate once everyone has signed.
+              </p>
+            </div>
+
+            {copyRecipients.length > 0 ? (
+              <ol className="space-y-3">
+                {copyRecipients.map((recipient, index) => {
+                  const errors =
+                    errorsByCopyRecipientId[recipient.localId] ?? {};
+
+                  return (
+                    <CopyRecipientCard
+                      disabled={isSubmitting}
+                      emailError={
+                        showAllErrors || recipient.touched.email
+                          ? errors.email
+                          : undefined
+                      }
+                      index={index}
+                      key={recipient.localId}
+                      nameError={
+                        showAllErrors || recipient.touched.name
+                          ? errors.name
+                          : undefined
+                      }
+                      onBlur={(field) =>
+                        handleCopyRecipientBlur(recipient.localId, field)
+                      }
+                      onChange={(field, value) =>
+                        handleCopyRecipientChange(recipient.localId, {
+                          [field]: value,
+                        })
+                      }
+                      onRemove={() =>
+                        handleRemoveCopyRecipient(recipient.localId)
+                      }
+                      recipient={recipient}
+                    />
+                  );
+                })}
+              </ol>
+            ) : null}
+
+            <div className="flex flex-wrap items-center gap-3">
+              <button
+                className="btn-quiet min-h-11 px-4.5"
+                disabled={!canAddCopyRecipient || isSubmitting}
+                onClick={handleAddCopyRecipient}
+                type="button"
+              >
+                + Add a copy recipient
+              </button>
+              {!canAddCopyRecipient ? (
+                <p className="text-[0.8125rem] font-semibold text-(--tertiary)">
+                  Maximum reached
+                </p>
+              ) : null}
+            </div>
           </div>
 
           <div className="flex flex-col-reverse gap-3 pt-2 sm:flex-row sm:justify-end">

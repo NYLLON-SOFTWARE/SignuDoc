@@ -341,12 +341,31 @@ async function listSignersForEnvelope(
         updated_at AS "updatedAt"
       FROM signers
       WHERE envelope_id = $1
+        AND role = 'signer'
       ORDER BY sign_order ASC, id ASC
     `,
     [envelopeId],
   );
 
   return rows.map(mapSignerRow);
+}
+
+/** The people who were to get a copy without signing. */
+async function listCopyRecipientsForEnvelope(
+  envelopeId: string,
+  database: DbExecutor,
+): Promise<{ email: string; name: string }[]> {
+  return queryMany<{ email: string; name: string }>(
+    database,
+    `
+      SELECT name, email
+      FROM signers
+      WHERE envelope_id = $1
+        AND role = 'cc'
+      ORDER BY sign_order ASC, id ASC
+    `,
+    [envelopeId],
+  );
 }
 
 async function storeRecipientDownloadToken(
@@ -644,12 +663,16 @@ async function buildCertificateDownload(
     throw new DownloadAccessError("This file is no longer available.", 404);
   }
 
-  const [auditEvents, signers] = await Promise.all([
+  const [auditEvents, signers, copyRecipients] = await Promise.all([
     listAuditEventsForEnvelope(envelope.id, database),
     listSignersForEnvelope(envelope.id, database),
+    listCopyRecipientsForEnvelope(envelope.id, database),
   ]);
   const body = await renderEnvelopeCertificatePdf({
     auditEvents,
+    // Only a finished envelope sends copies. A declined or voided one
+    // never did, so its certificate does not name anyone as having one.
+    copyRecipients: envelope.status === "completed" ? copyRecipients : [],
     envelope,
     redactForRecipients,
     signedPdfSha256: envelope.signedPdfSha256,

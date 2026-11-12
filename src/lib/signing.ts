@@ -37,7 +37,11 @@ import {
   type SigningSubmitResponse,
   type SigningUnavailableResponse,
 } from "./schemas/signing.ts";
-import { declineEnvelopeSchema, signerRecordSchema } from "./schemas/signer.ts";
+import {
+  declineEnvelopeSchema,
+  signerRecordSchema,
+  type CopyRecipientRecord,
+} from "./schemas/signer.ts";
 import { getBranding } from "./settings.ts";
 import {
   listAuditEventsForEnvelope,
@@ -373,6 +377,8 @@ function buildDeclineNotificationEmail(input: {
 function buildCompletionSignerEmail(input: {
   attached: boolean;
   branding: Branding;
+  /** True for someone who gets a copy without having signed. */
+  copyOnly?: boolean;
   evidenceDownloadUrl: string;
   envelopeId: string;
   envelopeTitle: string;
@@ -386,6 +392,9 @@ function buildCompletionSignerEmail(input: {
     `Hi ${input.signerName},`,
     "",
     `"${input.envelopeTitle}" from ${input.senderName} has been fully signed in ${input.branding.productName}.`,
+    ...(input.copyOnly
+      ? [`${input.senderName} asked for you to receive a copy.`]
+      : []),
     input.attached
       ? "The completed document and its certificate are attached. Keep them: they are your copy of the agreement."
       : "The completed document and its certificate are ready.",
@@ -397,6 +406,9 @@ function buildCompletionSignerEmail(input: {
   const htmlBody = [
     `<p>Hi ${escapeHtml(input.signerName)},</p>`,
     `<p>&ldquo;${escapeHtml(input.envelopeTitle)}&rdquo; from ${escapeHtml(input.senderName)} has been fully signed in ${escapeHtml(input.branding.productName)}.</p>`,
+    input.copyOnly
+      ? `<p>${escapeHtml(input.senderName)} asked for you to receive a copy.</p>`
+      : "",
     input.attached
       ? "<p>The completed document and its certificate are attached. Keep them: they are your copy of the agreement.</p>"
       : "<p>The completed document and its certificate are ready.</p>",
@@ -516,6 +528,26 @@ async function listSignerRows(
         updated_at AS "updatedAt"
       FROM signers
       WHERE envelope_id = $1
+        -- Copy recipients are not part of the signing order.
+        AND role = 'signer'
+      ORDER BY sign_order ASC, id ASC
+    `,
+    [envelopeId],
+  );
+}
+
+/** The people who get the finished document without signing it. */
+async function listCopyRecipientRows(
+  envelopeId: string,
+  database: DbExecutor,
+): Promise<CopyRecipientRecord[]> {
+  return queryMany<CopyRecipientRecord>(
+    database,
+    `
+      SELECT id, name, email
+      FROM signers
+      WHERE envelope_id = $1
+        AND role = 'cc'
       ORDER BY sign_order ASC, id ASC
     `,
     [envelopeId],
@@ -895,6 +927,7 @@ async function sendCompletionEmails(input: {
     recipientCertificate: Uint8Array;
     signedPdf: Uint8Array;
   };
+  copyRecipients: readonly CopyRecipientRecord[];
   database?: DbExecutor;
   emailService: EmailService;
   envelopeId: string;
@@ -921,8 +954,17 @@ async function sendCompletionEmails(input: {
   const senderName = normalizeSenderName(input.sender);
   const issuedAt = Math.floor(Date.now() / 1000);
   const branding = await getBranding();
+  // Signers first, then the people who only get a copy: the place in this
+  // list is part of each message's idempotency key.
+  const recipients = [
+    ...input.signers.map((signer) => ({ ...signer, copyOnly: false })),
+    ...input.copyRecipients.map((recipient) => ({
+      ...recipient,
+      copyOnly: true,
+    })),
+  ];
   const signerMessages = await Promise.all(
-    input.signers.map(async (signer) => {
+    recipients.map(async (signer) => {
       if (!signer.id) {
         throw new SigningMutationError(
           "Completed signer records must include an id.",
@@ -961,6 +1003,7 @@ async function sendCompletionEmails(input: {
           ...buildCompletionSignerEmail({
             attached: attach,
             branding,
+            copyOnly: signer.copyOnly,
             envelopeId: input.envelopeId,
             envelopeTitle: input.envelopeTitle,
             evidenceDownloadUrl: redactedEvidenceLink.url,
@@ -1992,12 +2035,17 @@ export async function submitSigningForToken(
       );
     }
 
+    const copyRecipients = await listCopyRecipientRows(
+      context.envelope.id,
+      database,
+    );
     const finalArtifacts = await finalizeEnvelope(
       {
         auditEvents: [
           ...(await listAuditEventsForEnvelope(context.envelope.id, database)),
           signedAuditEvent,
         ],
+        copyRecipients,
         envelope: context.envelope,
         fields: completedFields,
         signers: completedSigners,
@@ -2164,6 +2212,7 @@ export async function submitSigningForToken(
           recipientCertificate: finalArtifacts.recipientCertificate.body,
           signedPdf: finalArtifacts.signedPdf.body,
         },
+        copyRecipients,
         database,
         emailService,
         envelopeId: context.envelope.id,

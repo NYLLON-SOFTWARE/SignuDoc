@@ -601,6 +601,31 @@ export function EnvelopeDetailShell({
               );
             })}
           </ol>
+
+          {record.copyRecipients && record.copyRecipients.length > 0 ? (
+            <div className="mt-6">
+              <h3 className="text-[0.9375rem] font-extrabold text-(--fg)">
+                Receives a copy
+              </h3>
+              <p className="mt-1 text-sm leading-6 text-(--secondary)">
+                {activeRecord.status === "completed"
+                  ? "Sent the finished document and its certificate."
+                  : "Gets the finished document once everyone has signed."}
+              </p>
+              <ul className="mt-3 space-y-2">
+                {record.copyRecipients.map((recipient) => (
+                  <li className="well px-4 py-3" key={recipient.id}>
+                    <p className="truncate text-[0.9375rem] font-bold text-(--fg)">
+                      {recipient.name}
+                    </p>
+                    <p className="truncate text-sm text-(--secondary)">
+                      {recipient.email}
+                    </p>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          ) : null}
         </article>
 
         <article className="panel p-5 sm:p-7">

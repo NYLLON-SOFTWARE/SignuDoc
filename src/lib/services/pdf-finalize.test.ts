@@ -222,3 +222,44 @@ test("the certificate prints names, titles and browser strings as they are", asy
 
   assert.ok(reloaded.getTitle()?.includes("業務委託契約書"));
 });
+
+test("the certificate names the people who were sent a copy", async () => {
+  const fixture = await makeFixture();
+  const copyRecipients = [
+    { email: "zofia@example.com", name: "Zofia Wiśniewska" },
+  ];
+  const render = (redactForRecipients: boolean) =>
+    renderEnvelopeCertificatePdf(
+      {
+        auditEvents: fixture.auditEvents,
+        copyRecipients,
+        envelope: fixture.envelope,
+        redactForRecipients,
+        signers: fixture.signers,
+      },
+      { seal: saveUnsealed },
+    ).then(async (bytes) => (await extractText(bytes)).replace(/\s+/g, " "));
+  const full = await render(false);
+
+  assert.ok(full.includes("Copy recipients"));
+  assert.ok(full.includes("They did not sign it."));
+  assert.ok(full.includes("Zofia Wiśniewska <zofia@example.com>"));
+
+  // The signers' own copy leaves addresses out, as it does for signers.
+  const redacted = await render(true);
+
+  assert.ok(redacted.includes("Zofia Wiśniewska"));
+  assert.ok(!redacted.includes("zofia@example.com"));
+
+  // No section at all when nobody was sent a copy.
+  const without = await renderEnvelopeCertificatePdf(
+    {
+      auditEvents: fixture.auditEvents,
+      envelope: fixture.envelope,
+      signers: fixture.signers,
+    },
+    { seal: saveUnsealed },
+  );
+
+  assert.ok(!(await extractText(without)).includes("Copy recipients"));
+});

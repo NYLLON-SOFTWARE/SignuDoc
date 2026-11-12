@@ -37,6 +37,7 @@ type ReviewShellProps = {
 };
 
 type ReviewRecordView = {
+  copyRecipients: readonly { email: string; id: string; name: string }[];
   filename: string;
   pageCount: number;
   signers: readonly ReviewSigner[];
@@ -204,6 +205,7 @@ export function ReviewShell({
   }
 
   const activeRecord: ReviewRecordView = {
+    copyRecipients: record.copyRecipients ?? [],
     filename: record.filename,
     pageCount: record.pageCount,
     signers: record.signers.map((signer) => ({ ...signer })),
@@ -329,6 +331,21 @@ export function ReviewShell({
                 );
               })}
             </ol>
+
+            {activeRecord.copyRecipients.length > 0 ? (
+              <div className="well mt-3 p-4">
+                <p className="text-[0.9375rem] font-bold text-(--fg)">
+                  Copies when everyone has signed
+                </p>
+                <ul className="mt-2 space-y-1 text-sm leading-6 text-(--secondary)">
+                  {activeRecord.copyRecipients.map((recipient) => (
+                    <li className="truncate" key={recipient.id}>
+                      {recipient.name} · {recipient.email}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            ) : null}
 
             <p className="notice notice-accent mt-4 font-medium">
               After you send, Signer 1 will receive an email with a link to

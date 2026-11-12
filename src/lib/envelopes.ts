@@ -42,9 +42,11 @@ import {
   type ReplaceFieldsResponse,
 } from "./schemas/field.ts";
 import {
+  duplicateCopyRecipientEmailMessage,
   replaceSignersResponseSchema,
   replaceSignersSchema,
   signerRecordSchema,
+  type CopyRecipientRecord,
   type ReplaceSignersResponse,
   type SignerRecord,
 } from "./schemas/signer.ts";
@@ -253,6 +255,7 @@ export type ReviewSignerSummary = {
 
 export type ReviewEnvelopeData = {
   canSend: boolean;
+  copyRecipients: readonly CopyRecipientRecord[];
   disabledReason: string | null;
   envelopeId: string;
   filename: string;
@@ -275,6 +278,7 @@ export type DraftSignerStepSigner = {
 };
 
 export type DraftSignerStepData = {
+  copyRecipients: readonly CopyRecipientRecord[];
   envelopeId: string;
   signers: readonly DraftSignerStepSigner[];
   status: EnvelopeRecord["status"];
@@ -321,6 +325,8 @@ export type EnvelopeDetailDeadline = {
 };
 
 export type EnvelopeDetailData = {
+  /** People who get a copy of the finished document without signing. */
+  copyRecipients: readonly CopyRecipientRecord[];
   createdAtLabel: string;
   /** Set while the envelope is out for signature. */
   deadline: EnvelopeDetailDeadline | null;
@@ -340,6 +346,12 @@ export type DraftEnvelopeDocument = {
   contentType: string;
   fileName: string;
 };
+
+/**
+ * Copy recipients are stored after every signer. Signers use 1 to 10, and a
+ * rewrite of the signer list parks rows 1000 higher for a moment.
+ */
+const COPY_RECIPIENT_SIGN_ORDER_BASE = 500;
 
 export class EnvelopeMutationError extends Error {
   readonly statusCode: number;
@@ -731,6 +743,7 @@ async function listSignersForEnvelopeIds(
         updated_at AS "updatedAt"
       FROM signers
       WHERE envelope_id IN (${placeholders})
+        AND role = 'signer'
       ORDER BY envelope_id ASC, sign_order ASC, id ASC
     `,
     envelopeIds,
@@ -760,6 +773,57 @@ async function listSignersForEnvelopeId(
   return (
     (await listSignersForEnvelopeIds([envelopeId], database)).get(envelopeId) ??
     []
+  );
+}
+
+/**
+ * The people who get a copy of the finished document without signing. They
+ * are rows of the signers table with role 'cc', which every other query
+ * here leaves out.
+ */
+export async function listCopyRecipientsForEnvelopeIds(
+  envelopeIds: readonly string[],
+  database: DbExecutor,
+): Promise<Map<string, CopyRecipientRecord[]>> {
+  const recipientsByEnvelope = new Map<string, CopyRecipientRecord[]>();
+
+  if (envelopeIds.length === 0) {
+    return recipientsByEnvelope;
+  }
+
+  const rows = await queryMany<CopyRecipientRecord & { envelopeId: string }>(
+    database,
+    `
+      SELECT id, envelope_id AS "envelopeId", name, email
+      FROM signers
+      WHERE envelope_id IN (${buildInClausePlaceholders(envelopeIds.length)})
+        AND role = 'cc'
+      ORDER BY envelope_id ASC, sign_order ASC, id ASC
+    `,
+    envelopeIds,
+  );
+
+  for (const { envelopeId, ...recipient } of rows) {
+    const existing = recipientsByEnvelope.get(envelopeId);
+
+    if (existing) {
+      existing.push(recipient);
+    } else {
+      recipientsByEnvelope.set(envelopeId, [recipient]);
+    }
+  }
+
+  return recipientsByEnvelope;
+}
+
+export async function listCopyRecipientsForEnvelopeId(
+  envelopeId: string,
+  database: DbExecutor,
+): Promise<CopyRecipientRecord[]> {
+  return (
+    (await listCopyRecipientsForEnvelopeIds([envelopeId], database)).get(
+      envelopeId,
+    ) ?? []
   );
 }
 
@@ -1197,10 +1261,12 @@ export async function listEnvelopesForUser(
 
   const envelopes = rows.map(mapEnvelopeRow);
   const envelopeIds = envelopes.map((envelope) => envelope.id);
-  const [signersByEnvelope, fieldsByEnvelope] = await Promise.all([
-    listSignersForEnvelopeIds(envelopeIds, database),
-    listFieldsForEnvelopeIds(envelopeIds, database),
-  ]);
+  const [signersByEnvelope, fieldsByEnvelope, copyRecipientsByEnvelope] =
+    await Promise.all([
+      listSignersForEnvelopeIds(envelopeIds, database),
+      listFieldsForEnvelopeIds(envelopeIds, database),
+      listCopyRecipientsForEnvelopeIds(envelopeIds, database),
+    ]);
 
   return envelopes.map((envelope) => {
     const signers = signersByEnvelope.get(envelope.id) ?? [];
@@ -1211,7 +1277,11 @@ export async function listEnvelopesForUser(
       createdAtLabel: formatShortDate(envelope.createdAt),
       expired: isEnvelopeExpired(envelope, Math.floor(Date.now() / 1000)),
       id: envelope.id,
-      searchableEmails: signers.map((signer) => signer.email),
+      // The search on the server matches copy recipients too.
+      searchableEmails: [
+        ...signers,
+        ...(copyRecipientsByEnvelope.get(envelope.id) ?? []),
+      ].map((recipient) => recipient.email),
       status: envelope.status,
       statusLabel: buildDashboardStatusLabel(envelope, signers),
       title: envelope.title,
@@ -1230,11 +1300,13 @@ export async function getEnvelopeDetailDataForUser(
     return null;
   }
 
-  const [signersByEnvelope, fieldsByEnvelope, auditEvents] = await Promise.all([
-    listSignersForEnvelopeIds([envelopeId], database),
-    listFieldsForEnvelopeIds([envelopeId], database),
-    listAuditEventsForEnvelope(envelopeId, database),
-  ]);
+  const [signersByEnvelope, fieldsByEnvelope, auditEvents, copyRecipients] =
+    await Promise.all([
+      listSignersForEnvelopeIds([envelopeId], database),
+      listFieldsForEnvelopeIds([envelopeId], database),
+      listAuditEventsForEnvelope(envelopeId, database),
+      listCopyRecipientsForEnvelopeId(envelopeId, database),
+    ]);
   const signers = signersByEnvelope.get(envelopeId) ?? [];
   const fields = fieldsByEnvelope.get(envelopeId) ?? [];
   const fieldCountsBySigner = fields.reduce<Map<string, number>>(
@@ -1307,6 +1379,7 @@ export async function getEnvelopeDetailDataForUser(
   }
 
   return {
+    copyRecipients,
     createdAtLabel: formatLongDate(envelope.createdAt),
     deadline:
       envelope.status === "sent"
@@ -1345,6 +1418,7 @@ export async function getDraftSignerStepDataForUser(
   const checks = await listSignerCheckSettings(envelopeId, database);
 
   return {
+    copyRecipients: await listCopyRecipientsForEnvelopeId(envelopeId, database),
     envelopeId,
     signers: (await listSignersForEnvelopeId(envelopeId, database)).map(
       (signer) => ({
@@ -1541,10 +1615,12 @@ export async function getReviewEnvelopeDataForUser(
     return null;
   }
 
-  const [signersByEnvelope, fieldsByEnvelope] = await Promise.all([
-    listSignersForEnvelopeIds([envelopeId], database),
-    listFieldsForEnvelopeIds([envelopeId], database),
-  ]);
+  const [signersByEnvelope, fieldsByEnvelope, copyRecipients] =
+    await Promise.all([
+      listSignersForEnvelopeIds([envelopeId], database),
+      listFieldsForEnvelopeIds([envelopeId], database),
+      listCopyRecipientsForEnvelopeId(envelopeId, database),
+    ]);
   const signers = signersByEnvelope.get(envelopeId) ?? [];
   const fields = fieldsByEnvelope.get(envelopeId) ?? [];
   const fieldsBySigner = buildFieldsBySigner(fields);
@@ -1556,6 +1632,7 @@ export async function getReviewEnvelopeDataForUser(
 
   return {
     canSend: !isEmpty && !missingSignatureSigner,
+    copyRecipients,
     disabledReason: missingSignatureSigner
       ? `Every signer must have at least one Signature field before sending. ${missingSignatureSigner.name} is missing one.`
       : null,
@@ -2425,6 +2502,41 @@ export async function replaceDraftEnvelopeSigners(
   }
 
   const existingSigners = await listSignersForEnvelopeId(envelopeId, database);
+  const existingCopyRecipients = await listCopyRecipientsForEnvelopeId(
+    envelopeId,
+    database,
+  );
+  const existingCopyRecipientIds = new Set(
+    existingCopyRecipients.map((recipient) => recipient.id),
+  );
+  // Left out of the request means "leave them as they are".
+  const nextCopyRecipients = (
+    parsedInput.copyRecipients ?? existingCopyRecipients
+  ).map((recipient, index) => ({
+    email: recipient.email,
+    id:
+      recipient.id && existingCopyRecipientIds.has(recipient.id)
+        ? recipient.id
+        : randomUUID(),
+    name: recipient.name,
+    // After every signer, and clear of the numbers the rewrite below
+    // parks rows on.
+    signOrder: COPY_RECIPIENT_SIGN_ORDER_BASE + index + 1,
+  }));
+  const signerEmails = new Set(
+    parsedInput.signers.map((signer) => signer.email.toLowerCase()),
+  );
+
+  // Checked by the schema when both lists arrive together. This covers a
+  // request that names only signers, one of whom is already a copy recipient.
+  if (
+    nextCopyRecipients.some((recipient) =>
+      signerEmails.has(recipient.email.toLowerCase()),
+    )
+  ) {
+    throw new EnvelopeMutationError(duplicateCopyRecipientEmailMessage, 400);
+  }
+
   const existingSignerIds = new Set(existingSigners.map((signer) => signer.id));
   const usedSignerIds = new Set<string>();
   const updatedAt = Math.floor(Date.now() / 1000);
@@ -2455,6 +2567,13 @@ export async function replaceDraftEnvelopeSigners(
   });
 
   await withTransaction(async (tx) => {
+    // Copy recipients hold nothing but a name and an address while the
+    // envelope is a draft, so they are simply written again below.
+    await tx.query(
+      `DELETE FROM signers WHERE envelope_id = $1 AND role = 'cc'`,
+      [envelopeId],
+    );
+
     if (existingSigners.length > 0) {
       await tx.query(
         `
@@ -2545,6 +2664,25 @@ export async function replaceDraftEnvelopeSigners(
       [envelopeId, ...nextSigners.map((signer) => signer.id)],
     );
 
+    for (const recipient of nextCopyRecipients) {
+      await tx.query(
+        `
+          INSERT INTO signers (
+            id, envelope_id, name, email, sign_order, status, role,
+            created_at, updated_at
+          ) VALUES ($1, $2, $3, $4, $5, 'pending', 'cc', $6, $6)
+        `,
+        [
+          recipient.id,
+          envelopeId,
+          recipient.name,
+          recipient.email,
+          recipient.signOrder,
+          updatedAt,
+        ],
+      );
+    }
+
     await tx.query(
       `
         UPDATE envelopes
@@ -2558,6 +2696,11 @@ export async function replaceDraftEnvelopeSigners(
   const checks = await listSignerCheckSettings(envelopeId, database);
 
   return replaceSignersResponseSchema.parse({
+    copyRecipients: nextCopyRecipients.map(({ email, id, name }) => ({
+      email,
+      id,
+      name,
+    })),
     envelopeId,
     redirectPath: `/envelopes/${envelopeId}/prepare`,
     signers: (await listSignersForEnvelopeId(envelopeId, database)).map(

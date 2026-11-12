@@ -501,6 +501,7 @@ function buildAuditLines(input: {
   auditEvents: AuditEventRecord[];
   auditFingerprint?: string | null;
   completedAt: number;
+  copyRecipients?: readonly CertificateCopyRecipient[];
   envelope: EnvelopeRecord;
   fonts: {
     bold: TextFace;
@@ -624,6 +625,28 @@ function buildAuditLines(input: {
       Boolean(input.redactForRecipients),
     )) {
       pushParagraph(`   ${detail}`, input.fonts.regular, bodyFontSize);
+    }
+  }
+
+  if (input.copyRecipients && input.copyRecipients.length > 0) {
+    pushParagraph("Copy recipients", input.fonts.bold, sectionFontSize, {
+      gapAfter: 4,
+      gapBefore: 10,
+    });
+    pushParagraph(
+      "Sent a copy of the finished document. They did not sign it.",
+      input.fonts.regular,
+      bodyFontSize,
+    );
+
+    for (const recipient of input.copyRecipients) {
+      pushParagraph(
+        input.redactForRecipients
+          ? recipient.name
+          : `${recipient.name} <${recipient.email}>`,
+        input.fonts.regular,
+        bodyFontSize,
+      );
     }
   }
 
@@ -821,6 +844,7 @@ function appendAuditTrailPages(input: {
   auditEvents: AuditEventRecord[];
   auditFingerprint?: string | null;
   completedAt: number;
+  copyRecipients?: readonly CertificateCopyRecipient[];
   envelope: EnvelopeRecord;
   fonts: {
     bold: TextFace;
@@ -847,6 +871,7 @@ function appendAuditTrailPages(input: {
     auditEvents: input.auditEvents,
     auditFingerprint: input.auditFingerprint,
     completedAt: input.completedAt,
+    copyRecipients: input.copyRecipients,
     envelope: input.envelope,
     fonts: input.fonts,
     maxWidth,
@@ -880,8 +905,12 @@ function appendAuditTrailPages(input: {
   }
 }
 
+/** Someone sent a copy of the finished document who did not sign it. */
+export type CertificateCopyRecipient = { email: string; name: string };
+
 type CertificateInput = {
   auditEvents: AuditEventRecord[];
+  copyRecipients?: readonly CertificateCopyRecipient[];
   envelope: EnvelopeRecord;
   redactForRecipients?: boolean;
   /** The finished signed PDF's SHA-256, printed when there is one. */
@@ -960,7 +989,12 @@ export async function renderEnvelopeCertificatePdf(
   const pdfDocument = await PDFDocument.create();
   const faces = await embedTextFaces(
     pdfDocument,
-    [input.envelope, input.signers, input.auditEvents],
+    [
+      input.envelope,
+      input.signers,
+      input.auditEvents,
+      input.copyRecipients ?? [],
+    ],
     { bold: true, certificate: true },
   );
   const terminalTimestamp = resolveTerminalTimestamp(
@@ -976,6 +1010,7 @@ export async function renderEnvelopeCertificatePdf(
       stripCompletedAuditEvents(input.auditEvents),
     ),
     completedAt: terminalTimestamp,
+    copyRecipients: input.copyRecipients,
     envelope: input.envelope,
     fonts: faces,
     pdfDocument,
@@ -1002,6 +1037,7 @@ export async function renderFinalizedEnvelopePdf(
   input: {
     auditEvents: AuditEventRecord[];
     completedAt: number;
+    copyRecipients?: readonly CertificateCopyRecipient[];
     envelope: EnvelopeRecord;
     fields: FieldRecord[];
     includeAuditTrail?: boolean;
@@ -1035,7 +1071,12 @@ export async function renderFinalizedEnvelopePdf(
     [
       stampedFields.map((field) => field.value),
       input.includeAuditTrail
-        ? [input.envelope, input.signers, input.auditEvents]
+        ? [
+            input.envelope,
+            input.signers,
+            input.auditEvents,
+            input.copyRecipients ?? [],
+          ]
         : [],
     ],
     {
@@ -1079,6 +1120,7 @@ export async function renderFinalizedEnvelopePdf(
     appendAuditTrailPages({
       auditEvents: stripCompletedAuditEvents(input.auditEvents),
       completedAt: input.completedAt,
+      copyRecipients: input.copyRecipients,
       envelope: input.envelope,
       fonts: faces,
       pdfDocument,
@@ -1092,6 +1134,7 @@ export async function renderFinalizedEnvelopePdf(
 export async function finalizeEnvelope(
   input: {
     auditEvents: AuditEventRecord[];
+    copyRecipients?: readonly CertificateCopyRecipient[];
     envelope: EnvelopeRecord;
     fields: FieldRecord[];
     signers: SignerRecord[];
@@ -1113,6 +1156,7 @@ export async function finalizeEnvelope(
     {
       auditEvents: input.auditEvents,
       completedAt: generatedAt,
+      copyRecipients: input.copyRecipients,
       envelope: input.envelope,
       fields: input.fields,
       signers: input.signers,
@@ -1155,6 +1199,7 @@ export async function finalizeEnvelope(
             audience: "internal",
           }),
         },
+        copyRecipients: input.copyRecipients,
         envelope: completedEnvelope,
         signedPdfSha256,
         signers: input.signers,
@@ -1174,6 +1219,7 @@ export async function finalizeEnvelope(
             audience: "recipient",
           }),
         },
+        copyRecipients: input.copyRecipients,
         envelope: completedEnvelope,
         signedPdfSha256,
         signers: input.signers,

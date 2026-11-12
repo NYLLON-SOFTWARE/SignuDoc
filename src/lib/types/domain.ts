@@ -1,4 +1,6 @@
 export const MAX_SIGNERS_PER_ENVELOPE = 10;
+/** People who get a copy of the finished document without signing. */
+export const MAX_COPY_RECIPIENTS_PER_ENVELOPE = 10;
 export const MAX_UPLOAD_SIZE_BYTES = 20 * 1024 * 1024;
 export const SIGNING_LINK_TTL_SECONDS = 7 * 24 * 60 * 60;
 export const RECIPIENT_DOWNLOAD_LINK_TTL_SECONDS = 7 * 24 * 60 * 60;

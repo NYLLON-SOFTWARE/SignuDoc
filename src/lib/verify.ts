@@ -57,7 +57,7 @@ export async function verifyDocumentHash(
         e.signed_pdf_sha256 AS "signedPdfSha256",
         e.evidence_sha256 AS "evidenceSha256",
         e.recipient_evidence_sha256 AS "recipientEvidenceSha256",
-        (SELECT count(*)::int FROM signers s WHERE s.envelope_id = e.id) AS "signerCount"
+        (SELECT count(*)::int FROM signers s WHERE s.envelope_id = e.id AND s.role = 'signer') AS "signerCount"
       FROM envelopes e
       WHERE e.signed_pdf_sha256 = $1
          OR e.evidence_sha256 = $1
