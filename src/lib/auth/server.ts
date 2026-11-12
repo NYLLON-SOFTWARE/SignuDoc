@@ -311,6 +311,12 @@ export function createAppAuth({
       return Array.from(trustedOrigins);
     },
     advanced: {
+      // The tables are made by this app's own migrations (db/migrations),
+      // and the setup page already says so when they are missing. Better
+      // Auth's check would add nothing but a failure it remembers for the
+      // life of the process: an app that was opened before its database was
+      // migrated would refuse every sign-in until it was restarted.
+      database: { validateSchema: false },
       // Where the visitor's address is read from, for rate limits and
       // sessions: the same headers the rest of the app trusts.
       ipAddress: { ipAddressHeaders: getClientIpHeaderNames(env) },
