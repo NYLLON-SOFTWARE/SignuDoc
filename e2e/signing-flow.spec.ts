@@ -1,9 +1,13 @@
 import { expect, test, type Page } from "@playwright/test";
+import pg from "pg";
 
+import { e2eDatabaseUrl, e2eSetupToken } from "../playwright.config";
 import { extractLink, extractLinks, waitForEmail } from "./support/outbox";
 import { writeSamplePdf } from "./support/sample-pdf";
 
 const PASSWORD = "correct horse battery staple 42";
+// The ampersand is on purpose: the name goes into HTML emails and page titles.
+const ORGANIZATION_NAME = "Harbour & Finch Legal";
 // The accent and the em dash are on purpose: download file names are built
 // from the title, and a header value cannot carry the em dash as it is.
 const ENVELOPE_TITLE = "Façade works agreement — phase 1";
@@ -29,17 +33,128 @@ async function expectPdfResponse(response: {
   expect((await response.body()).subarray(0, 5).toString()).toBe("%PDF-");
 }
 
-test("a sender can send a PDF and a recipient can sign it", async ({
+test("a new install is set up, a sender sends a PDF and a recipient signs it", async ({
   browser,
   page,
 }, testInfo) => {
   const runId = String(Date.now());
+  const adminEmail = `admin+${runId}@example.com`;
   const senderEmail = `sender+${runId}@example.com`;
+  const outsiderEmail = `outsider+${runId}@elsewhere.example`;
   const signerEmail = `signer+${runId}@example.com`;
   const cspViolations: string[] = [];
   let envelopeId = "";
 
   watchForContentSecurityPolicyViolations(page, cspViolations);
+
+  await test.step("the first visitor sets the site up", async () => {
+    const adminContext = await browser.newContext({
+      viewport: { height: 900, width: 1440 },
+    });
+    const adminPage = await adminContext.newPage();
+
+    watchForContentSecurityPolicyViolations(adminPage, cspViolations);
+
+    // Until someone has set it up, every front door leads to the setup page
+    // and nobody can create an ordinary account.
+    for (const frontDoor of ["/", "/login", "/signup"]) {
+      await adminPage.goto(frontDoor);
+      await expect(adminPage).toHaveURL(/\/setup$/);
+    }
+
+    const earlySignup = await adminContext.request.post(
+      "/api/auth/sign-up/email",
+      {
+        data: {
+          email: outsiderEmail,
+          name: "Olive Outsider",
+          password: PASSWORD,
+        },
+        headers: { origin: new URL(adminPage.url()).origin },
+      },
+    );
+
+    expect(earlySignup.status()).toBe(403);
+    expect(await earlySignup.json()).toMatchObject({ code: "setup_required" });
+
+    await adminPage.getByLabel("Organization name").fill(ORGANIZATION_NAME);
+    await adminPage.getByLabel("Your name").fill("Ada Admin");
+    await adminPage.getByLabel("Your email").fill(adminEmail);
+    await adminPage.getByLabel("Password").fill(PASSWORD);
+
+    // The deployment sets SETUP_TOKEN, so knowing the URL is not enough.
+    await adminPage.getByLabel("Setup token").fill("not the token");
+    await adminPage.getByRole("button", { name: "Finish setup" }).click();
+    await expect(
+      adminPage.getByText("This is not the setup token for this site"),
+    ).toBeVisible();
+
+    await adminPage.getByLabel("Setup token").fill(e2eSetupToken);
+    await adminPage.getByRole("button", { name: "Finish setup" }).click();
+
+    // Setup ends signed in, on the administrator's settings.
+    await expect(adminPage).toHaveURL(/\/settings#organization$/);
+    await expect(
+      adminPage.getByRole("link", { exact: true, name: ORGANIZATION_NAME }),
+    ).toBeVisible();
+    await expect(adminPage.getByLabel("Organization name")).toHaveValue(
+      ORGANIZATION_NAME,
+    );
+    // The starting sign-up rule is the administrator's own email domain.
+    await expect(adminPage.getByLabel("Email domains")).toHaveValue(
+      "example.com",
+    );
+    await expect(
+      adminPage.getByText("Emails are being captured, not sent"),
+    ).toBeVisible();
+
+    const testEmailResponse = await adminContext.request.post(
+      "/api/admin/email",
+      { data: { action: "send_test" } },
+    );
+
+    expect(testEmailResponse.status()).toBe(200);
+
+    const testEmail = await waitForEmail({
+      template: "test_email",
+      to: adminEmail,
+    });
+
+    expect(testEmail.subject).toBe(`Test email from ${ORGANIZATION_NAME}`);
+
+    // Setup can only happen once.
+    await adminPage.goto("/setup");
+    await expect(adminPage).not.toHaveURL(/\/setup/);
+
+    const secondSetup = await adminContext.request.post("/api/setup", {
+      data: {
+        email: outsiderEmail,
+        fullName: "Olive Outsider",
+        organizationName: "Someone Else",
+        password: PASSWORD,
+        setupToken: e2eSetupToken,
+      },
+    });
+
+    expect(secondSetup.status()).toBe(409);
+
+    await adminContext.close();
+  });
+
+  await test.step("an address outside the organization cannot sign up", async () => {
+    await page.goto("/signup");
+    await expect(page).toHaveTitle(ORGANIZATION_NAME);
+    await page.getByLabel("Full name").fill("Olive Outsider");
+    await page.getByLabel("Email").fill(outsiderEmail);
+    await page.getByLabel("Password").fill(PASSWORD);
+    await page.getByRole("button", { name: "Sign up" }).click();
+    await expect(
+      page.getByRole("alert").filter({
+        hasText:
+          "Accounts can be created with an email address at @example.com.",
+      }),
+    ).toBeVisible();
+  });
 
   await test.step("sign up and verify the email address", async () => {
     await page.goto("/signup");
@@ -56,6 +171,11 @@ test("a sender can send a PDF and a recipient can sign it", async ({
       to: senderEmail,
     });
 
+    // Emails carry the organization's name, not the product's.
+    expect(verificationEmail.text).toContain(
+      `Sent by ${ORGANIZATION_NAME} using SignuDoc.`,
+    );
+
     await page.goto(
       extractLink(verificationEmail.text, "/api/auth/verify-email"),
     );
@@ -70,6 +190,20 @@ test("a sender can send a PDF and a recipient can sign it", async ({
     await expect(
       page.getByRole("heading", { name: "No documents yet" }),
     ).toBeVisible();
+
+    // An ordinary account gets none of the administrator's controls.
+    await page.goto("/settings");
+    await expect(
+      page.getByRole("heading", { name: "Organization" }),
+    ).toHaveCount(0);
+    expect((await page.request.get("/api/admin/email")).status()).toBe(403);
+    expect(
+      (
+        await page.request.put("/api/admin/settings", {
+          data: { organizationName: "Taken Over", signupMode: "open" },
+        })
+      ).status(),
+    ).toBe(403);
   });
 
   await test.step("upload a PDF", async () => {
@@ -135,6 +269,8 @@ test("a sender can send a PDF and a recipient can sign it", async ({
   });
   const signingLink = extractLink(invitation.text, "/sign/");
 
+  expect(invitation.text).toContain(`through ${ORGANIZATION_NAME}.`);
+
   await test.step("the recipient signs without an account", async () => {
     const recipientContext = await browser.newContext({
       viewport: { height: 900, width: 1440 },
@@ -197,6 +333,60 @@ test("a sender can send a PDF and a recipient can sign it", async ({
         ),
       );
     }
+  });
+
+  // An install from before there were administrators has accounts but
+  // nobody in charge. One of its users takes charge with the setup token.
+  await test.step("an install with no administrator is claimed with the setup token", async () => {
+    const database = new pg.Client({ connectionString: e2eDatabaseUrl });
+
+    await database.connect();
+
+    try {
+      await database.query(`update public."user" set role = 'user'`);
+      await database.query("delete from public.app_settings");
+    } finally {
+      await database.end();
+    }
+
+    const claim = { organizationName: "Second Wind Partners" };
+    const anonymousContext = await browser.newContext();
+
+    expect(
+      (
+        await anonymousContext.request.post("/api/setup", {
+          data: { ...claim, setupToken: e2eSetupToken },
+        })
+      ).status(),
+    ).toBe(401);
+    await anonymousContext.close();
+
+    expect(
+      (await page.request.post("/api/setup", { data: claim })).status(),
+    ).toBe(403);
+    expect(
+      (
+        await page.request.post("/api/setup", {
+          data: { ...claim, setupToken: "not the token" },
+        })
+      ).status(),
+    ).toBe(403);
+
+    const claimed = await page.request.post("/api/setup", {
+      data: { ...claim, setupToken: e2eSetupToken },
+    });
+
+    expect(claimed.status()).toBe(201);
+
+    await page.goto("/settings");
+    await expect(
+      page.getByRole("heading", { name: "Organization" }),
+    ).toBeVisible();
+    await expect(page.getByLabel("Organization name")).toHaveValue(
+      claim.organizationName,
+    );
+    // Sign-up stays as it was before anyone was in charge: open.
+    await expect(page.getByRole("radio", { name: /^Anyone/ })).toBeChecked();
   });
 
   expect(cspViolations).toEqual([]);

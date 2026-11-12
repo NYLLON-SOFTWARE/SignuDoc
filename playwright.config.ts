@@ -21,6 +21,8 @@ export const e2eDatabaseUrl =
   "postgres://signudoc:signudoc@127.0.0.1:5432/signudoc_e2e";
 export const e2eDataDir = path.resolve(".data", "e2e");
 export const e2eOutboxDir = path.join(e2eDataDir, "outbox");
+// First-run setup asks for this, as it does on a deployment that sets one.
+export const e2eSetupToken = "e2e-setup-token";
 
 export default defineConfig({
   expect: { timeout: 20_000 },
@@ -59,16 +61,19 @@ export default defineConfig({
       NEXT_TELEMETRY_DISABLED: "1",
       // The breach check calls an outside service; the test must not.
       PASSWORD_BREACH_CHECK: "off",
+      SETUP_TOKEN: e2eSetupToken,
       // "local" unless E2E_STORAGE_DRIVER says otherwise. With "blob" and a
       // BLOB_READ_WRITE_TOKEN in the environment, the same test runs against
       // a real Vercel Blob store, direct browser upload included.
       STORAGE_DRIVER: process.env.E2E_STORAGE_DRIVER ?? "local",
       STORAGE_LOCAL_DIR: path.join(e2eDataDir, "storage"),
-      SUPPORT_EMAIL: "support@signudoc.localhost",
     },
     reuseExistingServer: false,
     timeout: 300_000,
-    url: `${baseURL}/login`,
+    // Playwright starts the server before the test database is wiped, so
+    // the readiness check must not be a page: a page would look at last
+    // run's data and remember for a minute that the site is already set up.
+    url: `${baseURL}/api/auth/ok`,
   },
   workers: 1,
 });

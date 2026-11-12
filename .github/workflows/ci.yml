@@ -26,11 +26,11 @@ jobs:
       - run: npm run typecheck
       - run: npm run lint
       - run: npm test
-      # The build prerenders the legal pages, which read the support address.
+      # With nothing configured, as on a first deployment whose database
+      # has not been connected yet: the build must not need any of it.
       - run: npm run build
         env:
           NEXT_TELEMETRY_DISABLED: "1"
-          SUPPORT_EMAIL: support@ci.signudoc.example
 
   e2e:
     name: End-to-end test
