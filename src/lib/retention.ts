@@ -308,8 +308,10 @@ const FINISHED_ENVELOPE_STATUSES = ["completed", "declined", "voided"];
 /**
  * On a self-hosted install the organization owns its signed records, so a
  * person leaving must not take them along. Finished envelopes move to an
- * administrator (or, failing that, any other active user) before the
- * account is deleted. Returns false when there is nobody to keep them.
+ * administrator before the
+ * account is deleted. Only an administrator may receive them: anyone else
+ * would gain documents they were never party to. Returns false when there
+ * is no administrator to keep them.
  */
 async function handOverFinishedEnvelopes(
   userId: string,
@@ -335,10 +337,11 @@ async function handOverFinishedEnvelopes(
       SELECT u.id
       FROM "user" u
       WHERE u.id <> $1
+        AND u.role = 'admin'
         AND NOT EXISTS (
           SELECT 1 FROM account_closure_requests c WHERE c.user_id = u.id
         )
-      ORDER BY (u.role = 'admin') DESC, u."createdAt" ASC, u.id ASC
+      ORDER BY u."createdAt" ASC, u.id ASC
       LIMIT 1
     `,
     [userId],
@@ -366,7 +369,7 @@ async function handOverFinishedEnvelopes(
 export class AccountPurgeDeferredError extends Error {
   constructor(userId: string) {
     super(
-      `Account ${userId} holds finished envelopes and no other user can keep them. Its purge is deferred until an administrator exists or the records are exported and deleted by hand.`,
+      `Account ${userId} holds finished envelopes and no other user can keep them. Its purge is deferred until another administrator exists or the records are exported and deleted by hand.`,
     );
     this.name = "AccountPurgeDeferredError";
   }

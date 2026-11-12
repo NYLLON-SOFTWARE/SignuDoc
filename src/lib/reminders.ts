@@ -438,6 +438,12 @@ export async function sendManualEnvelopeNudge(
             AND event = 'reminded_manual'
             AND created_at = $2
             AND actor_email = $3
+            -- Only while it is still the newest link of the audit chain: an
+            -- event recorded after it (say, the invitation was opened before
+            -- the send failed) chains to it, so it stays as history.
+            AND sequence = (
+              SELECT max(sequence) FROM audit_events WHERE envelope_id = $1
+            )
         `,
         [persisted.envelopeId, nowUnixTimestamp, input.senderEmail],
       );

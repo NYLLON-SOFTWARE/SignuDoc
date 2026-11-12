@@ -883,12 +883,22 @@ export async function renewRecipientDownloadLinks(
       signer,
     });
   } catch (error) {
+    const issuedHashes = new Map<string, string>([
+      ["evidence", evidenceLink.tokenHash],
+      ...(signedLink
+        ? [["signed", signedLink.tokenHash] as [string, string]]
+        : []),
+    ]);
+
     for (const previous of previousTokens) {
+      // Only where this request's link is still the stored one: a renewal
+      // that ran meanwhile and did get its email out keeps its links.
       await database.query(
         `
           UPDATE recipient_download_tokens
           SET token_hash = $1, expires_at = $2, created_at = $3
           WHERE envelope_id = $4 AND signer_id = $5 AND file_type = $6
+            AND token_hash = $7
         `,
         [
           previous.tokenHash,
@@ -897,6 +907,7 @@ export async function renewRecipientDownloadLinks(
           envelope.id,
           signer.id,
           previous.fileType,
+          issuedHashes.get(previous.fileType) ?? "",
         ],
       );
     }

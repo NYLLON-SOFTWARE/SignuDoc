@@ -1102,8 +1102,9 @@ export async function sendSignerEmailCode(
 
   const issued = issueEmailCode();
   const branding = await getBranding();
-
-  await database.query(
+  // Claim the resend window and save the code in one statement, so two
+  // tabs cannot both send, leaving one emailed code already replaced.
+  const claimed = await database.query(
     `
       UPDATE signers
       SET
@@ -1112,9 +1113,29 @@ export async function sendSignerEmailCode(
         email_code_attempts = 0,
         email_code_sent_at = $3
       WHERE id = $4
+        AND (
+          email_code_hash IS NULL
+          OR email_code_sent_at IS NULL
+          OR email_code_sent_at <= $5
+        )
     `,
-    [issued.hash, now + EMAIL_CODE_TTL_SECONDS, now, context.signer.id],
+    [
+      issued.hash,
+      now + EMAIL_CODE_TTL_SECONDS,
+      now,
+      context.signer.id,
+      now - EMAIL_CODE_RESEND_SECONDS,
+    ],
   );
+
+  if (claimed.rowCount !== 1) {
+    const current = await getSignerCheckState(context.signer.id!, database);
+
+    return {
+      emailCodeSentAt: current.emailCodeSentAt ?? now,
+      maskedEmail: maskEmailAddress(context.signer.email),
+    };
+  }
 
   const minutes = Math.round(EMAIL_CODE_TTL_SECONDS / 60);
   const textBody = [

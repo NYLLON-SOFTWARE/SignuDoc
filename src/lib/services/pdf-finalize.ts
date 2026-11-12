@@ -90,16 +90,28 @@ export function computeAuditFingerprint(
   return sha256Hex(
     new TextEncoder().encode(
       canonicalJson({
-        events: auditEvents.map((event) => [
-          event.id,
-          event.createdAt,
-          event.event,
-          event.actorType,
-          event.actorEmail ?? null,
-          event.ipAddress ?? null,
-          event.userAgent ?? null,
-          event.metadata ?? null,
-        ]),
+        // One fixed order (time, then id by code unit), whatever order the
+        // list was built or read back in.
+        events: [...auditEvents]
+          .sort(
+            (left, right) =>
+              (left.createdAt ?? 0) - (right.createdAt ?? 0) ||
+              (String(left.id) < String(right.id)
+                ? -1
+                : String(left.id) > String(right.id)
+                  ? 1
+                  : 0),
+          )
+          .map((event) => [
+            event.id,
+            event.createdAt,
+            event.event,
+            event.actorType,
+            event.actorEmail ?? null,
+            event.ipAddress ?? null,
+            event.userAgent ?? null,
+            event.metadata ?? null,
+          ]),
         version: CERTIFICATE_FINGERPRINT_VERSION,
       }),
     ),
