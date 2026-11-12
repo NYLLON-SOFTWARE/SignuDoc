@@ -3,13 +3,17 @@
 import {
   CalendarIcon,
   CaseSensitiveIcon,
+  CircleDotIcon,
+  HashIcon,
   SignatureIcon,
   SquareCheckIcon,
+  SquareChevronDownIcon,
   TypeIcon,
   type LucideIcon,
 } from "lucide-react";
 import {
   useEffect,
+  useId,
   useRef,
   useState,
   type Dispatch,
@@ -20,6 +24,14 @@ import {
 } from "react";
 
 import { type PrepareEnvelopeData } from "@/lib/envelopes";
+import {
+  describeChoiceFieldProblem,
+  findChoiceFieldProblem,
+  MAX_FIELD_OPTIONS,
+  MAX_FIELD_OPTION_LENGTH,
+  MAX_RADIO_GROUP_BUTTONS,
+  parseOptionLines,
+} from "@/lib/field-choices";
 import {
   type FieldPlacement,
   type ReplaceFieldsResponse,
@@ -64,9 +76,11 @@ type PrepareField = FieldPlacement & {
 };
 
 type LiveFieldSource = Array<{
+  groupId?: string;
   height: number;
   id: string;
   label?: string;
+  options?: string[];
   page: number;
   required: boolean;
   signerId: string;
@@ -111,7 +125,12 @@ type FieldToolButtonProps = {
 
 type FieldEditorProps = {
   field: PrepareField;
+  /** How many radio buttons share this field's group, itself included. */
+  groupSize: number;
+  onAddRadioButton: () => void;
   onDelete: () => void;
+  onSetLabel: (label: string | undefined) => void;
+  onSetOptions: (options: string[]) => void;
   onSetRequired: (required: boolean) => void;
   onSignerChange: (signerId: string) => void;
   signers: readonly PrepareShellSigner[];
@@ -168,7 +187,66 @@ const fieldTools: readonly FieldTool[] = [
     placeholderLabel: "Checkbox",
     type: "checkbox",
   },
+  {
+    defaultHeight: 0.045,
+    defaultWidth: 0.16,
+    label: "Number",
+    minHeight: 0.0045,
+    minWidth: 0.006,
+    placeholderLabel: "Number",
+    type: "number",
+  },
+  {
+    defaultHeight: 0.045,
+    defaultWidth: 0.22,
+    label: "Dropdown",
+    minHeight: 0.0045,
+    minWidth: 0.006,
+    placeholderLabel: "Dropdown",
+    type: "dropdown",
+  },
+  {
+    defaultHeight: 0.023,
+    defaultWidth: 0.03,
+    label: "Radio button",
+    minHeight: 0.0045,
+    minWidth: 0.006,
+    placeholderLabel: "Radio button",
+    type: "radio",
+  },
 ] as const;
+
+// Fields the sender may leave optional. A signature, initials and the date
+// are always needed.
+function canBeOptional(type: PrepareFieldType) {
+  return (
+    type === "text" ||
+    type === "checkbox" ||
+    type === "number" ||
+    type === "dropdown" ||
+    type === "radio"
+  );
+}
+
+/** The fields that change together with this one: its radio group, or itself. */
+function isSameChoice(field: PrepareField, other: PrepareField) {
+  return (
+    field.id === other.id ||
+    (field.type === "radio" &&
+      other.type === "radio" &&
+      field.groupId !== undefined &&
+      field.groupId === other.groupId)
+  );
+}
+
+/** An id for a radio group, or for a button added to one. */
+function newLocalId() {
+  return typeof window !== "undefined" &&
+    "crypto" in window &&
+    typeof window.crypto.randomUUID === "function"
+    ? window.crypto.randomUUID()
+    : `local-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+}
 
 const genericSubmitError = "Something went wrong. Please try again.";
 const autosaveDelayMs = 450;
@@ -192,9 +270,11 @@ function buildLiveFields(
   fields: LiveFieldSource | PrepareEnvelopeData["fields"],
 ) {
   return fields.map((field, index) => ({
+    groupId: field.groupId,
     height: field.height,
     id: field.id ?? `field-${index + 1}`,
     label: field.label,
+    options: field.options ? [...field.options] : undefined,
     page: field.page,
     required: field.required,
     signerId: field.signerId,
@@ -249,9 +329,11 @@ function clearSelectedFieldFromViewportClick(
 function buildFieldRequest(fields: readonly PrepareField[]) {
   return {
     fields: fields.map((field) => ({
+      groupId: field.type === "radio" ? field.groupId : undefined,
       height: roundNormalized(field.height),
       id: field.id,
       label: field.label,
+      options: field.type === "dropdown" ? (field.options ?? []) : undefined,
       page: field.page,
       required: field.required,
       signerId: field.signerId,
@@ -398,7 +480,38 @@ function PrepareLiveShellContent({
         (field) => field.signerId === signer.id && field.type === "signature",
       ),
   );
-  const canContinue = missingSignatureSigner == null;
+  // A dropdown without choices, or a radio button on its own, can be saved
+  // in a draft but not sent.
+  const choiceProblem = findChoiceFieldProblem(fields);
+  const choiceProblemMessage = choiceProblem
+    ? describeChoiceFieldProblem(
+        choiceProblem,
+        signers.find((signer) => signer.id === choiceProblem.signerId)?.name ??
+          "a signer",
+      )
+    : null;
+  const canContinue = missingSignatureSigner == null && choiceProblem == null;
+  const selectedGroupSize = selectedField
+    ? fields.filter((field) => isSameChoice(selectedField, field)).length
+    : 0;
+  const fieldEditorActions = selectedField
+    ? {
+        onAddRadioButton: () =>
+          addRadioButton(selectedField.id, setFields, setSelectedFieldId),
+        onDelete: () =>
+          deleteField(selectedField.id, setFields, setSelectedFieldId),
+        onSetLabel: (label: string | undefined) =>
+          updateField(selectedField.id, { label }, setFields),
+        onSetOptions: (options: string[]) =>
+          updateField(selectedField.id, { options }, setFields),
+        onSetRequired: (required: boolean) =>
+          setFieldRequired(selectedField.id, required, setFields),
+        onSignerChange: (signerId: string) => {
+          setSelectedSignerId(signerId);
+          reassignField(selectedField.id, signerId, setFields);
+        },
+      }
+    : null;
 
   useEffect(() => {
     let isActive = true;
@@ -806,6 +919,13 @@ function PrepareLiveShellContent({
             </div>
           </div>
 
+          {/* Not a status region: the page has one, for "Saved". */}
+          {choiceProblemMessage ? (
+            <p aria-live="polite" className="notice notice-warning">
+              {choiceProblemMessage}
+            </p>
+          ) : null}
+
           <div className="panel overflow-hidden rounded-[1.25rem]">
             <div
               className={`relative overflow-auto p-3 sm:p-6 ${
@@ -900,7 +1020,11 @@ function PrepareLiveShellContent({
                           field={field}
                           isSelected={selectedField?.id === field.id}
                           key={field.id}
-                          label={getFieldTool(field.type).placeholderLabel}
+                          label={
+                            field.type === "radio" && field.label
+                              ? `Radio button: ${field.label}`
+                              : getFieldTool(field.type).placeholderLabel
+                          }
                           onInteractionChange={setIsFieldInteracting}
                           onMove={(deltaX, deltaY) =>
                             moveField(field.id, deltaX, deltaY, setFields)
@@ -948,20 +1072,13 @@ function PrepareLiveShellContent({
             </div>
           </div>
 
-          {selectedField ? (
+          {selectedField && fieldEditorActions ? (
             <div className="panel rounded-[1.25rem] p-4 lg:hidden">
               <FieldEditor
+                {...fieldEditorActions}
                 field={selectedField}
-                onDelete={() =>
-                  deleteField(selectedField.id, setFields, setSelectedFieldId)
-                }
-                onSetRequired={(required) =>
-                  setFieldRequired(selectedField.id, required, setFields)
-                }
-                onSignerChange={(signerId) => {
-                  setSelectedSignerId(signerId);
-                  reassignField(selectedField.id, signerId, setFields);
-                }}
+                groupSize={selectedGroupSize}
+                key={selectedField.id}
                 signers={signers}
               />
             </div>
@@ -980,23 +1097,12 @@ function PrepareLiveShellContent({
             <section className="panel space-y-3 rounded-[1.25rem] p-4">
               <p className="section-eyebrow px-1">Inspector</p>
               <div>
-                {selectedField ? (
+                {selectedField && fieldEditorActions ? (
                   <FieldEditor
+                    {...fieldEditorActions}
                     field={selectedField}
-                    onDelete={() =>
-                      deleteField(
-                        selectedField.id,
-                        setFields,
-                        setSelectedFieldId,
-                      )
-                    }
-                    onSetRequired={(required) =>
-                      setFieldRequired(selectedField.id, required, setFields)
-                    }
-                    onSignerChange={(signerId) => {
-                      setSelectedSignerId(signerId);
-                      reassignField(selectedField.id, signerId, setFields);
-                    }}
+                    groupSize={selectedGroupSize}
+                    key={selectedField.id}
                     signers={signers}
                   />
                 ) : (
@@ -1069,7 +1175,10 @@ function PrepareLiveShellContent({
 const fieldToolIcons: Record<PrepareFieldType, LucideIcon> = {
   checkbox: SquareCheckIcon,
   date: CalendarIcon,
+  dropdown: SquareChevronDownIcon,
   initials: CaseSensitiveIcon,
+  number: HashIcon,
+  radio: CircleDotIcon,
   signature: SignatureIcon,
   text: TypeIcon,
 };
@@ -1295,13 +1404,31 @@ function SaveStatusIndicator({
 
 function FieldEditor({
   field,
+  groupSize,
+  onAddRadioButton,
   onDelete,
+  onSetLabel,
+  onSetOptions,
   onSetRequired,
   onSignerChange,
   signers,
 }: FieldEditorProps) {
   const tool = getFieldTool(field.type);
-  const isOptionalField = field.type === "text" || field.type === "checkbox";
+  const isOptionalField = canBeOptional(field.type);
+  // What is being typed, kept as typed. The field itself holds the tidied
+  // value, and saving hands that back; without a copy of its own the box
+  // would lose a trailing space or an empty line in mid-thought. The editor
+  // is keyed by field, so these start again for each one.
+  const [labelDraft, setLabelDraft] = useState(field.label ?? "");
+  const [optionsDraft, setOptionsDraft] = useState(
+    (field.options ?? []).join("\n"),
+  );
+  const optionCount = field.options?.length ?? 0;
+  // The editor is on the page twice, once for narrow screens and once in
+  // the side panel, so its inputs cannot share fixed ids.
+  const editorId = useId();
+  const optionsId = `${editorId}-options`;
+  const labelId = `${editorId}-label`;
 
   return (
     <section aria-label="Field settings" role="region">
@@ -1345,10 +1472,88 @@ function FieldEditor({
           </div>
         </div>
 
+        {field.type === "dropdown" ? (
+          <div>
+            <label
+              className="block px-1 text-[0.8125rem] font-semibold text-(--secondary)"
+              htmlFor={optionsId}
+            >
+              Choices
+            </label>
+            <textarea
+              aria-describedby={`${optionsId}-help`}
+              className="field-input mt-2 min-h-32 resize-y leading-6"
+              id={optionsId}
+              onChange={(event) => {
+                setOptionsDraft(event.target.value);
+                onSetOptions(parseOptionLines(event.target.value));
+              }}
+              placeholder={"Yes\nNo\nNot sure"}
+              spellCheck={false}
+              value={optionsDraft}
+            />
+            <p
+              className={`mt-1.5 px-1 text-xs leading-5 ${
+                optionCount < 2
+                  ? "font-semibold text-(--warning)"
+                  : "text-(--tertiary)"
+              }`}
+              id={`${optionsId}-help`}
+            >
+              {optionCount < 2
+                ? "One choice per line. Add at least two."
+                : `One choice per line. ${String(optionCount)} of up to ${String(MAX_FIELD_OPTIONS)}. The signer picks one.`}
+            </p>
+          </div>
+        ) : null}
+
+        {field.type === "radio" ? (
+          <div>
+            <label
+              className="block px-1 text-[0.8125rem] font-semibold text-(--secondary)"
+              htmlFor={labelId}
+            >
+              What this button means
+            </label>
+            <input
+              aria-describedby={`${labelId}-help`}
+              className="field-input mt-2"
+              id={labelId}
+              maxLength={MAX_FIELD_OPTION_LENGTH}
+              onChange={(event) => {
+                setLabelDraft(event.target.value);
+                onSetLabel(event.target.value.trim() || undefined);
+              }}
+              placeholder="Yes"
+              value={labelDraft}
+            />
+            <p
+              className={`mt-1.5 px-1 text-xs leading-5 ${
+                groupSize < 2
+                  ? "font-semibold text-(--warning)"
+                  : "text-(--tertiary)"
+              }`}
+              id={`${labelId}-help`}
+            >
+              {groupSize < 2
+                ? "A radio button needs at least one more in its group."
+                : `${String(groupSize)} buttons in this group. The signer picks one.`}
+            </p>
+            <button
+              className="btn-quiet mt-2 w-full"
+              disabled={groupSize >= MAX_RADIO_GROUP_BUTTONS}
+              onClick={onAddRadioButton}
+              type="button"
+            >
+              + Add a button to this group
+            </button>
+          </div>
+        ) : null}
+
         {isOptionalField ? (
           <div>
             <p className="px-1 text-[0.8125rem] font-semibold text-(--secondary)">
-              Required
+              {field.type === "radio" ? "Required (whole group)" : "Required"}
             </p>
             <div className="segmented mt-2 flex w-full">
               {[
@@ -1423,13 +1628,22 @@ function placeField(
   fieldCounterRef.current += 1;
   const nextField: PrepareField = {
     ...nextRect,
+    // A radio button starts a group of its own; more are added from the
+    // inspector.
+    groupId: tool.type === "radio" ? newLocalId() : undefined,
     id:
       typeof window !== "undefined" && "crypto" in window
         ? window.crypto.randomUUID()
         : `field-${fieldCounterRef.current}`,
-    label: undefined,
+    label: tool.type === "radio" ? "Option 1" : undefined,
+    options: tool.type === "dropdown" ? [] : undefined,
     page: activePage,
-    required: tool.type === "text" || tool.type === "checkbox" ? false : true,
+    // Text, number and checkbox fields start optional; a dropdown or a
+    // group of radio buttons is usually a question that needs an answer.
+    required:
+      tool.type === "text" || tool.type === "number" || tool.type === "checkbox"
+        ? false
+        : true,
     signerId: selectedSignerId,
     type: tool.type,
   };
@@ -1444,11 +1658,69 @@ function reassignField(
   signerId: string,
   setFields: Dispatch<SetStateAction<PrepareField[]>>,
 ) {
+  setFields((currentFields) => {
+    const target = currentFields.find((field) => field.id === fieldId);
+
+    // The buttons of a radio group are answered by one person.
+    return currentFields.map((field) =>
+      target && isSameChoice(target, field) ? { ...field, signerId } : field,
+    );
+  });
+}
+
+function updateField(
+  fieldId: string,
+  patch: Pick<Partial<PrepareField>, "label" | "options">,
+  setFields: Dispatch<SetStateAction<PrepareField[]>>,
+) {
   setFields((currentFields) =>
     currentFields.map((field) =>
-      field.id === fieldId ? { ...field, signerId } : field,
+      field.id === fieldId ? { ...field, ...patch } : field,
     ),
   );
+}
+
+/** Adds a radio button just below this one, in the same group. */
+function addRadioButton(
+  fieldId: string,
+  setFields: Dispatch<SetStateAction<PrepareField[]>>,
+  setSelectedFieldId: Dispatch<SetStateAction<string | null>>,
+) {
+  const nextId = newLocalId();
+
+  setFields((currentFields) => {
+    const source = currentFields.find((field) => field.id === fieldId);
+
+    if (!source || source.type !== "radio" || !source.groupId) {
+      return currentFields;
+    }
+
+    const group = currentFields.filter((field) => isSameChoice(source, field));
+
+    if (
+      group.length >= MAX_RADIO_GROUP_BUTTONS ||
+      currentFields.some((field) => field.id === nextId)
+    ) {
+      return currentFields;
+    }
+
+    // Below the lowest button of the group on this page, or as low as the
+    // page allows.
+    const lowest = group
+      .filter((field) => field.page === source.page)
+      .reduce((bottom, field) => Math.max(bottom, field.y), source.y);
+
+    return [
+      ...currentFields,
+      {
+        ...source,
+        id: nextId,
+        label: `Option ${String(group.length + 1)}`,
+        y: Math.min(1 - source.height, lowest + source.height * 1.6),
+      },
+    ];
+  });
+  setSelectedFieldId(nextId);
 }
 
 function moveField(
@@ -1518,20 +1790,18 @@ function setFieldRequired(
   setFields: Dispatch<SetStateAction<PrepareField[]>>,
 ) {
   setFields((currentFields) =>
-    currentFields.map((field) => {
-      if (field.id !== fieldId) {
-        return field;
+    {
+      const target = currentFields.find((field) => field.id === fieldId);
+
+      if (!target || !canBeOptional(target.type)) {
+        return currentFields;
       }
 
-      if (field.type !== "text" && field.type !== "checkbox") {
-        return field;
-      }
-
-      return {
-        ...field,
-        required,
-      };
-    }),
+      // A radio group is required or optional as a whole.
+      return currentFields.map((field) =>
+        isSameChoice(target, field) ? { ...field, required } : field,
+      );
+    },
   );
 }
 

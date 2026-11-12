@@ -40,6 +40,9 @@ export const fieldTypes = [
   "date",
   "text",
   "checkbox",
+  "number",
+  "dropdown",
+  "radio",
 ] as const;
 
 export const fieldInputMethods = ["typed", "drawn", "auto"] as const;

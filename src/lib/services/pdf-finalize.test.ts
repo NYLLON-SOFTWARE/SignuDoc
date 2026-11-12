@@ -263,3 +263,95 @@ test("the certificate names the people who were sent a copy", async () => {
 
   assert.ok(!(await extractText(without)).includes("Copy recipients"));
 });
+
+test("numbers and dropdown choices are stamped as text, radio buttons as rings", async () => {
+  const fixture = await makeFixture();
+  const base = {
+    createdAt: 1_800_000_000,
+    envelopeId: fixture.envelope.id,
+    height: 0.03,
+    page: 1,
+    required: true,
+    signerId: "signer-1",
+    submittedAt: 1_800_000_000,
+    updatedAt: 1_800_000_000,
+    width: 0.3,
+    x: 0.1,
+  };
+  const choiceFields: FieldRecord[] = [
+    { ...base, id: "number-1", type: "number", value: "1,250.75", y: 0.5 },
+    {
+      ...base,
+      id: "dropdown-1",
+      options: ["Tak", "Nie", "Nie wiem"],
+      type: "dropdown",
+      value: "Nie wiem",
+      y: 0.55,
+    },
+    // An optional dropdown that was left alone: nothing to stamp.
+    {
+      ...base,
+      id: "dropdown-2",
+      options: ["One", "Two"],
+      required: false,
+      submittedAt: null,
+      type: "dropdown",
+      value: null,
+      y: 0.6,
+    },
+    {
+      ...base,
+      checked: true,
+      groupId: "group-1",
+      id: "radio-1",
+      label: "Yes",
+      type: "radio",
+      width: 0.03,
+      y: 0.65,
+    },
+    {
+      ...base,
+      checked: false,
+      groupId: "group-1",
+      id: "radio-2",
+      label: "No",
+      type: "radio",
+      width: 0.03,
+      y: 0.7,
+    },
+  ];
+  const render = (fields: FieldRecord[]) =>
+    renderFinalizedEnvelopePdf(
+      {
+        auditEvents: fixture.auditEvents,
+        completedAt: fixture.envelope.completedAt!,
+        envelope: fixture.envelope,
+        fields,
+        signers: fixture.signers,
+        sourcePdfKey: fixture.envelope.sourcePdfKey,
+      },
+      { seal: saveUnsealed, storageService: fixture.storageService },
+    );
+  const pdfBytes = await render([...fixture.fields, ...choiceFields]);
+  const text = (await extractText(pdfBytes)).replace(/\s+/g, " ");
+
+  assert.ok(text.includes("1,250.75"));
+  assert.ok(text.includes("Nie wiem"));
+  // The choices that were not picked are not on the document.
+  assert.ok(!text.includes("Tak"));
+  assert.ok(!text.includes("One"));
+
+  // The two radio buttons add drawing to the page: two rings and one dot.
+  // Without them the same document is smaller.
+  const withoutRadios = await render([
+    ...fixture.fields,
+    ...choiceFields.filter((field) => field.type !== "radio"),
+  ]);
+  const chosenOnly = await render([
+    ...fixture.fields,
+    ...choiceFields.filter((field) => field.id !== "radio-2"),
+  ]);
+
+  assert.ok(pdfBytes.byteLength > chosenOnly.byteLength);
+  assert.ok(chosenOnly.byteLength > withoutRadios.byteLength);
+});

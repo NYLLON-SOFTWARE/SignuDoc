@@ -83,7 +83,8 @@ export function InteractivePlacedField({
 }: InteractivePlacedFieldProps) {
   const gestureRef = useRef<PointerGesture | null>(null);
   const percentMultiplier = 100 / coordinateScale;
-  const isCheckbox = field.type === "checkbox";
+  const isRadio = field.type === "radio";
+  const isCheckbox = field.type === "checkbox" || isRadio;
   const showInlineLabel =
     !isCheckbox &&
     field.width >= compactFieldWidthThreshold &&
@@ -209,7 +210,7 @@ export function InteractivePlacedField({
         isSelected
           ? "ring-4 ring-[rgba(28,29,43,0.10)]"
           : "hover:ring-2 hover:ring-[rgba(28,29,43,0.08)]"
-      } cursor-grab ${isCheckbox ? "rounded-[0.25rem] p-0" : "rounded-[0.375rem] px-2 py-1"}`}
+      } cursor-grab ${isRadio ? "rounded-full p-0" : isCheckbox ? "rounded-[0.25rem] p-0" : "rounded-[0.375rem] px-2 py-1"}`}
       onKeyDown={handleKeyboardSelect}
       onPointerCancel={endGesture}
       onPointerDown={(event) => beginGesture(event, "move")}

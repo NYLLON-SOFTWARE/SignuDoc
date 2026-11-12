@@ -15,6 +15,11 @@ import {
   isEnvelopeExpired,
 } from "./envelope-deadline.ts";
 import {
+  countAnswerableFields,
+  describeChoiceFieldProblem,
+  findChoiceFieldProblem,
+} from "./field-choices.ts";
+import {
   changeDeadlineResponseSchema,
   changeRemindersResponseSchema,
   envelopeListFiltersSchema,
@@ -174,11 +179,13 @@ type FieldRow = {
   checked: boolean | null;
   createdAt: number;
   envelopeId: string;
+  groupId: string | null;
   height: number;
   id: string;
   imageKey: string | null;
   inputMethod: FieldRecord["inputMethod"] | null;
   label: string | null;
+  options: string[] | null;
   page: number;
   required: boolean;
   signerId: string;
@@ -198,11 +205,15 @@ function shouldCountFieldForSignerSummary(
     return true;
   }
 
-  if (field.type === "text") {
+  if (
+    field.type === "text" ||
+    field.type === "number" ||
+    field.type === "dropdown"
+  ) {
     return true;
   }
 
-  if (field.type === "checkbox") {
+  if (field.type === "checkbox" || field.type === "radio") {
     return field.required;
   }
 
@@ -243,7 +254,14 @@ export type DashboardEnvelopeListItem = {
 };
 
 type ReviewFieldSummary =
-  "Checkbox" | "Date" | "Initials" | "Signature" | "Text";
+  | "Checkbox"
+  | "Date"
+  | "Dropdown"
+  | "Initials"
+  | "Number"
+  | "Radio group"
+  | "Signature"
+  | "Text";
 
 export type ReviewSignerSummary = {
   email: string;
@@ -389,15 +407,21 @@ const FIELD_TYPE_SUMMARY_LABELS: Record<
 > = {
   checkbox: "Checkbox",
   date: "Date",
+  dropdown: "Dropdown",
   initials: "Initials",
+  number: "Number",
+  radio: "Radio group",
   signature: "Signature",
   text: "Text",
 };
 
 const FIELD_TYPE_SORT_ORDER: Record<FieldRecord["type"], number> = {
-  checkbox: 4,
+  checkbox: 6,
   date: 2,
+  dropdown: 5,
   initials: 1,
+  number: 4,
+  radio: 7,
   signature: 0,
   text: 3,
 };
@@ -619,11 +643,13 @@ function mapFieldRow(row: FieldRow): PersistedFieldRecord {
     checked: row.checked,
     createdAt: row.createdAt,
     envelopeId: row.envelopeId,
+    groupId: row.groupId ?? undefined,
     height: row.height,
     id: row.id,
     imageKey: row.imageKey,
     inputMethod: row.inputMethod,
     label: row.label ?? undefined,
+    options: row.options ?? undefined,
     page: row.page,
     required: row.required,
     signerId: row.signerId,
@@ -910,6 +936,8 @@ async function listFieldsForEnvelopeIds(
         value,
         image_key AS "imageKey",
         checked,
+        options,
+        group_id AS "groupId",
         submitted_at AS "submittedAt",
         created_at AS "createdAt",
         updated_at AS "updatedAt"
@@ -1015,6 +1043,46 @@ function buildFieldsBySigner(
 
     return entries;
   }, new Map());
+}
+
+/**
+ * What is unfinished about a dropdown or a radio group, in words for the
+ * sender, or null when every one of them can be answered.
+ */
+function describeChoiceProblem(
+  signers: readonly PersistedSignerRecord[],
+  fields: readonly FieldRecord[],
+): string | null {
+  const problem = findChoiceFieldProblem(fields);
+
+  if (!problem) {
+    return null;
+  }
+
+  return describeChoiceFieldProblem(
+    problem,
+    signers.find((signer) => signer.id === problem.signerId)?.name ??
+      "a signer",
+  );
+}
+
+/** The fields with each group of radio buttons counted once. */
+function withRadioGroupsOnce(fields: readonly FieldRecord[]): FieldRecord[] {
+  const seenGroups = new Set<string>();
+
+  return fields.filter((field) => {
+    if (field.type !== "radio" || !field.groupId) {
+      return true;
+    }
+
+    if (seenGroups.has(field.groupId)) {
+      return false;
+    }
+
+    seenGroups.add(field.groupId);
+
+    return true;
+  });
 }
 
 function getMissingSignatureSigner(
@@ -1309,16 +1377,14 @@ export async function getEnvelopeDetailDataForUser(
     ]);
   const signers = signersByEnvelope.get(envelopeId) ?? [];
   const fields = fieldsByEnvelope.get(envelopeId) ?? [];
-  const fieldCountsBySigner = fields.reduce<Map<string, number>>(
-    (counts, field) => {
-      if (!shouldCountFieldForSignerSummary(field)) {
-        return counts;
-      }
-
-      counts.set(field.signerId, (counts.get(field.signerId) ?? 0) + 1);
-      return counts;
-    },
-    new Map(),
+  const fieldCountsBySigner = new Map(
+    [...buildFieldsBySigner(fields)].map(
+      ([signerId, signerFields]) =>
+        [
+          signerId,
+          countAnswerableFields(signerFields, shouldCountFieldForSignerSummary),
+        ] as const,
+    ),
   );
   const timeline = auditEvents.map((event) => ({
     description: buildTimelineDescription(event),
@@ -1629,21 +1695,21 @@ export async function getReviewEnvelopeDataForUser(
     fieldsBySigner,
   );
   const isEmpty = signers.length === 0 || fields.length === 0;
+  const choiceProblem = describeChoiceProblem(signers, fields);
 
   return {
-    canSend: !isEmpty && !missingSignatureSigner,
+    canSend: !isEmpty && !missingSignatureSigner && !choiceProblem,
     copyRecipients,
     disabledReason: missingSignatureSigner
       ? `Every signer must have at least one Signature field before sending. ${missingSignatureSigner.name} is missing one.`
-      : null,
+      : choiceProblem,
     envelopeId,
     filename: envelope.sourcePdfFilename,
     isEmpty,
     pageCount: envelope.pageCount,
     signers: signers.map((signer) => ({
       email: signer.email,
-      fieldSummaries: (fieldsBySigner.get(signer.id) ?? [])
-        .slice()
+      fieldSummaries: withRadioGroupsOnce(fieldsBySigner.get(signer.id) ?? [])
         .sort(
           (left, right) =>
             FIELD_TYPE_SORT_ORDER[left.type] -
@@ -1707,6 +1773,12 @@ export async function sendDraftEnvelope(
       `Every signer must have at least one Signature field before sending. ${missingSignatureSigner.name} is missing one.`,
       400,
     );
+  }
+
+  const choiceProblem = describeChoiceProblem(signers, fields);
+
+  if (choiceProblem) {
+    throw new EnvelopeMutationError(choiceProblem, 400);
   }
 
   const firstSigner = signers[0];
@@ -2437,9 +2509,11 @@ export async function replaceDraftEnvelopeFields(
             checked,
             submitted_at,
             created_at,
-            updated_at
+            updated_at,
+            options,
+            group_id
           ) VALUES (
-            $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, NULL, NULL, NULL, NULL, NULL, $12, $13
+            $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, NULL, NULL, NULL, NULL, NULL, $12, $13, $14::jsonb, $15
           )
         `,
         [
@@ -2456,6 +2530,10 @@ export async function replaceDraftEnvelopeFields(
           field.label ?? null,
           field.createdAt,
           field.updatedAt,
+          field.type === "dropdown"
+            ? JSON.stringify(field.options ?? [])
+            : null,
+          field.groupId ?? null,
         ],
       );
     }

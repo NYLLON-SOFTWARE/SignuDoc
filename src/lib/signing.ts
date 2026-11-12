@@ -76,10 +76,14 @@ import {
   type StorageService,
 } from "./services/storage.ts";
 import { requireConfigValue } from "./services/service-config.ts";
-import { RECIPIENT_DOWNLOAD_LINK_TTL_SECONDS } from "./types/domain.ts";
+import {
+  RECIPIENT_DOWNLOAD_LINK_TTL_SECONDS,
+  type FieldType,
+} from "./types/domain.ts";
 import { getEnv } from "./utils/env.ts";
 import { escapeHtml } from "./utils/html.ts";
 import { isEnvelopeExpired } from "./envelope-deadline.ts";
+import { describeEntryProblem, judgeRadioGroups } from "./field-choices.ts";
 import {
   buildElectronicRecordsDisclosure,
   CONSENT_STATEMENT,
@@ -157,16 +161,18 @@ type SigningFieldRow = {
   checked: boolean | null;
   createdAt: number;
   envelopeId: string;
+  groupId: string | null;
   height: number;
   id: string;
   imageKey: string | null;
   inputMethod: "auto" | "drawn" | "typed" | null;
   label: string | null;
+  options: string[] | null;
   page: number;
   required: boolean;
   signerId: string;
   submittedAt: number | null;
-  type: "checkbox" | "date" | "initials" | "signature" | "text";
+  type: FieldType;
   updatedAt: number;
   value: string | null;
   width: number;
@@ -445,11 +451,13 @@ function mapFieldRow(row: SigningFieldRow) {
     checked: row.checked,
     createdAt: row.createdAt,
     envelopeId: row.envelopeId,
+    groupId: row.groupId ?? undefined,
     height: row.height,
     id: row.id,
     imageKey: row.imageKey,
     inputMethod: row.inputMethod,
     label: row.label ?? undefined,
+    options: row.options ?? undefined,
     page: row.page,
     required: row.required,
     signerId: row.signerId,
@@ -609,6 +617,8 @@ async function listFieldRows(
         value,
         image_key AS "imageKey",
         checked,
+        options,
+        group_id AS "groupId",
         submitted_at AS "submittedAt",
         created_at AS "createdAt",
         updated_at AS "updatedAt"
@@ -786,11 +796,46 @@ function isFieldSubmissionComplete(
     case "date":
       return typeof update.submittedAt === "number";
     case "text":
+    case "number":
+    case "dropdown":
       return typeof update.value === "string" && update.value.trim().length > 0;
     case "checkbox":
       return update.checked === true;
+    case "radio":
+      // One button is never the whole answer: the group is judged together,
+      // once every button's value is known.
+      return true;
     default:
       return false;
+  }
+}
+
+/**
+ * Checks the radio buttons group by group: never more than one chosen, and
+ * exactly one where the group is required.
+ */
+function assertRadioGroupsAnswered(
+  fields: ReadonlyArray<ReturnType<typeof fieldRecordSchema.parse>>,
+  updates: ReadonlyMap<string, FieldPersistenceUpdate>,
+) {
+  const verdict = judgeRadioGroups(
+    fields,
+    (field) =>
+      field.id !== undefined && updates.get(field.id)?.checked === true,
+  );
+
+  if (verdict === "too_many") {
+    throw new SigningMutationError(
+      "Choose only one option in each group of radio buttons.",
+      400,
+    );
+  }
+
+  if (verdict === "missing") {
+    throw new SigningMutationError(
+      "Complete all required fields before finishing.",
+      400,
+    );
   }
 }
 
@@ -1520,9 +1565,11 @@ export async function getSigningPayloadForToken(
   const currentSignerFields = context.fields
     .filter((field) => field.signerId === context.signer.id)
     .map((field) => ({
+      groupId: field.groupId,
       height: field.height,
       id: field.id,
       label: field.label,
+      options: field.options,
       page: field.page,
       required: field.required,
       signerId: field.signerId,
@@ -1744,9 +1791,23 @@ export async function submitSigningForToken(
       continue;
     }
 
-    if (field.type === "text") {
+    if (
+      field.type === "text" ||
+      field.type === "number" ||
+      field.type === "dropdown"
+    ) {
       const trimmedValue =
-        submission?.type === "text" ? submission.value.trim() : null;
+        submission?.type === field.type ? submission.value.trim() : null;
+
+      // What goes on the document is exactly what the signer entered, so a
+      // number must be one and a choice must be one the sender offered.
+      const entryProblem = trimmedValue
+        ? describeEntryProblem(field, trimmedValue)
+        : null;
+
+      if (entryProblem) {
+        throw new SigningMutationError(entryProblem, 400);
+      }
 
       fieldUpdates.set(field.id, {
         checked: null,
@@ -1760,7 +1821,9 @@ export async function submitSigningForToken(
     }
 
     const checkedValue =
-      submission?.type === "checkbox" ? submission.checked : false;
+      submission?.type === "checkbox" || submission?.type === "radio"
+        ? submission.checked
+        : false;
 
     fieldUpdates.set(field.id, {
       checked: checkedValue,
@@ -1784,6 +1847,8 @@ export async function submitSigningForToken(
       400,
     );
   }
+
+  assertRadioGroupsAnswered(currentSignerFields, fieldUpdates);
 
   let signingStatePersisted = false;
 

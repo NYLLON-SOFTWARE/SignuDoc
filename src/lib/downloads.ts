@@ -85,11 +85,13 @@ type FieldRow = {
   checked: boolean | null;
   createdAt: number;
   envelopeId: string;
+  groupId: string | null;
   height: number;
   id: string;
   imageKey: string | null;
   inputMethod: FieldRecord["inputMethod"] | null;
   label: string | null;
+  options: string[] | null;
   page: number;
   required: boolean;
   signerId: string;
@@ -165,11 +167,13 @@ function mapFieldRow(row: FieldRow): FieldRecord {
     checked: row.checked,
     createdAt: row.createdAt,
     envelopeId: row.envelopeId,
+    groupId: row.groupId ?? undefined,
     height: row.height,
     id: row.id,
     imageKey: row.imageKey,
     inputMethod: row.inputMethod,
     label: row.label ?? undefined,
+    options: row.options ?? undefined,
     page: row.page,
     required: row.required,
     signerId: row.signerId,
@@ -467,6 +471,8 @@ async function listFieldsForEnvelope(
         value,
         image_key AS "imageKey",
         checked,
+        options,
+        group_id AS "groupId",
         submitted_at AS "submittedAt",
         created_at AS "createdAt",
         updated_at AS "updatedAt"

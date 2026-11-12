@@ -240,7 +240,7 @@ function getFieldPadding(widthPt: number, heightPt: number): number {
 }
 
 function shouldStampField(field: FieldRecord): boolean {
-  if (field.type === "checkbox") {
+  if (field.type === "checkbox" || field.type === "radio") {
     return typeof field.checked === "boolean";
   }
 
@@ -435,7 +435,9 @@ async function stampFieldValue(
       return;
     }
     case "date":
-    case "text": {
+    case "text":
+    case "number":
+    case "dropdown": {
       const textValue = field.value?.trim();
 
       if (!textValue) {
@@ -487,6 +489,31 @@ async function stampFieldValue(
           end: { x: x + boxSize * 0.84, y: y + boxSize * 0.82 },
           start: { x: x + boxSize * 0.4, y: y + boxSize * 0.18 },
           thickness: 1.4,
+        });
+      }
+
+      return;
+    }
+    case "radio": {
+      // A ring for every button, and a dot in the one that was chosen.
+      const diameter = Math.min(rect.widthPt, rect.heightPt, 14);
+      const center = {
+        x: rect.xPt + padding / 2 + diameter / 2,
+        y: rect.yPt + rect.heightPt / 2,
+      };
+
+      page.drawCircle({
+        borderColor: rgb(0.18, 0.18, 0.18),
+        borderWidth: 1.1,
+        size: diameter / 2,
+        ...center,
+      });
+
+      if (field.checked) {
+        page.drawCircle({
+          color: rgb(0.08, 0.08, 0.08),
+          size: diameter * 0.24,
+          ...center,
         });
       }
 

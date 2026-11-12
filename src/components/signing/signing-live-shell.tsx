@@ -47,6 +47,11 @@ import {
   type SigningVisibleField,
 } from "@/lib/schemas/signing";
 import { type SigningSubmission } from "@/lib/schemas/field";
+import {
+  countAnswerableFields,
+  isNumberEntry,
+  NUMBER_ENTRY_MESSAGE,
+} from "@/lib/field-choices";
 
 const typedSignatureFont =
   '"Snell Roundhand", "Brush Script MT", "Segoe Script", cursive';
@@ -134,6 +139,12 @@ function getCanvasFieldLabel(
       return "Text";
     case "checkbox":
       return "Checkbox";
+    case "number":
+      return "Number";
+    case "dropdown":
+      return "Choose";
+    case "radio":
+      return "Option";
     default:
       return "Field";
   }
@@ -167,9 +178,47 @@ function getFieldLabel(
       return "Enter text";
     case "checkbox":
       return "Checkbox";
+    case "number":
+      return "Enter a number";
+    case "dropdown":
+      return "Choose one";
+    case "radio":
+      return "Option";
     default:
       return "Field";
   }
+}
+
+/** The values the signer has entered so far, by field. */
+type EnteredValues = {
+  /** Checkboxes and radio buttons. */
+  checkboxValues: Record<string, boolean>;
+  signatureValues: Record<string, SignatureEntry>;
+  /** Text, number and dropdown fields. */
+  textValues: Record<string, string>;
+};
+
+/** The radio buttons that are answered together with this one. */
+function getRadioGroup(
+  field: SigningCurrentField,
+  fields: readonly SigningCurrentField[],
+) {
+  return fields.filter(
+    (other) =>
+      other.type === "radio" &&
+      (other.id === field.id ||
+        (field.groupId !== undefined && other.groupId === field.groupId)),
+  );
+}
+
+/** A number field holding something that is not a number. */
+function hasInvalidNumber(
+  field: SigningCurrentField,
+  textValues: Record<string, string>,
+) {
+  const value = (textValues[field.id] ?? "").trim();
+
+  return field.type === "number" && value.length > 0 && !isNumberEntry(value);
 }
 
 function getSummaryLabel(field: SigningCurrentField) {
@@ -184,6 +233,12 @@ function getSummaryLabel(field: SigningCurrentField) {
       return "Text input";
     case "checkbox":
       return "Checkbox";
+    case "number":
+      return "Number";
+    case "dropdown":
+      return "Dropdown";
+    case "radio":
+      return "Choice";
     default:
       return "Field";
   }
@@ -194,11 +249,15 @@ function isActionSummaryField(field: SigningCurrentField) {
     return true;
   }
 
-  if (field.type === "text") {
+  if (
+    field.type === "text" ||
+    field.type === "number" ||
+    field.type === "dropdown"
+  ) {
     return true;
   }
 
-  if (field.type === "checkbox") {
+  if (field.type === "checkbox" || field.type === "radio") {
     return field.required;
   }
 
@@ -207,17 +266,13 @@ function isActionSummaryField(field: SigningCurrentField) {
 
 function getCompletionValue(
   field: SigningCurrentField,
+  fields: readonly SigningCurrentField[],
   {
     checkboxValues,
     localDateLabel,
     signatureValues,
     textValues,
-  }: {
-    checkboxValues: Record<string, boolean>;
-    localDateLabel: string;
-    signatureValues: Record<string, SignatureEntry>;
-    textValues: Record<string, string>;
-  },
+  }: EnteredValues & { localDateLabel: string },
 ) {
   if (field.type === "signature" || field.type === "initials") {
     return signatureValues[field.id]?.value ?? "Tap to sign";
@@ -227,8 +282,26 @@ function getCompletionValue(
     return textValues[field.id]?.trim() || "Enter text";
   }
 
+  if (field.type === "number") {
+    return hasInvalidNumber(field, textValues)
+      ? "Not a number"
+      : textValues[field.id]?.trim() || "Enter a number";
+  }
+
+  if (field.type === "dropdown") {
+    return textValues[field.id]?.trim() || "Choose one";
+  }
+
   if (field.type === "checkbox") {
     return checkboxValues[field.id] ? "Checked" : "Optional";
+  }
+
+  if (field.type === "radio") {
+    const chosen = getRadioGroup(field, fields).find(
+      (button) => checkboxValues[button.id],
+    );
+
+    return chosen ? getFieldLabel(chosen) : "Choose one";
   }
 
   return localDateLabel;
@@ -236,21 +309,22 @@ function getCompletionValue(
 
 function isFieldComplete(
   field: SigningCurrentField,
-  {
-    checkboxValues,
-    signatureValues,
-    textValues,
-  }: {
-    checkboxValues: Record<string, boolean>;
-    signatureValues: Record<string, SignatureEntry>;
-    textValues: Record<string, string>;
-  },
+  fields: readonly SigningCurrentField[],
+  { checkboxValues, signatureValues, textValues }: EnteredValues,
 ) {
   if (field.type === "signature" || field.type === "initials") {
     return Boolean(signatureValues[field.id]?.value);
   }
 
-  if (field.type === "text") {
+  if (field.type === "number" && hasInvalidNumber(field, textValues)) {
+    return false;
+  }
+
+  if (
+    field.type === "text" ||
+    field.type === "number" ||
+    field.type === "dropdown"
+  ) {
     if (!field.required) {
       return true;
     }
@@ -266,11 +340,22 @@ function isFieldComplete(
     return Boolean(checkboxValues[field.id]);
   }
 
+  if (field.type === "radio") {
+    if (!field.required) {
+      return true;
+    }
+
+    // One chosen button answers for the whole group.
+    return getRadioGroup(field, fields).some(
+      (button) => checkboxValues[button.id],
+    );
+  }
+
   return true;
 }
 
 function getVisibleFieldValue(field: SigningVisibleField) {
-  if (field.type === "checkbox") {
+  if (field.type === "checkbox" || field.type === "radio") {
     return field.checked ? "Checked" : "Unchecked";
   }
 
@@ -279,15 +364,7 @@ function getVisibleFieldValue(field: SigningVisibleField) {
 
 function buildSigningSubmissionPayload(
   record: SigningPayload,
-  {
-    checkboxValues,
-    signatureValues,
-    textValues,
-  }: {
-    checkboxValues: Record<string, boolean>;
-    signatureValues: Record<string, SignatureEntry>;
-    textValues: Record<string, string>;
-  },
+  { checkboxValues, signatureValues, textValues }: EnteredValues,
 ): SigningSubmission {
   const fields: SigningSubmission["fields"] = [];
 
@@ -318,13 +395,17 @@ function buildSigningSubmissionPayload(
       continue;
     }
 
-    if (field.type === "text") {
+    if (
+      field.type === "text" ||
+      field.type === "number" ||
+      field.type === "dropdown"
+    ) {
       const value = textValues[field.id]?.trim();
 
       if (value) {
         fields.push({
           fieldId: field.id,
-          type: "text",
+          type: field.type,
           value,
         });
       }
@@ -332,11 +413,11 @@ function buildSigningSubmissionPayload(
       continue;
     }
 
-    if (field.type === "checkbox") {
+    if (field.type === "checkbox" || field.type === "radio") {
       fields.push({
         checked: Boolean(checkboxValues[field.id]),
         fieldId: field.id,
-        type: "checkbox",
+        type: field.type,
       });
     }
   }
@@ -403,21 +484,46 @@ export function SigningLiveShell({ record }: { record: SigningPayload }) {
   const pageVisibleFields = record.visibleFields.filter(
     (field) => field.page === activePage,
   );
-  const actionSummaryFields =
-    record.currentSignerFields.filter(isActionSummaryField);
-  const remainingFields = record.currentSignerFields.filter(
+  const enteredValues: EnteredValues = {
+    checkboxValues,
+    signatureValues,
+    textValues,
+  };
+  // A group of radio buttons is one question: it is listed and counted once.
+  const seenRadioGroups = new Set<string>();
+  const actionSummaryFields = record.currentSignerFields.filter((field) => {
+    if (!isActionSummaryField(field)) {
+      return false;
+    }
+
+    if (field.type !== "radio" || field.groupId === undefined) {
+      return true;
+    }
+
+    if (seenRadioGroups.has(field.groupId)) {
+      return false;
+    }
+
+    seenRadioGroups.add(field.groupId);
+
+    return true;
+  });
+  const remainingFields = countAnswerableFields(
+    record.currentSignerFields,
     (field) =>
       field.required &&
-      !isFieldComplete(field, {
-        checkboxValues,
-        signatureValues,
-        textValues,
-      }),
+      !isFieldComplete(field, record.currentSignerFields, enteredValues),
+  );
+  // An optional number field may be left empty, but not filled with
+  // something that is not a number.
+  const invalidNumberCount = record.currentSignerFields.filter((field) =>
+    hasInvalidNumber(field, textValues),
   ).length;
-  const canFinish = remainingFields === 0;
-  const requiredFieldCount = record.currentSignerFields.filter(
+  const canFinish = remainingFields === 0 && invalidNumberCount === 0;
+  const requiredFieldCount = countAnswerableFields(
+    record.currentSignerFields,
     (field) => field.required,
-  ).length;
+  );
   const completionPercent =
     requiredFieldCount === 0
       ? 100
@@ -477,11 +583,7 @@ export function SigningLiveShell({ record }: { record: SigningPayload }) {
     try {
       const response = await fetch(record.submitUrl, {
         body: JSON.stringify(
-          buildSigningSubmissionPayload(record, {
-            checkboxValues,
-            signatureValues,
-            textValues,
-          }),
+          buildSigningSubmissionPayload(record, enteredValues),
         ),
         headers: {
           "content-type": "application/json",
@@ -775,12 +877,30 @@ export function SigningLiveShell({ record }: { record: SigningPayload }) {
                               field={field}
                               key={field.id}
                               localDateLabel={localDateLabel}
+                              isInvalid={hasInvalidNumber(field, textValues)}
                               onCheckboxChange={(checked) => {
                                 setSubmitError(null);
-                                setCheckboxValues((current) => ({
-                                  ...current,
-                                  [field.id]: checked,
-                                }));
+                                setCheckboxValues((current) => {
+                                  const next = {
+                                    ...current,
+                                    [field.id]: checked,
+                                  };
+
+                                  // Choosing one radio button lets go of
+                                  // the others in its group.
+                                  if (field.type === "radio" && checked) {
+                                    for (const button of getRadioGroup(
+                                      field,
+                                      record.currentSignerFields,
+                                    )) {
+                                      if (button.id !== field.id) {
+                                        next[button.id] = false;
+                                      }
+                                    }
+                                  }
+
+                                  return next;
+                                });
                               }}
                               onSignatureClick={() =>
                                 handleSignatureFieldClick(field)
@@ -844,6 +964,15 @@ export function SigningLiveShell({ record }: { record: SigningPayload }) {
                     ? "All required fields complete"
                     : `${remainingFields} required field${remainingFields === 1 ? "" : "s"} remaining`}
                 </p>
+                {invalidNumberCount > 0 ? (
+                  <p
+                    className="mt-1.5 text-[0.8125rem] font-semibold leading-5 text-(--danger)"
+                    role="alert"
+                  >
+                    A number field marked in red does not hold a number.{" "}
+                    {NUMBER_ENTRY_MESSAGE}
+                  </p>
+                ) : null}
                 <div
                   aria-hidden="true"
                   className="mt-3 h-2 overflow-hidden rounded-full bg-(--surface-strong)"
@@ -885,19 +1014,19 @@ export function SigningLiveShell({ record }: { record: SigningPayload }) {
               <div className="mt-3 space-y-2">
                 {actionSummaryFields.map((field) => (
                   <FieldStatusRow
-                    isComplete={isFieldComplete(field, {
-                      checkboxValues,
-                      signatureValues,
-                      textValues,
-                    })}
+                    isComplete={isFieldComplete(
+                      field,
+                      record.currentSignerFields,
+                      enteredValues,
+                    )}
+                    isInvalid={hasInvalidNumber(field, textValues)}
                     key={field.id}
                     label={`${getSummaryLabel(field)} · Page ${field.page}`}
-                    value={getCompletionValue(field, {
-                      checkboxValues,
-                      localDateLabel,
-                      signatureValues,
-                      textValues,
-                    })}
+                    value={getCompletionValue(
+                      field,
+                      record.currentSignerFields,
+                      { ...enteredValues, localDateLabel },
+                    )}
                   />
                 ))}
               </div>
@@ -1153,6 +1282,7 @@ function SigningToolbarStatus({
 function CurrentSignerField({
   checkboxValue,
   field,
+  isInvalid,
   localDateLabel,
   onCheckboxChange,
   onSignatureClick,
@@ -1162,6 +1292,8 @@ function CurrentSignerField({
 }: {
   checkboxValue: boolean;
   field: SigningCurrentField;
+  /** True for a number field holding something that is not a number. */
+  isInvalid: boolean;
   localDateLabel: string;
   onCheckboxChange: (checked: boolean) => void;
   onSignatureClick: () => void;
@@ -1261,6 +1393,92 @@ function CurrentSignerField({
     );
   }
 
+  if (field.type === "number") {
+    return (
+      <div
+        className={`absolute z-2 overflow-hidden rounded-[0.375rem] border-2 focus-within:bg-white ${
+          isInvalid
+            ? "border-(--danger) bg-(--danger-soft)"
+            : "border-(--accent) bg-[rgb(var(--accent-rgb)/0.07)]"
+        }`}
+        data-signing-field="true"
+        style={frame}
+        title={isInvalid ? NUMBER_ENTRY_MESSAGE : undefined}
+      >
+        <input
+          aria-invalid={isInvalid ? true : undefined}
+          aria-label={getFieldLabel(field)}
+          autoComplete="off"
+          className="h-full w-full border-none bg-transparent px-2 text-sm text-(--fg) outline-none placeholder:text-(--placeholder)"
+          id={`signing-field-${field.id}`}
+          inputMode="decimal"
+          name={`signing-field-${field.id}`}
+          onChange={(event) => onTextChange(event.target.value)}
+          placeholder={showInlineLabel ? "Number" : ""}
+          value={textValue}
+        />
+      </div>
+    );
+  }
+
+  if (field.type === "dropdown") {
+    return (
+      <div
+        className="absolute z-2 overflow-hidden rounded-[0.375rem] border-2 border-(--accent) bg-[rgb(var(--accent-rgb)/0.07)] focus-within:bg-white"
+        data-signing-field="true"
+        style={frame}
+      >
+        <select
+          aria-label={getFieldLabel(field)}
+          className={`h-full w-full cursor-pointer border-none bg-transparent px-1.5 text-sm outline-none ${
+            textValue ? "text-(--fg)" : "text-(--secondary)"
+          }`}
+          id={`signing-field-${field.id}`}
+          name={`signing-field-${field.id}`}
+          onChange={(event) => onTextChange(event.target.value)}
+          value={textValue}
+        >
+          <option value="">
+            {field.required ? "Choose one" : "No answer"}
+          </option>
+          {(field.options ?? []).map((option) => (
+            <option key={option} value={option}>
+              {option}
+            </option>
+          ))}
+        </select>
+      </div>
+    );
+  }
+
+  if (field.type === "radio") {
+    return (
+      <button
+        aria-checked={checkboxValue}
+        aria-label={getFieldLabel(field)}
+        className={`absolute z-2 flex items-center justify-center rounded-full border-2 border-(--accent) text-(--accent-ink) transition ${
+          checkboxValue
+            ? "bg-[rgb(var(--accent-rgb)/0.14)]"
+            : "bg-white hover:bg-[rgb(var(--accent-rgb)/0.10)]"
+        }`}
+        data-signing-field="true"
+        // An answer that is needed can be changed but not taken back; one
+        // that is optional can be cleared by choosing it again.
+        onClick={() => onCheckboxChange(field.required ? true : !checkboxValue)}
+        role="radio"
+        style={frame}
+        type="button"
+      >
+        {checkboxValue ? (
+          <span
+            aria-hidden="true"
+            className="block size-[52%] max-h-3 max-w-3 rounded-full bg-current"
+          />
+        ) : null}
+      </button>
+    );
+  }
+
   return (
     <button
       aria-label={getFieldLabel(field)}
@@ -1299,6 +1517,23 @@ function VisibleFieldStamp({ field }: { field: SigningVisibleField }) {
   const frame = getFieldFrame(field);
   const showInlineLabel = shouldShowInlineFieldLabel(field);
   const showInlineValue = shouldShowInlineFieldValue(field);
+
+  if (field.type === "radio") {
+    return (
+      <div
+        className="pointer-events-none absolute z-1 flex items-center justify-center rounded-full border border-(--border-strong) bg-[rgba(28,29,43,0.03)]"
+        data-signing-field="true"
+        style={frame}
+      >
+        {field.checked ? (
+          <span
+            aria-hidden="true"
+            className="block size-[52%] max-h-3 max-w-3 rounded-full bg-(--secondary)"
+          />
+        ) : null}
+      </div>
+    );
+  }
 
   if (field.type === "checkbox") {
     return (
@@ -1783,10 +2018,13 @@ function DialogFrame({
 
 function FieldStatusRow({
   isComplete,
+  isInvalid,
   label,
   value,
 }: {
   isComplete: boolean;
+  /** Filled in, but with something the field cannot take. */
+  isInvalid: boolean;
   label: string;
   value: string;
 }) {
@@ -1799,9 +2037,15 @@ function FieldStatusRow({
         </p>
       </div>
       <span
-        className={`pill shrink-0 ${isComplete ? "pill-success" : "pill-accent"}`}
+        className={`pill shrink-0 ${
+          isInvalid
+            ? "pill-danger"
+            : isComplete
+              ? "pill-success"
+              : "pill-accent"
+        }`}
       >
-        {isComplete ? "Complete" : "Required"}
+        {isInvalid ? "Fix this" : isComplete ? "Complete" : "Required"}
       </span>
     </div>
   );

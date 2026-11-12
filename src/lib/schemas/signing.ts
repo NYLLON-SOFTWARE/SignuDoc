@@ -21,9 +21,13 @@ export const signingUnavailableStateSchema = z.enum([
 ]);
 
 const signingFieldBaseSchema = z.object({
+  /** The group a radio button belongs to. */
+  groupId: z.string().trim().min(1).optional(),
   height: normalizedSizeSchema,
   id: idSchema,
   label: optionalTrimmedString(120),
+  /** The choices of a dropdown. */
+  options: z.array(z.string().trim().min(1)).optional(),
   page: z.number().int().positive(),
   required: z.boolean(),
   signerId: idSchema,

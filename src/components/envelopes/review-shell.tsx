@@ -46,7 +46,14 @@ type ReviewRecordView = {
 };
 
 type ReviewFieldSummaryLabel =
-  "Checkbox" | "Date" | "Initials" | "Signature" | "Text";
+  | "Dropdown"
+  | "Number"
+  | "Radio group"
+  | "Checkbox"
+  | "Date"
+  | "Initials"
+  | "Signature"
+  | "Text";
 
 type ReviewSigner = {
   color?: string;
