@@ -389,6 +389,103 @@ test("a key that may only send points the administrator at Resend instead", asyn
   assert.deepEqual(resend.readyMarks, []);
 });
 
+test("a refusal that is not about what the key may do is shown, not blamed on the key", async () => {
+  // All three arrive as a 401 or a 403, like a send-only key does.
+  const refusals = [
+    {
+      message: "The acme.com domain has been registered already.",
+      name: "validation_error",
+      statusCode: 403,
+    },
+    {
+      message: "This API key is suspended",
+      name: "suspended_api_key",
+      statusCode: 403,
+    },
+    {
+      message: "API key is invalid",
+      name: "validation_error",
+      statusCode: 401,
+    },
+  ];
+
+  for (const refusal of refusals) {
+    const resend = fakeResend({ errors: { list: [refusal] } });
+
+    assert.deepEqual(await getEmailStatus(resend.options), {
+      message: refusal.message,
+      senderAddress: "sign@acme.com",
+      state: "error",
+    });
+  }
+});
+
+test("a key without the scope to read domains counts as a send-only key", async () => {
+  const resend = fakeResend({
+    errors: {
+      list: [
+        {
+          message: "Access token is missing required scopes.",
+          name: "invalid_permission",
+          statusCode: 403,
+        },
+      ],
+    },
+  });
+
+  assert.equal((await getEmailStatus(resend.options)).state, "restricted_key");
+});
+
+test("a domain that can send is ready even while Resend still waits on receiving", async () => {
+  const resend = fakeResend({
+    domains: [
+      {
+        id: "domain_1",
+        name: "acme.com",
+        records: [
+          { ...DKIM_RECORD, status: "verified" },
+          { ...SPF_MX_RECORD, status: "verified" },
+          {
+            name: "acme.com",
+            priority: 10,
+            record: "Receiving",
+            status: "pending",
+            type: "MX",
+            value: "inbound-smtp.us-east-1.amazonaws.com",
+          },
+        ],
+        status: "partially_verified",
+      },
+    ],
+  });
+
+  assert.deepEqual(await getEmailStatus(resend.options), {
+    domain: "acme.com",
+    senderAddress: "sign@acme.com",
+    state: "ready",
+  });
+  assert.deepEqual(resend.readyMarks, [true]);
+});
+
+test("a partly verified domain whose sending records are not all in is neither marked ready nor unmarked", async () => {
+  // Resend says such a domain may still send, through its other server.
+  // The records cannot settle it, so a test email is left to.
+  const resend = fakeResend({
+    domains: [
+      {
+        id: "domain_1",
+        name: "acme.com",
+        records: [{ ...DKIM_RECORD, status: "verified" }, SPF_MX_RECORD],
+        status: "partially_failed",
+      },
+    ],
+  });
+  const status = await getEmailStatus(resend.options);
+
+  assert.equal(status.state, "domain_pending");
+  assert.deepEqual(resend.readyMarks, []);
+});
+
 test("any other failure is reported in Resend's own words", async () => {
   const resend = fakeResend({
     errors: {

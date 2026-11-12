@@ -70,16 +70,23 @@ type EmailStatusOptions = {
   settings?: ResolvedSettings;
 };
 
+// Whether Resend refused because this key is not allowed to look at
+// domains, as opposed to refusing for any other reason. Told apart by name:
+// a 401 or 403 is also what a mistyped or suspended key gets, and what
+// adding a domain that another Resend account already has gets, and those
+// come with a message of their own that is worth showing.
+// https://resend.com/docs/api-reference/errors
 function isRestrictedKeyError(error: {
   name?: string;
   statusCode?: number | null;
 }): boolean {
-  return (
-    error.name === "restricted_api_key" ||
-    error.name === "invalid_access" ||
-    error.statusCode === 401 ||
-    error.statusCode === 403
-  );
+  if (error.name === "invalid_access" || error.name === "invalid_permission") {
+    return true;
+  }
+
+  // Resend uses this name twice: with 401 for a key that may only send,
+  // and with 403 for a key that has been switched off.
+  return error.name === "restricted_api_key" && error.statusCode !== 403;
 }
 
 function toDnsRecords(records: readonly unknown[]): EmailDnsRecord[] {
@@ -187,6 +194,50 @@ function toErrorStatus(
     : { message: error.message, senderAddress, state: "error" };
 }
 
+type SendingVerdict = "ready" | "not_ready" | "unknown";
+
+function isVerifiedSendingRecord(record: unknown): boolean | null {
+  if (typeof record !== "object" || record === null) {
+    return null;
+  }
+
+  const { record: purpose, status } = record as {
+    record?: unknown;
+    status?: unknown;
+  };
+
+  // SPF and DKIM are the records sending depends on. The rest are for
+  // receiving and for tracking, which this app does not use.
+  return purpose === "SPF" || purpose === "DKIM" ? status === "verified" : null;
+}
+
+// Resend gives one status for the whole domain. A domain that is also set
+// up to receive mail, or that is waiting on a spare sending record, counts
+// as only partly verified while it sends perfectly well. So for a partly
+// verified domain the sending records decide, and when they do not settle
+// it either the answer is "cannot tell", which is not the same as "no".
+// https://resend.com/docs/dashboard/domains/manage-domains
+function judgeSending(
+  status: string,
+  records: readonly unknown[],
+): SendingVerdict {
+  if (status === "verified") {
+    return "ready";
+  }
+
+  if (status !== "partially_verified" && status !== "partially_failed") {
+    return "not_ready";
+  }
+
+  const sendingRecords = records
+    .map(isVerifiedSendingRecord)
+    .filter((verified) => verified !== null);
+
+  return sendingRecords.length > 0 && sendingRecords.every(Boolean)
+    ? "ready"
+    : "unknown";
+}
+
 async function describeDomain(
   client: ResendDomainsClient,
   domainId: string,
@@ -200,13 +251,19 @@ async function describeDomain(
     return toErrorStatus(details.error, domain, senderAddress);
   }
 
-  if (details.data.status === "verified") {
+  const sending = judgeSending(details.data.status, details.data.records);
+
+  if (sending === "ready") {
     await markReady(true);
 
     return { domain, senderAddress, state: "ready" };
   }
 
-  await markReady(false);
+  // When it cannot be told, the mark is left as it is. A test email that
+  // gets through is what sets it then.
+  if (sending === "not_ready") {
+    await markReady(false);
+  }
 
   return {
     domain,
