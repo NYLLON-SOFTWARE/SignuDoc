@@ -169,6 +169,8 @@ export function EnvelopeDetailShell({
       : null;
 
   function handleDownload(fileType: DownloadFileType) {
+    // This starts a file download from an API route, not a page navigation.
+    // eslint-disable-next-line @next/next/no-location-assign-relative-destination
     window.location.assign(
       `/api/envelopes/${encodeURIComponent(envelopeId)}/download?type=${fileType}`,
     );

@@ -43,7 +43,7 @@ The open source project is designed to be self-hostable, and the hosted version 
 npm install
 ```
 
-SignuDoc currently targets Node.js 20.9+ and is built on Next.js 16.
+SignuDoc targets Node.js 24 and is built on Next.js 16.
 
 ### 2. Create your environment file
 
