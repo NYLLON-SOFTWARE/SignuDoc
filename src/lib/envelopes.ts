@@ -97,6 +97,7 @@ import { escapeHtml } from "./utils/html.ts";
 
 type CreateDraftEnvelopeOptions = {
   database?: DbPool;
+  storageService?: StorageService;
 };
 
 type CreateDraftEnvelopeInput = {
@@ -472,7 +473,10 @@ const timelineDateFormatter = new Intl.DateTimeFormat("en-US", {
 export async function createDraftEnvelope(
   userId: string,
   input: CreateDraftEnvelopeInput,
-  { database = getDb() }: CreateDraftEnvelopeOptions = {},
+  {
+    database = getDb(),
+    storageService = createStorageService(),
+  }: CreateDraftEnvelopeOptions = {},
 ): Promise<DraftEnvelopeResult> {
   const importedPdf = await importPdfDocument({
     body: input.sourcePdf.body,
@@ -485,7 +489,6 @@ export async function createDraftEnvelope(
     envelopeId,
     userId,
   });
-  const storageService = createStorageService();
 
   await storageService.putObject({
     body: input.sourcePdf.body,
@@ -1505,8 +1508,10 @@ export async function getDraftEnvelopeDocumentForUser(
   envelopeId: string,
   {
     database = getDb(),
+    storageService = createStorageService(),
   }: {
     database?: DbExecutor;
+    storageService?: StorageService;
   } = {},
 ): Promise<DraftEnvelopeDocument> {
   const envelope = await getEnvelopeByIdForUser(userId, envelopeId, database);
@@ -1514,8 +1519,6 @@ export async function getDraftEnvelopeDocumentForUser(
   if (!envelope) {
     throw new EnvelopeDocumentAccessError("Envelope not found.", 404);
   }
-
-  const storageService = createStorageService();
 
   try {
     const object = await storageService.getObject(envelope.sourcePdfKey);

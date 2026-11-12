@@ -14,6 +14,7 @@ import { useState } from "react";
 import { DocumentThumbnail } from "@/components/shared/document-thumbnail";
 import { ShellButton } from "@/components/shared/form-shell";
 import { StatusPanel } from "@/components/shared/status-panel";
+import { SaveTemplateDialog } from "@/components/templates/save-template-dialog";
 import {
   Dialog,
   DialogContent,
@@ -70,6 +71,7 @@ type ModalState =
   | "change-deadline"
   | "change-reminders"
   | "delete-draft"
+  | "save-template"
   | "void-envelope"
   | null;
 
@@ -129,6 +131,9 @@ export function EnvelopeDetailShell({
   const [isDeletingDraft, setIsDeletingDraft] = useState(false);
   const [isSendingReminder, setIsSendingReminder] = useState(false);
   const [isVoidingEnvelope, setIsVoidingEnvelope] = useState(false);
+  const [savedTemplateName, setSavedTemplateName] = useState<string | null>(
+    null,
+  );
 
   function handleRetry() {
     window.location.reload();
@@ -520,6 +525,44 @@ export function EnvelopeDetailShell({
           </div>
         ) : null}
 
+        {savedTemplateName ? (
+          <div
+            className={`notice notice-success flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between ${
+              deadlineText || deadline ? "mt-3" : "mt-5"
+            }`}
+            role="status"
+          >
+            <p>Saved as the template &ldquo;{savedTemplateName}&rdquo;.</p>
+            <Link
+              className="shrink-0 underline underline-offset-4"
+              href="/templates"
+            >
+              View templates
+            </Link>
+          </div>
+        ) : activeRecord.signers.length > 0 ? (
+          <div
+            className={`well flex flex-col gap-3 px-5 py-3.5 sm:flex-row sm:items-center sm:justify-between ${
+              deadlineText || deadline ? "mt-3" : "mt-5"
+            }`}
+          >
+            <p className="text-sm leading-6 text-(--secondary)">
+              Send this kind of document often? Keep its fields and signing
+              order as a template.
+            </p>
+            <button
+              className="btn-quiet shrink-0"
+              onClick={() => {
+                setActionError(null);
+                setActiveModal("save-template");
+              }}
+              type="button"
+            >
+              Save as template
+            </button>
+          </div>
+        ) : null}
+
         {actionError ? (
           <div className="notice notice-danger mt-5" role="alert">
             {actionError}
@@ -678,6 +721,21 @@ export function EnvelopeDetailShell({
           onCancel={() => setActiveModal(null)}
           onConfirm={handleConfirmChangeReminders}
           processing={isChangingReminders}
+        />
+      ) : null}
+
+      {activeModal === "save-template" ? (
+        <SaveTemplateDialog
+          envelopeId={envelopeId}
+          initialName={activeRecord.title}
+          onCancel={() => setActiveModal(null)}
+          onSaved={(templateName) => {
+            setActiveModal(null);
+            setSavedTemplateName(templateName);
+          }}
+          signers={[...activeRecord.signers]
+            .sort((left, right) => left.order - right.order)
+            .map((signer) => ({ id: signer.id, name: signer.name }))}
         />
       ) : null}
 

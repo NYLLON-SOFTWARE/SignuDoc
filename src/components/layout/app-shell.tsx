@@ -30,7 +30,8 @@ type AppShellProps = {
   };
 };
 
-type ShellSection = "documents" | "new-envelope" | "settings" | "workspace";
+type ShellSection =
+  "documents" | "new-envelope" | "settings" | "templates" | "workspace";
 
 export function AppShell({
   children,
@@ -207,6 +208,10 @@ function resolveSection(pathname: string): ShellSection {
 
   if (pathname === "/dashboard" || /^\/envelopes\/[^/]+$/.test(pathname)) {
     return "documents";
+  }
+
+  if (pathname === "/templates" || pathname.startsWith("/templates/")) {
+    return "templates";
   }
 
   return "workspace";

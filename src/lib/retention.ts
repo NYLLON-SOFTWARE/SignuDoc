@@ -438,6 +438,18 @@ async function purgeQueuedAccount(
     }
   }
 
+  // Templates go with the account: their rows with the user's row below,
+  // their documents here.
+  const templates = await queryMany<{ sourcePdfKey: string }>(
+    database,
+    `SELECT source_pdf_key AS "sourcePdfKey" FROM templates WHERE user_id = $1`,
+    [userId],
+  );
+
+  for (const template of templates) {
+    storageKeys.add(template.sourcePdfKey);
+  }
+
   const deleteResult = await database.query(
     `
       DELETE FROM "user"

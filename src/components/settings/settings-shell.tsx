@@ -727,8 +727,8 @@ function useClosureCopy(): string {
   const { hosted, productName } = useBranding();
 
   return hosted
-    ? `Before closing your account, download any documents you want to keep. After closure, ${productName} keeps a 30-day export window and then deletes your stored documents and envelope records. Signers keep the copies they were emailed.`
-    : `Before closing your account, download any documents you want to keep. After 30 days your drafts and unfinished envelopes are deleted. Finished documents and their audit trails stay with ${productName}: they move to an administrator, because they are the organization's records.`;
+    ? `Before closing your account, download any documents you want to keep. After closure, ${productName} keeps a 30-day export window and then deletes your stored documents, templates and envelope records. Signers keep the copies they were emailed.`
+    : `Before closing your account, download any documents you want to keep. After 30 days your drafts, unfinished envelopes and templates are deleted. Finished documents and their audit trails stay with ${productName}: they move to an administrator, because they are the organization's records.`;
 }
 
 function AccountClosureDialog({

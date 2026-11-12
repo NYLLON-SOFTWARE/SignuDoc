@@ -113,10 +113,9 @@ export function describeChoiceFieldProblem(
  * How many things a signer is asked to do, counting a group of radio
  * buttons as one.
  */
-export function countAnswerableFields<Field extends ChoiceField>(
-  fields: readonly Field[],
-  counts: (field: Field) => boolean,
-): number {
+export function countAnswerableFields<
+  Field extends Pick<ChoiceField, "groupId" | "type">,
+>(fields: readonly Field[], counts: (field: Field) => boolean): number {
   const seenGroups = new Set<string>();
   let total = 0;
 

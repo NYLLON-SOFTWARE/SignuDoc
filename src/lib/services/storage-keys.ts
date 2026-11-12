@@ -2,6 +2,7 @@ import path from "node:path";
 
 const STORAGE_ROOT_SEGMENT = "users";
 const ENVELOPE_ROOT_SEGMENT = "envelopes";
+const TEMPLATE_ROOT_SEGMENT = "templates";
 const CERTIFICATE_ROOT_SEGMENT = "certificates";
 const INTERNAL_CERTIFICATE_FILE_NAME = "internal.pdf";
 const RECIPIENT_CERTIFICATE_FILE_NAME = "recipient.pdf";
@@ -81,6 +82,24 @@ export function buildEnvelopeThumbnailKey(
       : buildEnvelopePrefix(input);
 
   return path.posix.join(folder, "thumbnail.jpg");
+}
+
+/**
+ * A template's own copy of its document. It is a copy, not the file of the
+ * envelope it was made from, so neither can take the other's file with it
+ * when it is deleted.
+ */
+export function buildTemplatePdfKey(input: {
+  templateId: string;
+  userId: string;
+}): string {
+  return path.posix.join(
+    STORAGE_ROOT_SEGMENT,
+    input.userId,
+    TEMPLATE_ROOT_SEGMENT,
+    input.templateId,
+    "original.pdf",
+  );
 }
 
 export function buildEnvelopeSignedPdfKey(
