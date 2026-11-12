@@ -1,5 +1,6 @@
 "use client";
 
+import { PlusIcon } from "lucide-react";
 import { useState, type ChangeEvent } from "react";
 
 import type { DashboardEnvelopeListItem } from "@/lib/envelopes";
@@ -10,6 +11,7 @@ import {
   type DashboardFilter,
   type DashboardShellState,
 } from "@/components/dashboard/dashboard-documents-surface";
+import { DocumentThumbnail } from "@/components/shared/document-thumbnail";
 import { ShellButton } from "@/components/shared/form-shell";
 
 type DashboardShellProps = {
@@ -63,7 +65,7 @@ export function DashboardShell({
   }
 
   return (
-    <div className="space-y-8">
+    <div className="space-y-5">
       <DashboardDocumentsHeader />
 
       {initialState === "empty" ? (
@@ -88,23 +90,30 @@ export function DashboardShell({
 function EmptyDashboardState() {
   return (
     <section
-      className="editorial-panel p-6 sm:p-8"
+      className="panel px-6 py-14 sm:py-20"
       data-animate="enter"
       data-animate-delay="1"
     >
-      <div className="mx-auto flex max-w-md flex-col items-center gap-5 border border-dashed border-(--border) bg-(--surface) px-8 py-12 text-center">
-        <span className="inline-flex h-16 min-w-16 items-center justify-center border border-(--accent) bg-[#fff8f8] px-4 text-xs font-semibold uppercase tracking-[0.28em] text-(--accent)">
-          PDF
+      <div className="mx-auto flex max-w-md flex-col items-center gap-5 text-center">
+        <span className="flex h-28 items-center justify-center">
+          <DocumentThumbnail title="" />
         </span>
         <div className="space-y-2">
-          <h2 className="text-2xl font-semibold tracking-[-0.04em] text-(--fg)">
+          <h2 className="text-2xl font-extrabold tracking-[-0.03em] text-(--fg)">
             No documents yet
           </h2>
-          <p className="text-sm leading-6 text-muted-foreground">
+          <p className="text-[0.9375rem] leading-6 text-(--secondary)">
             Upload a PDF and send it for signatures in minutes.
           </p>
         </div>
-        <ShellButton href="/envelopes/new">+ New envelope</ShellButton>
+        <ShellButton href="/envelopes/new">
+          <PlusIcon
+            aria-hidden="true"
+            className="size-[1.125rem]"
+            strokeWidth={2.4}
+          />
+          New envelope
+        </ShellButton>
       </div>
     </section>
   );

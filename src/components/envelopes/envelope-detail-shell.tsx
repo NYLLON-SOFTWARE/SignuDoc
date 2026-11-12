@@ -1,8 +1,17 @@
 "use client";
 
+import {
+  CheckIcon,
+  ClockIcon,
+  DownloadIcon,
+  MinusIcon,
+  XIcon,
+  type LucideIcon,
+} from "lucide-react";
 import Link from "next/link";
 import { useState } from "react";
 
+import { DocumentThumbnail } from "@/components/shared/document-thumbnail";
 import { ShellButton } from "@/components/shared/form-shell";
 import { StatusPanel } from "@/components/shared/status-panel";
 import {
@@ -53,12 +62,12 @@ type EnvelopeDetailRecord = {
 
 type ModalState = "delete-draft" | "void-envelope" | null;
 
-const statusBadgeClasses: Record<EnvelopeStatus, string> = {
-  completed: "bg-[rgba(5,150,105,0.12)] text-chart-4",
-  declined: "bg-[rgba(255,0,51,0.1)] text-(--accent)",
-  draft: "bg-[rgba(17,17,17,0.06)] text-muted-foreground",
-  sent: "bg-[rgba(37,99,235,0.12)] text-chart-1",
-  voided: "bg-[rgba(17,17,17,0.08)] text-(--tertiary)",
+const statusPillClasses: Record<EnvelopeStatus, string> = {
+  completed: "pill-success",
+  declined: "pill-danger",
+  draft: "pill-neutral",
+  sent: "pill-accent",
+  voided: "pill-neutral",
 };
 
 const statusLabelMap: Record<EnvelopeStatus, string> = {
@@ -69,25 +78,32 @@ const statusLabelMap: Record<EnvelopeStatus, string> = {
   voided: "Voided",
 };
 
-const signerStatusBadgeClasses: Record<SignerStatus, string> = {
-  declined: "bg-[rgba(255,0,51,0.1)] text-(--accent)",
-  pending: "bg-[rgba(17,17,17,0.06)] text-muted-foreground",
-  signed: "bg-[rgba(5,150,105,0.12)] text-chart-4",
-  waiting: "bg-[rgba(37,99,235,0.12)] text-chart-1",
+const signerStatusPillClasses: Record<SignerStatus, string> = {
+  declined: "pill-danger",
+  pending: "pill-neutral",
+  signed: "pill-success",
+  waiting: "pill-accent",
 };
 
 const signerStatusLabelMap: Record<SignerStatus, string> = {
-  declined: "✗ Declined",
-  pending: "— Pending",
-  signed: "✓ Signed",
-  waiting: "◷ Waiting",
+  declined: "Declined",
+  pending: "Pending",
+  signed: "Signed",
+  waiting: "Waiting",
+};
+
+const signerStatusIcons: Record<SignerStatus, LucideIcon> = {
+  declined: XIcon,
+  pending: MinusIcon,
+  signed: CheckIcon,
+  waiting: ClockIcon,
 };
 
 const timelineToneClasses: Record<TimelineTone, string> = {
   accent: "bg-(--accent)",
-  danger: "bg-[rgba(255,0,51,0.7)]",
-  neutral: "bg-(--border)",
-  success: "bg-(--signer-4)",
+  danger: "bg-(--danger)",
+  neutral: "bg-(--border-strong)",
+  success: "bg-(--success)",
 };
 
 export function EnvelopeDetailShell({
@@ -265,74 +281,150 @@ export function EnvelopeDetailShell({
   }
 
   return (
-    <div className="space-y-8">
-      <section className="editorial-panel p-6 sm:p-8" data-animate="enter">
+    <div className="space-y-5">
+      <section className="panel p-5 sm:p-8" data-animate="enter">
         <Link
-          className="inline-flex items-center text-sm font-semibold text-muted-foreground transition hover:text-(--fg)"
+          className="inline-flex items-center text-sm font-semibold text-(--secondary) transition hover:text-(--accent-ink)"
           href="/dashboard"
         >
           ← Documents
         </Link>
 
-        <div className="mt-5 flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
-          <div className="space-y-2">
-            <h1
-              className={`text-[28px] font-semibold tracking-[-0.04em] ${
-                activeRecord.status === "voided"
-                  ? "text-muted-foreground"
-                  : "text-(--fg)"
-              }`}
-            >
-              {activeRecord.title}
-            </h1>
-            <p className="text-sm text-muted-foreground">
-              Created {activeRecord.createdAtLabel}
-            </p>
+        <div className="mt-5 flex flex-col gap-6 lg:flex-row lg:items-center lg:justify-between">
+          <div className="flex min-w-0 items-center gap-5">
+            <span className="hidden h-28 shrink-0 items-center justify-center rounded-2xl bg-(--surface) px-4 py-3 sm:flex">
+              <DocumentThumbnail
+                envelopeId={envelopeId}
+                title={activeRecord.title}
+              />
+            </span>
+            <div className="min-w-0 space-y-2.5">
+              <h1
+                className={`text-[clamp(1.5rem,3vw,1.875rem)] font-extrabold leading-tight tracking-[-0.03em] ${
+                  activeRecord.status === "voided"
+                    ? "text-(--tertiary)"
+                    : "text-(--fg)"
+                }`}
+              >
+                {activeRecord.title}
+              </h1>
+              <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+                <span
+                  className={`pill ${statusPillClasses[activeRecord.status]}`}
+                >
+                  {statusLabelMap[activeRecord.status]}
+                </span>
+                <p className="text-sm text-(--secondary)">
+                  Created {activeRecord.createdAtLabel}
+                </p>
+              </div>
+            </div>
           </div>
-          <span
-            className={`inline-flex w-fit rounded-full px-4 py-2 text-sm font-semibold ${statusBadgeClasses[activeRecord.status]}`}
-          >
-            {statusLabelMap[activeRecord.status]}
-          </span>
+
+          <div className="flex shrink-0 flex-col gap-3 sm:flex-row sm:flex-wrap lg:justify-end">
+            {activeRecord.status === "draft" ? (
+              <>
+                <ShellButton
+                  onClick={() => setActiveModal("delete-draft")}
+                  variant="secondary"
+                >
+                  Delete draft
+                </ShellButton>
+                <ShellButton href={`/envelopes/${envelopeId}/prepare`}>
+                  Continue editing
+                </ShellButton>
+              </>
+            ) : null}
+
+            {activeRecord.status === "sent" ? (
+              <>
+                <ShellButton
+                  onClick={() => setActiveModal("void-envelope")}
+                  variant="secondary"
+                >
+                  Void envelope
+                </ShellButton>
+                <ShellButton
+                  disabled={!activeSigner || reminderLimited}
+                  loading={isSendingReminder}
+                  onClick={handleSendReminder}
+                >
+                  Send reminder
+                </ShellButton>
+              </>
+            ) : null}
+
+            {activeRecord.status === "completed" ? (
+              <>
+                <ShellButton
+                  onClick={() => handleDownload("evidence")}
+                  variant="secondary"
+                >
+                  Download certificate
+                </ShellButton>
+                <ShellButton onClick={() => handleDownload("signed")}>
+                  <DownloadIcon
+                    aria-hidden="true"
+                    className="size-[1.125rem]"
+                    strokeWidth={2.2}
+                  />
+                  Download signed PDF
+                </ShellButton>
+              </>
+            ) : null}
+
+            {activeRecord.status === "declined" ||
+            activeRecord.status === "voided" ? (
+              <ShellButton
+                onClick={() => handleDownload("evidence")}
+                variant="secondary"
+              >
+                Download certificate
+              </ShellButton>
+            ) : null}
+          </div>
         </div>
 
+        {reminderHelperText ? (
+          <p className="mt-4 text-sm leading-6 text-(--secondary) lg:text-right">
+            {reminderHelperText}
+          </p>
+        ) : null}
+
         {actionError ? (
-          <div
-            className="mt-5 border border-[rgba(180,35,53,0.2)] bg-[rgba(180,35,53,0.05)] px-4 py-3 text-sm font-medium text-(--fg)"
-            role="alert"
-          >
+          <div className="notice notice-danger mt-5" role="alert">
             {actionError}
           </div>
         ) : null}
       </section>
 
-      <section className="grid gap-6 lg:grid-cols-[minmax(0,0.92fr)_minmax(0,1.08fr)]">
-        <article className="editorial-panel p-6 sm:p-8">
+      <section
+        className="grid gap-5 lg:grid-cols-[minmax(0,1.08fr)_minmax(0,0.92fr)]"
+        data-animate="enter"
+        data-animate-delay="1"
+      >
+        <article className="panel p-5 sm:p-7">
           <div className="flex items-center justify-between gap-3">
-            <h2 className="text-lg font-semibold tracking-[-0.03em] text-(--fg)">
-              Signers
-            </h2>
-            <span className="text-xs font-semibold uppercase tracking-[0.24em] text-(--tertiary)">
+            <h2 className="text-lg font-extrabold text-(--fg)">Signers</h2>
+            <span className="pill pill-neutral">
               {activeRecord.signers.length} total
             </span>
           </div>
 
-          <ol className="mt-5 space-y-4">
+          <ol className="mt-4 space-y-3">
             {activeRecord.signers.map((signer, index) => {
               const palette =
                 signer.color && signer.tint
                   ? { color: signer.color, tint: signer.tint }
                   : getSignerPalette(index);
+              const StatusIcon = signerStatusIcons[signer.status];
 
               return (
-                <li
-                  className="border border-(--border) bg-(--surface) p-4"
-                  key={signer.id}
-                >
-                  <div className="flex items-start gap-4">
+                <li className="well p-4" key={signer.id}>
+                  <div className="flex items-start gap-3.5">
                     <span
                       aria-hidden="true"
-                      className="inline-flex size-11 shrink-0 items-center justify-center rounded-full text-sm font-semibold"
+                      className="inline-flex size-10 shrink-0 items-center justify-center rounded-full text-sm font-bold"
                       style={{
                         backgroundColor: palette.tint,
                         color: palette.color,
@@ -342,20 +434,25 @@ export function EnvelopeDetailShell({
                     </span>
 
                     <div className="min-w-0 flex-1">
-                      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                      <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
                         <div className="min-w-0">
-                          <p className="truncate text-base font-semibold text-(--fg)">
+                          <p className="truncate text-[0.9375rem] font-bold text-(--fg)">
                             {signer.name}
                           </p>
-                          <p className="truncate text-sm text-muted-foreground">
+                          <p className="truncate text-sm text-(--secondary)">
                             {signer.email}
                           </p>
                         </div>
 
-                        <div className="space-y-2 sm:text-right">
+                        <div className="flex items-center gap-2 sm:flex-col sm:items-end sm:gap-1.5">
                           <span
-                            className={`inline-flex rounded-none px-3 py-1 [font-family:var(--font-mono)] text-[0.72rem] font-semibold uppercase tracking-[0.18em] ${signerStatusBadgeClasses[signer.status]}`}
+                            className={`pill ${signerStatusPillClasses[signer.status]}`}
                           >
+                            <StatusIcon
+                              aria-hidden="true"
+                              className="size-3.5"
+                              strokeWidth={2.6}
+                            />
                             {signerStatusLabelMap[signer.status]}
                           </span>
                           {signer.statusDateLabel ? (
@@ -366,7 +463,7 @@ export function EnvelopeDetailShell({
                         </div>
                       </div>
 
-                      <p className="mt-3 text-sm leading-6 text-muted-foreground">
+                      <p className="mt-2 text-sm leading-6 text-(--secondary)">
                         {signer.metaLabel}
                       </p>
                     </div>
@@ -377,106 +474,37 @@ export function EnvelopeDetailShell({
           </ol>
         </article>
 
-        <article className="editorial-panel p-6 sm:p-8">
+        <article className="panel p-5 sm:p-7">
           <div className="flex items-center justify-between gap-3">
-            <h2 className="text-lg font-semibold tracking-[-0.03em] text-(--fg)">
-              Timeline
-            </h2>
-            <span className="text-xs font-semibold uppercase tracking-[0.24em] text-(--tertiary)">
+            <h2 className="text-lg font-extrabold text-(--fg)">Timeline</h2>
+            <span className="pill pill-neutral">
               {activeRecord.timeline.length} events
             </span>
           </div>
 
           <ol className="mt-5 space-y-5">
             {activeRecord.timeline.map((event, index) => (
-              <li className="relative pl-6" key={event.id}>
+              <li className="relative pl-7" key={event.id}>
                 <span
                   aria-hidden="true"
-                  className={`absolute left-0 top-2.5 size-2.5 rounded-full ${timelineToneClasses[event.tone]}`}
+                  className={`absolute left-0 top-1.5 size-3 rounded-full ring-4 ring-white ${timelineToneClasses[event.tone]}`}
                 />
                 {index < activeRecord.timeline.length - 1 ? (
                   <span
                     aria-hidden="true"
-                    className="absolute left-[4.5px] top-5 h-[calc(100%+0.875rem)] w-px bg-(--border)"
+                    className="absolute left-[5.5px] top-5 h-[calc(100%+0.5rem)] w-px bg-(--border)"
                   />
                 ) : null}
-                <p className="text-sm font-semibold text-(--fg)">
+                <p className="text-[0.8125rem] font-semibold text-(--tertiary)">
                   {event.timestamp}
                 </p>
-                <p className="mt-1 text-sm leading-6 text-muted-foreground">
+                <p className="mt-0.5 text-sm leading-6 text-(--fg)">
                   {event.description}
                 </p>
               </li>
             ))}
           </ol>
         </article>
-      </section>
-
-      <section className="editorial-panel p-6 sm:p-8">
-        <h2 className="text-lg font-semibold tracking-[-0.03em] text-(--fg)">
-          Actions
-        </h2>
-
-        <div className="mt-5 flex flex-wrap gap-3">
-          {activeRecord.status === "draft" ? (
-            <>
-              <ShellButton href={`/envelopes/${envelopeId}/prepare`}>
-                Continue editing
-              </ShellButton>
-              <ShellButton
-                onClick={() => setActiveModal("delete-draft")}
-                variant="secondary"
-              >
-                Delete draft
-              </ShellButton>
-            </>
-          ) : null}
-
-          {activeRecord.status === "sent" ? (
-            <>
-              <ShellButton
-                disabled={!activeSigner || reminderLimited}
-                loading={isSendingReminder}
-                onClick={handleSendReminder}
-              >
-                Send reminder
-              </ShellButton>
-              <ShellButton
-                onClick={() => setActiveModal("void-envelope")}
-                variant="secondary"
-              >
-                Void envelope
-              </ShellButton>
-            </>
-          ) : null}
-
-          {activeRecord.status === "completed" ? (
-            <>
-              <ShellButton onClick={() => handleDownload("signed")}>
-                Download signed PDF
-              </ShellButton>
-              <ShellButton
-                onClick={() => handleDownload("evidence")}
-                variant="secondary"
-              >
-                Download certificate
-              </ShellButton>
-            </>
-          ) : null}
-
-          {activeRecord.status === "declined" ||
-          activeRecord.status === "voided" ? (
-            <ShellButton onClick={() => handleDownload("evidence")}>
-              Download certificate
-            </ShellButton>
-          ) : null}
-        </div>
-
-        {reminderHelperText ? (
-          <p className="mt-4 text-sm leading-6 text-muted-foreground">
-            {reminderHelperText}
-          </p>
-        ) : null}
       </section>
 
       {activeModal === "delete-draft" ? (
@@ -541,17 +569,12 @@ function ConfirmationDialog({
         }
       }}
     >
-      <DialogContent
-        className="max-w-md rounded-none border-(--border) sm:p-8"
-        showCloseButton={false}
-      >
+      <DialogContent className="max-w-md sm:p-8" showCloseButton={false}>
         <div className="space-y-4">
           <DialogHeader className="space-y-3">
-            <DialogTitle className="text-xl tracking-[-0.03em]">
-              {title}
-            </DialogTitle>
+            <DialogTitle>{title}</DialogTitle>
             <DialogDescription asChild>
-              <div className="space-y-3 text-sm leading-6 text-muted-foreground">
+              <div className="space-y-2 text-sm leading-6 text-(--secondary)">
                 {description.map((line) => (
                   <p key={line}>{line}</p>
                 ))}
@@ -560,17 +583,12 @@ function ConfirmationDialog({
           </DialogHeader>
 
           {errorMessage ? (
-            <div
-              className="border border-[rgba(180,35,53,0.18)] bg-[rgba(180,35,53,0.04)] px-4 py-3"
-              role="alert"
-            >
-              <p className="text-sm font-semibold text-(--accent)">
-                {errorMessage}
-              </p>
+            <div className="notice notice-danger" role="alert">
+              <p>{errorMessage}</p>
             </div>
           ) : null}
 
-          <div className="flex flex-wrap justify-end gap-3 pt-2">
+          <div className="flex flex-col-reverse gap-3 pt-2 sm:flex-row sm:justify-end">
             <ShellButton
               disabled={processing}
               onClick={onCancel}
@@ -578,7 +596,11 @@ function ConfirmationDialog({
             >
               Cancel
             </ShellButton>
-            <ShellButton loading={processing} onClick={onConfirm}>
+            <ShellButton
+              loading={processing}
+              onClick={onConfirm}
+              variant="danger"
+            >
               {processing ? `${confirmLabel}...` : confirmLabel}
             </ShellButton>
           </div>

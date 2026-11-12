@@ -4,7 +4,10 @@ import {
   queryMany,
   queryOne,
 } from "./db/connection.ts";
-import { getRecipientCertificateKey } from "./services/storage-keys.ts";
+import {
+  buildEnvelopeThumbnailKey,
+  getRecipientCertificateKey,
+} from "./services/storage-keys.ts";
 import {
   createStorageService,
   type StorageService,
@@ -191,6 +194,13 @@ function buildEnvelopeStorageKeys(
   const keys = new Set<string>(fieldImageKeys);
 
   keys.add(envelope.sourcePdfKey);
+  // A picture of the first page is as private as the document itself.
+  keys.add(
+    buildEnvelopeThumbnailKey({
+      envelopeId: envelope.id,
+      userId: envelope.userId,
+    }),
+  );
 
   if (envelope.signedPdfKey) {
     keys.add(envelope.signedPdfKey);

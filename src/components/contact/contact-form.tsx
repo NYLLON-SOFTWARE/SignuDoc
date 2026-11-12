@@ -165,7 +165,7 @@ export function ContactForm() {
   }
 
   return (
-    <section className="border border-(--border) bg-white p-6 sm:p-8">
+    <section className="well p-5 sm:p-7">
       <form className="space-y-5" onSubmit={handleSubmit}>
         <div
           aria-hidden="true"
@@ -183,13 +183,13 @@ export function ContactForm() {
         </div>
 
         {successMessage ? (
-          <div className="rounded-[24px] border border-[rgba(36,109,78,0.2)] bg-[rgba(36,109,78,0.08)] px-4 py-3 text-sm text-[rgb(36,109,78)]">
+          <div className="notice notice-success">
             {successMessage}
           </div>
         ) : null}
 
         {submitError ? (
-          <div className="rounded-[24px] border border-[rgba(180,35,53,0.18)] bg-[rgba(180,35,53,0.08)] px-4 py-3 text-sm text-(--accent)">
+          <div className="notice notice-danger">
             {submitError}
           </div>
         ) : null}
@@ -222,7 +222,7 @@ export function ContactForm() {
 
         <Field className="gap-2 text-sm">
           <FieldLabel
-            className="text-[0.84rem] font-semibold tracking-[-0.02em] text-(--fg)"
+            className="text-[0.8125rem] font-semibold text-(--secondary)"
             htmlFor="contact-message"
           >
             Message
@@ -230,7 +230,7 @@ export function ContactForm() {
           <Textarea
             aria-describedby="contact-message-description"
             aria-invalid={errors.message ? true : undefined}
-            className={errors.message ? "border-[rgba(180,35,53,0.36)]" : ""}
+            className={errors.message ? "border-(--danger)" : ""}
             disabled={isSubmitting}
             id="contact-message"
             name="contact-message"
@@ -240,7 +240,7 @@ export function ContactForm() {
           />
           {errors.message ? (
             <FieldError
-              className="text-xs font-semibold text-(--accent)"
+              className="text-xs font-semibold text-(--danger)"
               id="contact-message-description"
             >
               {errors.message}
@@ -248,7 +248,7 @@ export function ContactForm() {
           ) : null}
         </Field>
 
-        <div className="flex border-t border-(--border) pt-5 sm:justify-end">
+        <div className="flex pt-1 sm:justify-end">
           <ShellButton loading={isSubmitting} type="submit">
             {isSubmitting ? "Sending..." : "Send message"}
           </ShellButton>

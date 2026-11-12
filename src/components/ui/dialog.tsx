@@ -39,7 +39,7 @@ function DialogOverlay({
     <DialogPrimitive.Overlay
       data-slot="dialog-overlay"
       className={cn(
-        "fixed inset-0 isolate z-50 bg-[rgba(23,20,17,0.22)] duration-100 supports-backdrop-filter:backdrop-blur-sm data-open:animate-in data-open:fade-in-0 data-closed:animate-out data-closed:fade-out-0",
+        "fixed inset-0 isolate z-50 bg-[rgba(28,29,43,0.32)] duration-100 supports-backdrop-filter:backdrop-blur-sm data-open:animate-in data-open:fade-in-0 data-closed:animate-out data-closed:fade-out-0",
         className,
       )}
       {...props}
@@ -61,7 +61,7 @@ function DialogContent({
       <DialogPrimitive.Content
         data-slot="dialog-content"
         className={cn(
-          "fixed top-1/2 left-1/2 z-50 grid w-full max-w-[calc(100%-2rem)] -translate-x-1/2 -translate-y-1/2 gap-5 rounded-[30px] border border-[var(--border)] bg-[var(--paper-raised)] p-6 text-sm shadow-[0_32px_80px_rgba(18,16,12,0.18)] duration-100 outline-none sm:max-w-md sm:p-8 data-open:animate-in data-open:fade-in-0 data-open:zoom-in-95 data-closed:animate-out data-closed:fade-out-0 data-closed:zoom-out-95",
+          "fixed top-1/2 left-1/2 z-50 grid w-full max-w-[calc(100%-2rem)] -translate-x-1/2 -translate-y-1/2 gap-5 rounded-3xl bg-[var(--paper-raised)] p-6 text-sm shadow-[0_32px_80px_rgba(28,29,43,0.22)] duration-100 outline-none sm:max-w-md sm:p-8 data-open:animate-in data-open:fade-in-0 data-open:zoom-in-95 data-closed:animate-out data-closed:fade-out-0 data-closed:zoom-out-95",
           className,
         )}
         {...props}
@@ -106,7 +106,7 @@ function DialogFooter({
     <div
       data-slot="dialog-footer"
       className={cn(
-        "-mx-6 -mb-6 flex flex-col-reverse gap-3 rounded-b-[30px] border-t bg-[rgba(239,229,217,0.4)] px-6 py-5 sm:mx-[-2rem] sm:mb-[-2rem] sm:px-8 sm:py-6 sm:flex-row sm:justify-end",
+        "flex flex-col-reverse gap-3 pt-1 sm:flex-row sm:justify-end",
         className,
       )}
       {...props}
@@ -129,7 +129,7 @@ function DialogTitle({
     <DialogPrimitive.Title
       data-slot="dialog-title"
       className={cn(
-        "text-[28px] leading-none font-semibold tracking-[-0.04em] text-[var(--fg)]",
+        "pr-8 text-[1.375rem] leading-tight font-extrabold tracking-[-0.02em] text-[var(--fg)]",
         className,
       )}
       {...props}

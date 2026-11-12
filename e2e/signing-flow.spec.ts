@@ -368,6 +368,39 @@ test("a new install is set up, a sender sends a PDF and a recipient signs it", a
     }
   });
 
+  await test.step("the dashboard shows the first page as a thumbnail", async () => {
+    const thumbnailPath = `/api/envelopes/${envelopeId}/thumbnail`;
+
+    await page.goto("/dashboard");
+
+    const thumbnail = page.getByRole("img", {
+      name: `First page of ${ENVELOPE_TITLE}`,
+    });
+
+    await expect(thumbnail).toBeVisible();
+    await expect
+      .poll(() =>
+        thumbnail.evaluate((image: HTMLImageElement) => image.naturalWidth),
+      )
+      .toBeGreaterThan(0);
+
+    // The picture is stored beside the PDF, as a JPEG, and only the account
+    // that sent the document can read it.
+    await expect
+      .poll(async () => (await page.request.get(thumbnailPath)).status())
+      .toBe(200);
+    expect(
+      (await page.request.get(thumbnailPath)).headers()["content-type"],
+    ).toBe("image/jpeg");
+
+    const anonymousContext = await browser.newContext();
+
+    expect((await anonymousContext.request.get(thumbnailPath)).status()).toBe(
+      401,
+    );
+    await anonymousContext.close();
+  });
+
   // An install from before there were administrators has accounts but
   // nobody in charge. One of its users takes charge with the setup token.
   await test.step("an install with no administrator is claimed with the setup token", async () => {

@@ -56,6 +56,17 @@ export function buildEnvelopeOriginalPdfKey(
   return path.posix.join(buildEnvelopePrefix(input), "original.pdf");
 }
 
+/**
+ * The picture of the first page shown on the dashboard. It sits beside the
+ * original so that whatever removes an envelope's files can find it without
+ * a database column: it may or may not exist.
+ */
+export function buildEnvelopeThumbnailKey(
+  input: EnvelopeStorageIdentity,
+): string {
+  return path.posix.join(buildEnvelopePrefix(input), "thumbnail.jpg");
+}
+
 export function buildEnvelopeSignedPdfKey(
   input: EnvelopeStorageIdentity,
 ): string {

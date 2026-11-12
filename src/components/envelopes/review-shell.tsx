@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 
 import { useBranding } from "@/components/layout/branding-provider";
+import { DocumentThumbnail } from "@/components/shared/document-thumbnail";
 import { ShellButton } from "@/components/shared/form-shell";
 import { PageHeader } from "@/components/shared/page-header";
 import { StatusPanel } from "@/components/shared/status-panel";
@@ -147,7 +148,7 @@ export function ReviewShell({
 
   if (initialState === "error") {
     return (
-      <div className="space-y-6">
+      <div className="space-y-5">
         <PageHeader
           description="Step 4 of 4 - Review and send"
           title="New envelope"
@@ -172,7 +173,7 @@ export function ReviewShell({
 
   if (!record || record.isEmpty) {
     return (
-      <div className="space-y-6">
+      <div className="space-y-5">
         <PageHeader
           description="Step 4 of 4 - Review and send"
           title="New envelope"
@@ -203,60 +204,60 @@ export function ReviewShell({
   const firstSigner = activeRecord.signers[0];
 
   return (
-    <div className="space-y-8">
+    <div className="space-y-5">
       <PageHeader
         description="Step 4 of 4 - Review and send"
-        eyebrow="Envelope workflow"
         title="New envelope"
       />
 
       <StepIndicator current={4} steps={envelopeSteps} />
 
       {notice ? (
-        <section
-          className="border border-[rgba(5,150,105,0.18)] bg-[rgba(5,150,105,0.05)] px-5 py-4"
-          role="status"
-        >
-          <p className="text-sm font-semibold text-chart-4">{notice}</p>
-          <p className="mt-1 text-sm leading-6 text-muted-foreground">
+        <section className="notice notice-success" role="status">
+          <p>{notice}</p>
+          <p className="mt-0.5 font-medium text-(--secondary)">
             Opening the envelope detail view...
           </p>
         </section>
       ) : null}
 
       <section
-        className="editorial-panel p-6 sm:p-8"
+        className="panel p-5 sm:p-8"
         data-animate="enter"
         data-animate-delay="2"
       >
-        <div className="grid gap-6 xl:grid-cols-[minmax(0,0.42fr)_minmax(0,0.58fr)]">
-          <article className="border border-(--border) bg-(--surface) p-5 sm:p-6">
-            <div className="space-y-3">
-              <p className="section-eyebrow">Document</p>
-              <div className="space-y-2">
-                <h2 className="text-[24px] font-semibold tracking-[-0.04em] text-(--fg)">
-                  {activeRecord.title}
-                </h2>
-                <p className="text-sm leading-6 text-muted-foreground">
-                  {activeRecord.filename} - {activeRecord.pageCount} pages -{" "}
-                  {activeRecord.sizeLabel}
-                </p>
-              </div>
+        <div className="grid gap-5 lg:grid-cols-[minmax(0,0.4fr)_minmax(0,0.6fr)]">
+          <article className="well flex flex-col gap-5 p-5 sm:p-6">
+            <p className="section-eyebrow">Document</p>
+            <div className="flex h-56 items-center justify-center">
+              <DocumentThumbnail
+                envelopeId={envelopeId}
+                title={activeRecord.title}
+              />
+            </div>
+            <div className="space-y-1.5">
+              <h2 className="text-[1.375rem] font-extrabold leading-tight text-(--fg)">
+                {activeRecord.title}
+              </h2>
+              <p className="text-sm leading-6 text-(--secondary)">
+                {activeRecord.filename} - {activeRecord.pageCount} pages -{" "}
+                {activeRecord.sizeLabel}
+              </p>
             </div>
           </article>
 
-          <article className="border border-(--border) bg-white p-5 sm:p-6">
-            <div className="flex items-center justify-between gap-3">
-              <h2 className="text-lg font-semibold tracking-[-0.03em] text-(--fg)">
+          <article className="min-w-0">
+            <div className="flex items-center justify-between gap-3 px-1">
+              <h2 className="text-lg font-extrabold text-(--fg)">
                 Signing order
               </h2>
-              <span className="text-xs font-semibold uppercase tracking-[0.24em] text-(--tertiary)">
+              <span className="pill pill-neutral">
                 {activeRecord.signers.length}{" "}
                 {activeRecord.signers.length === 1 ? "signer" : "signers"}
               </span>
             </div>
 
-            <ol className="mt-5 space-y-4">
+            <ol className="mt-4 space-y-3">
               {activeRecord.signers.map((signer, index) => {
                 const palette =
                   signer.color && signer.tint
@@ -264,13 +265,10 @@ export function ReviewShell({
                     : getSignerPalette(index);
 
                 return (
-                  <li
-                    className="border border-(--border) bg-(--surface) p-4"
-                    key={signer.id}
-                  >
-                    <div className="flex items-start gap-4">
+                  <li className="well p-4" key={signer.id}>
+                    <div className="flex items-start gap-3.5">
                       <span
-                        className="inline-flex size-11 shrink-0 items-center justify-center rounded-full text-sm font-semibold"
+                        className="inline-flex size-10 shrink-0 items-center justify-center rounded-full text-sm font-bold"
                         style={{
                           backgroundColor: palette.tint,
                           color: palette.color,
@@ -282,15 +280,15 @@ export function ReviewShell({
                       <div className="min-w-0 flex-1">
                         <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
                           <div className="min-w-0">
-                            <p className="truncate text-base font-semibold text-(--fg)">
+                            <p className="truncate text-[0.9375rem] font-bold text-(--fg)">
                               {signer.name}
                             </p>
-                            <p className="truncate text-sm text-muted-foreground">
+                            <p className="truncate text-sm text-(--secondary)">
                               {signer.email}
                             </p>
                           </div>
                           <span
-                            className="inline-flex w-fit items-center gap-2 rounded-full px-3 py-1 text-xs font-semibold uppercase tracking-[0.18em]"
+                            className="pill w-fit"
                             style={{
                               backgroundColor: palette.tint,
                               color: palette.color,
@@ -306,10 +304,10 @@ export function ReviewShell({
                         </div>
 
                         <p
-                          className={`mt-3 text-sm leading-6 ${
+                          className={`mt-2 text-sm leading-6 ${
                             signer.fieldSummaries.includes("Signature")
-                              ? "text-muted-foreground"
-                              : "font-semibold text-(--accent)"
+                              ? "text-(--tertiary)"
+                              : "font-semibold text-(--danger)"
                           }`}
                         >
                           {formatSignerFieldSummary(signer.fieldSummaries)}
@@ -320,25 +318,18 @@ export function ReviewShell({
                 );
               })}
             </ol>
+
+            <p className="notice notice-accent mt-4 font-medium">
+              After you send, Signer 1 will receive an email with a link to
+              sign. Each signer is notified in order after the previous signer
+              completes.
+            </p>
           </article>
         </div>
 
-        <div className="mt-6 border border-(--border) bg-white px-5 py-5 sm:px-6">
-          <p className="text-sm leading-7 text-muted-foreground">
-            After you send, Signer 1 will receive an email with a link to sign.
-            Each signer is notified in order after the previous signer
-            completes.
-          </p>
-        </div>
-
         {disabledReason ? (
-          <div
-            className="mt-6 border border-[rgba(180,35,53,0.18)] bg-[rgba(180,35,53,0.04)] px-5 py-4"
-            role="alert"
-          >
-            <p className="text-sm font-semibold text-(--accent)">
-              {disabledReason}
-            </p>
+          <div className="notice notice-danger mt-5" role="alert">
+            <p>{disabledReason}</p>
           </div>
         ) : null}
 
@@ -402,16 +393,16 @@ function SendConfirmationDialog({
       }}
     >
       <DialogContent
-        className="max-w-md rounded-none border-(--border) sm:p-8"
+        className="max-w-md sm:p-8"
         showCloseButton={false}
       >
         <div className="space-y-4">
           <DialogHeader className="space-y-3">
-            <DialogTitle className="text-xl tracking-[-0.03em]">
+            <DialogTitle>
               Send this envelope?
             </DialogTitle>
             <DialogDescription asChild>
-              <div className="space-y-3 text-sm leading-6 text-muted-foreground">
+              <div className="space-y-3 text-sm leading-6 text-(--secondary)">
                 <p>
                   &quot;{title}&quot; will be sent to {signerCount}{" "}
                   {signerCount === 1 ? "signer" : "signers"}.{" "}
@@ -423,7 +414,7 @@ function SendConfirmationDialog({
             </DialogDescription>
           </DialogHeader>
 
-          <label className="block border border-(--border) bg-(--surface) px-4 py-4">
+          <label className="well block px-4 py-4">
             <span className="flex items-start gap-3">
               <Checkbox
                 autoFocus
@@ -434,7 +425,7 @@ function SendConfirmationDialog({
                   setIsPermittedUseConfirmed(checked === true)
                 }
               />
-              <span className="text-sm leading-6 text-muted-foreground">
+              <span className="text-sm leading-6 text-(--secondary)">
                 By sending, you confirm this document is an ordinary business
                 agreement and not a will, court order, legally required consumer
                 disclosure, or other
@@ -443,15 +434,9 @@ function SendConfirmationDialog({
                     {" "}
                     excluded document type described in the{" "}
                     <a
-                      className="font-semibold text-(--fg)"
+                      className="font-semibold text-(--accent-ink) underline decoration-[rgba(83,64,214,0.35)] underline-offset-4"
                       href={termsUrl}
                       rel="noreferrer"
-                      style={{
-                        textDecorationColor: "rgba(17,17,17,0.35)",
-                        textDecorationLine: "underline",
-                        textDecorationThickness: "1px",
-                        textUnderlineOffset: "4px",
-                      }}
                       target="_blank"
                     >
                       Terms of Service
@@ -466,17 +451,12 @@ function SendConfirmationDialog({
           </label>
 
           {errorMessage ? (
-            <div
-              className="border border-[rgba(180,35,53,0.18)] bg-[rgba(180,35,53,0.04)] px-4 py-3"
-              role="alert"
-            >
-              <p className="text-sm font-semibold text-(--accent)">
-                {errorMessage}
-              </p>
+            <div className="notice notice-danger" role="alert">
+              <p>{errorMessage}</p>
             </div>
           ) : null}
 
-          <div className="flex flex-wrap justify-end gap-3 pt-2">
+          <div className="flex flex-col-reverse gap-3 pt-2 sm:flex-row sm:justify-end">
             <ShellButton
               disabled={isSending}
               onClick={onCancel}

@@ -56,8 +56,17 @@ import { issueSigningLink } from "./services/signing-links.ts";
 import {
   buildEnvelopeCertificateKey,
   buildEnvelopeOriginalPdfKey,
+  buildEnvelopeThumbnailKey,
 } from "./services/storage-keys.ts";
-import { createStorageService } from "./services/storage.ts";
+import {
+  createStorageService,
+  StorageObjectNotFoundError,
+  type StorageObjectStream,
+} from "./services/storage.ts";
+import {
+  assertThumbnailImage,
+  THUMBNAIL_CONTENT_TYPE,
+} from "./services/thumbnails.ts";
 import {
   formatReminderAvailableAt,
   getManualNudgeAvailableAt,
@@ -204,6 +213,8 @@ export type DashboardEnvelopeListItem = {
   id: string;
   searchableEmails: readonly string[];
   status: EnvelopeRecord["status"];
+  /** What the status pill says: the status, or how far signing has got. */
+  statusLabel: string;
   title: string;
 };
 
@@ -821,6 +832,30 @@ function buildDashboardContextLine(
   return `${pluralize(signers.length, "signer")} · ${pluralize(fields.length, "field")} placed`;
 }
 
+const dashboardStatusLabels: Record<EnvelopeRecord["status"], string> = {
+  completed: "Completed",
+  declined: "Declined",
+  draft: "Draft",
+  sent: "Sent",
+  voided: "Voided",
+};
+
+function buildDashboardStatusLabel(
+  envelope: EnvelopeRecord,
+  signers: readonly PersistedSignerRecord[],
+): string {
+  // With one signer "Sent" says it all. With several, say how many are done.
+  if (envelope.status === "sent" && signers.length > 1) {
+    const signedCount = signers.filter(
+      (signer) => signer.status === "signed",
+    ).length;
+
+    return `${String(signedCount)} of ${String(signers.length)} signed`;
+  }
+
+  return dashboardStatusLabels[envelope.status];
+}
+
 function buildFieldsBySigner(
   fields: readonly FieldRecord[],
 ): Map<string, FieldRecord[]> {
@@ -1076,6 +1111,7 @@ export async function listEnvelopesForUser(
       id: envelope.id,
       searchableEmails: signers.map((signer) => signer.email),
       status: envelope.status,
+      statusLabel: buildDashboardStatusLabel(envelope, signers),
       title: envelope.title,
     };
   });
@@ -1227,10 +1263,72 @@ export async function getDraftEnvelopeDocumentForUser(
     };
   } catch (error) {
     if (
-      error instanceof Error &&
-      (error.name === "NoSuchKey" || error.name === "NotFound")
+      error instanceof StorageObjectNotFoundError ||
+      (error instanceof Error &&
+        (error.name === "NoSuchKey" || error.name === "NotFound"))
     ) {
       throw new EnvelopeDocumentAccessError("Source PDF is unavailable.", 404);
+    }
+
+    throw error;
+  }
+}
+
+/**
+ * Keeps the picture of the first page that the sender's browser drew. The
+ * bytes are checked before they are stored: see services/thumbnails.ts.
+ */
+export async function saveEnvelopeThumbnailForUser(
+  userId: string,
+  envelopeId: string,
+  body: Uint8Array,
+  {
+    database = getDb(),
+  }: {
+    database?: DbExecutor;
+  } = {},
+): Promise<void> {
+  assertThumbnailImage(body);
+
+  const envelope = await getEnvelopeByIdForUser(userId, envelopeId, database);
+
+  if (!envelope) {
+    throw new EnvelopeDocumentAccessError("Envelope not found.", 404);
+  }
+
+  await createStorageService().putObject({
+    body,
+    contentType: THUMBNAIL_CONTENT_TYPE,
+    key: buildEnvelopeThumbnailKey({ envelopeId: envelope.id, userId }),
+  });
+}
+
+/** Streams the stored first-page picture, or says there is none (404). */
+export async function getEnvelopeThumbnailForUser(
+  userId: string,
+  envelopeId: string,
+  {
+    database = getDb(),
+  }: {
+    database?: DbExecutor;
+  } = {},
+): Promise<StorageObjectStream> {
+  const envelope = await getEnvelopeByIdForUser(userId, envelopeId, database);
+
+  if (!envelope) {
+    throw new EnvelopeDocumentAccessError("Envelope not found.", 404);
+  }
+
+  try {
+    return await createStorageService().getObjectStream(
+      buildEnvelopeThumbnailKey({ envelopeId: envelope.id, userId }),
+    );
+  } catch (error) {
+    if (error instanceof StorageObjectNotFoundError) {
+      throw new EnvelopeDocumentAccessError(
+        "This document has no thumbnail yet.",
+        404,
+      );
     }
 
     throw error;
@@ -2144,6 +2242,14 @@ export async function deleteDraftEnvelope(
       error,
     );
   });
+  await storageService
+    .deleteObject(buildEnvelopeThumbnailKey({ envelopeId, userId }))
+    .catch((error) => {
+      console.error(
+        `Failed to delete the thumbnail for draft envelope ${envelopeId}:`,
+        error,
+      );
+    });
 
   return envelope;
 }
