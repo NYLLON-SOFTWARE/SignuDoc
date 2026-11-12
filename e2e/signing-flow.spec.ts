@@ -361,6 +361,27 @@ test("a new install is set up, a sender sends a PDF and a recipient signs it", a
     ).toBe(401);
     await anonymousContext.close();
 
+    // Someone signed in to the wrong account is offered a way to switch.
+    // The login page sends signed-in visitors to the dashboard, so the
+    // link has to end the session before going there.
+    const wrongAccountContext = await browser.newContext();
+    const wrongAccountPage = await wrongAccountContext.newPage();
+
+    await wrongAccountPage.goto("/login");
+    await wrongAccountPage.getByLabel("Email").fill(senderEmail);
+    await wrongAccountPage.getByLabel("Password").fill(PASSWORD);
+    await wrongAccountPage.getByRole("button", { name: "Log in" }).click();
+    await expect(wrongAccountPage).toHaveURL(/\/dashboard$/);
+    await wrongAccountPage.goto("/setup");
+    await wrongAccountPage
+      .getByRole("button", { name: "Log in as someone else" })
+      .click();
+    await expect(wrongAccountPage).toHaveURL(/\/login$/);
+    await expect(
+      wrongAccountPage.getByRole("button", { name: "Log in" }),
+    ).toBeVisible();
+    await wrongAccountContext.close();
+
     expect(
       (await page.request.post("/api/setup", { data: claim })).status(),
     ).toBe(403);

@@ -1,6 +1,6 @@
 "use client";
 
-import Link from "next/link";
+import { useRouter } from "next/navigation";
 import {
   useState,
   type ChangeEvent,
@@ -11,6 +11,7 @@ import {
 import { Brand } from "@/components/layout/brand";
 import { PublicLegalFooter } from "@/components/layout/public-legal-links";
 import { FieldShell, ShellButton } from "@/components/shared/form-shell";
+import { authClient } from "@/lib/auth/client";
 import type { SetupFieldName, SetupView } from "@/lib/setup";
 import { getEmailDomain, suggestSignupPolicy } from "@/lib/signup-policy";
 
@@ -206,9 +207,24 @@ function SetupForm({
   const [errors, setErrors] = useState<SetupErrors>({});
   const [bannerMessage, setBannerMessage] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isSwitchingAccount, setIsSwitchingAccount] = useState(false);
+  const router = useRouter();
   const isCreate = view.view === "create";
   const requiresToken = isCreate ? view.requiresToken : true;
   const asksForSender = isCreate && !view.senderAddressFromEnv;
+
+  async function handleSwitchAccount() {
+    if (isSwitchingAccount) {
+      return;
+    }
+
+    setIsSwitchingAccount(true);
+
+    // The login page sends anyone who is signed in on to the dashboard, so
+    // the current session has to end before it will show its form.
+    await authClient.signOut().catch(() => undefined);
+    router.push("/login");
+  }
 
   function handleChange(field: SetupFieldName) {
     return (event: ChangeEvent<HTMLInputElement>) => {
@@ -400,12 +416,14 @@ function SetupForm({
       {!isCreate ? (
         <p className="border-t border-(--border) pt-5 text-sm text-muted-foreground">
           Not the right account?{" "}
-          <Link
-            className="font-semibold text-(--fg) transition hover:text-(--accent)"
-            href="/login"
+          <button
+            className="cursor-pointer font-semibold text-(--fg) transition hover:text-(--accent) disabled:cursor-default disabled:opacity-60"
+            disabled={isSwitchingAccount}
+            onClick={handleSwitchAccount}
+            type="button"
           >
             Log in as someone else
-          </Link>
+          </button>
         </p>
       ) : null}
     </div>
