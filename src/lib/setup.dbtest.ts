@@ -13,7 +13,7 @@ import {
   readStoredSettings,
   saveSettings,
 } from "./settings.ts";
-import { completeSetup } from "./setup.ts";
+import { completeSetup, SetupError } from "./setup.ts";
 
 // First-run setup and the sign-up rule against a real Postgres, where the
 // order in which things become visible to other connections is the point.
@@ -143,6 +143,46 @@ test("a setup that fails halfway leaves sign-up closed, not open", async () => {
 
   assert.deepEqual(afterTheAccount, [{ status: "unclaimed" }, "closed", false]);
 });
+
+test(
+  "submissions that arrive together get one winner, and the rest are turned away at once",
+  { timeout: 20_000 },
+  async () => {
+    // As many at once as the pool has connections. If the losers waited
+    // for the winner, each would hold a connection while it did, and the
+    // winner would have none left to create the account with.
+    const submissions = Array.from({ length: 12 }, (_, index) =>
+      completeSetup(
+        { ...setupInput, email: `owner${index}@acme.com` },
+        {
+          createAdminAccount: async ({ email }) => ({
+            userId: await insertUser(email),
+          }),
+          database,
+          env,
+        },
+      ),
+    );
+    const outcomes = await Promise.allSettled(submissions);
+    const winners = outcomes.filter(
+      (outcome) => outcome.status === "fulfilled",
+    );
+    const refusals = outcomes.flatMap((outcome) =>
+      outcome.status === "rejected" ? [outcome.reason as unknown] : [],
+    );
+
+    assert.equal(winners.length, 1);
+    assert.equal(refusals.length, 11);
+
+    for (const refusal of refusals) {
+      assert.ok(refusal instanceof SetupError);
+      assert.equal(refusal.statusCode, 409);
+    }
+
+    assert.equal(await countUsers(), 1);
+    assert.deepEqual(await readSetupState(database), { status: "complete" });
+  },
+);
 
 test("an install from before settings existed stays open until it is claimed", async () => {
   await insertUser("early@customer.example");

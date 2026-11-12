@@ -245,9 +245,21 @@ export async function completeSetup(
 
   try {
     const result = await withTransaction(async (tx) => {
-      await tx.query("select pg_advisory_xact_lock($1)", [
-        SETUP_ADVISORY_LOCK_ID,
-      ]);
+      // Taken without waiting. A submission that waited would sit on a
+      // database connection for as long as the one ahead of it runs, and
+      // that one needs a second connection to create the account. Enough
+      // of them waiting would leave it none.
+      const lock = await tx.query<{ locked: boolean }>(
+        "select pg_try_advisory_xact_lock($1) as locked",
+        [SETUP_ADVISORY_LOCK_ID],
+      );
+
+      if (lock.rows[0]?.locked !== true) {
+        throw new SetupError(
+          "Setup is already running. Try again in a moment.",
+          409,
+        );
+      }
 
       const state = await readSetupState(tx);
 
