@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, rename, writeFile } from "node:fs/promises";
 import path from "node:path";
 
 import { Resend } from "resend";
@@ -127,8 +127,11 @@ function createCaptureEmailService(env: EnvSource): EmailService {
   }
 
   const emailEnv = getEnv(env).email;
+  // The comment stops Turbopack from tracing the whole project into the
+  // server bundle because of a path it cannot analyse.
   const captureDir = path.resolve(
-    env.EMAIL_CAPTURE_DIR?.trim() || DEFAULT_CAPTURE_DIR,
+    /*turbopackIgnore: true*/ env.EMAIL_CAPTURE_DIR?.trim() ||
+      DEFAULT_CAPTURE_DIR,
   );
   const config = {
     senderAddress: emailEnv.senderAddress ?? DEFAULT_CAPTURE_SENDER_ADDRESS,
@@ -140,13 +143,17 @@ function createCaptureEmailService(env: EnvSource): EmailService {
   ): Promise<EmailDeliveryResult> {
     const messageId = `capture-${randomUUID()}`;
     const filePath = path.join(
-      captureDir,
+      /*turbopackIgnore: true*/ captureDir,
       `${String(Date.now())}-${messageId}.json`,
     );
 
+    const temporaryPath = `${filePath}.tmp`;
+
+    // Written under a temporary name and renamed, so anything watching the
+    // outbox never reads a half-written file.
     await mkdir(captureDir, { recursive: true });
     await writeFile(
-      filePath,
+      temporaryPath,
       JSON.stringify(
         {
           ...buildResendPayload(message, config),
@@ -158,6 +165,7 @@ function createCaptureEmailService(env: EnvSource): EmailService {
         2,
       ),
     );
+    await rename(temporaryPath, filePath);
     console.info(
       `[email:capture] ${message.template} to ${message.to} -> ${filePath}`,
     );

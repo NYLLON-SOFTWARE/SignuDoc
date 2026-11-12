@@ -4,7 +4,9 @@ import { extractLink, extractLinks, waitForEmail } from "./support/outbox";
 import { writeSamplePdf } from "./support/sample-pdf";
 
 const PASSWORD = "correct horse battery staple 42";
-const ENVELOPE_TITLE = "E2E sample agreement";
+// The accent and the em dash are on purpose: download file names are built
+// from the title, and a header value cannot carry the em dash as it is.
+const ENVELOPE_TITLE = "Façade works agreement — phase 1";
 
 function watchForContentSecurityPolicyViolations(page: Page, sink: string[]) {
   page.on("console", (message) => {

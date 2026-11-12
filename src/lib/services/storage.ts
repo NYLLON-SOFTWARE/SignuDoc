@@ -25,8 +25,14 @@ export function buildContentDisposition(
   fileName: string,
   dispositionType: "attachment" | "inline" = "attachment",
 ): string {
-  const fallbackName = fileName.replace(/["\\\r\n]+/g, "_");
-  const encodedName = encodeURIComponent(fileName).replace(/\+/g, "%20");
+  // Header values must be Latin-1, and the quoted fallback is safest as plain
+  // ASCII. Browsers that understand filename* (all current ones) use the
+  // UTF-8 name instead.
+  const fallbackName = fileName.replace(/[^\x20-\x7e]+|["\\]+/g, "_");
+  const encodedName = encodeURIComponent(fileName).replace(
+    /['()*]/g,
+    (character) => `%${character.charCodeAt(0).toString(16).toUpperCase()}`,
+  );
 
   return `${dispositionType}; filename="${fallbackName}"; filename*=UTF-8''${encodedName}`;
 }

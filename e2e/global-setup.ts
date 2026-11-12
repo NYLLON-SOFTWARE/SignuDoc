@@ -1,4 +1,3 @@
-import { execFileSync } from "node:child_process";
 import { rm } from "node:fs/promises";
 
 import pg from "pg";
@@ -58,10 +57,13 @@ export default async function globalSetup() {
     await client.end();
   }
 
-  execFileSync(process.execPath, ["db/migrate.mjs"], {
-    env: { ...process.env, DATABASE_URL: e2eDatabaseUrl },
-    stdio: "inherit",
-  });
+  // Called directly with the test database, so a DATABASE_URL_UNPOOLED or
+  // similar in the developer's own environment cannot redirect it.
+  // The runner is an ES module, so it is loaded with import() rather than a
+  // static import that Playwright would compile to require().
+  const { runMigrations } = await import("../db/migrate.mjs");
+
+  await runMigrations({ connectionString: e2eDatabaseUrl });
 
   await rm(e2eDataDir, { force: true, recursive: true });
 }

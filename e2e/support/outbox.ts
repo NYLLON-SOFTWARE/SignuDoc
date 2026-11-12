@@ -23,15 +23,19 @@ async function readOutbox(): Promise<CapturedEmail[]> {
     fileNames
       .filter((fileName) => fileName.endsWith(".json"))
       .sort()
-      .map(
-        async (fileName) =>
-          JSON.parse(
+      .map(async (fileName) => {
+        try {
+          return JSON.parse(
             await readFile(path.join(e2eOutboxDir, fileName), "utf8"),
-          ) as CapturedEmail,
-      ),
+          ) as CapturedEmail;
+        } catch {
+          // Unreadable right now: the next poll picks it up.
+          return null;
+        }
+      }),
   );
 
-  return emails;
+  return emails.filter((email) => email !== null);
 }
 
 /** Waits for the newest captured email with this template and recipient. */

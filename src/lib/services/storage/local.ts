@@ -1,5 +1,6 @@
+import { randomUUID } from "node:crypto";
 import { createReadStream } from "node:fs";
-import { mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { Readable } from "node:stream";
 
@@ -35,6 +36,24 @@ function isMissingFileError(error: unknown): boolean {
   );
 }
 
+// Writes to a temporary name and renames it into place, so a reader never
+// sees a half-written file.
+async function writeFileAtomically(
+  filePath: string,
+  data: Uint8Array | string,
+) {
+  const temporaryPath = `${filePath}.${randomUUID()}.tmp`;
+
+  try {
+    await writeFile(temporaryPath, data);
+    await rename(temporaryPath, filePath);
+  } catch (error) {
+    await rm(temporaryPath, { force: true });
+
+    throw error;
+  }
+}
+
 export function createLocalStorageService({
   env = process.env,
   rootDir,
@@ -45,13 +64,20 @@ export function createLocalStorageService({
     );
   }
 
+  // The comment stops Turbopack from tracing the whole project into the
+  // server bundle because of a path it cannot analyse.
   const resolvedRootDir = path.resolve(
-    rootDir ?? env.STORAGE_LOCAL_DIR?.trim() ?? DEFAULT_LOCAL_STORAGE_DIR,
+    /*turbopackIgnore: true*/ rootDir ??
+      env.STORAGE_LOCAL_DIR?.trim() ??
+      DEFAULT_LOCAL_STORAGE_DIR,
   );
 
   function resolveObjectPath(key: string) {
     const normalizedKey = normalizeStorageKey(key);
-    const objectPath = path.join(resolvedRootDir, ...normalizedKey.split("/"));
+    const objectPath = path.join(
+      /*turbopackIgnore: true*/ resolvedRootDir,
+      ...normalizedKey.split("/"),
+    );
 
     return { normalizedKey, objectPath };
   }
@@ -161,15 +187,15 @@ export function createLocalStorageService({
       const { normalizedKey, objectPath } = resolveObjectPath(input.key);
 
       await mkdir(path.dirname(objectPath), { recursive: true });
-      await Promise.all([
-        writeFile(objectPath, input.body),
-        writeFile(
-          `${objectPath}${METADATA_SUFFIX}`,
-          JSON.stringify({
-            contentType: input.contentType,
-          } satisfies LocalObjectMetadata),
-        ),
-      ]);
+      // Metadata first: once the object itself is visible, its content type
+      // is already there to be read.
+      await writeFileAtomically(
+        `${objectPath}${METADATA_SUFFIX}`,
+        JSON.stringify({
+          contentType: input.contentType,
+        } satisfies LocalObjectMetadata),
+      );
+      await writeFileAtomically(objectPath, input.body);
 
       return {
         bucketName: LOCAL_BUCKET_NAME,
