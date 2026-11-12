@@ -160,55 +160,83 @@ test("a sealed PDF verifies, and any change to it is detected", async (t) => {
   }
 });
 
-test("a timestamp token from the service is stored with the signature", async () => {
-  const identity = makeIdentity();
-  // A stand-in service: answers "granted" with a token that is just a
-  // recognisable ContentInfo. The real token's own signature is not checked
-  // here; only that it is requested and stored in the right place.
-  const marker = forge.asn1.create(
-    forge.asn1.Class.UNIVERSAL,
-    forge.asn1.Type.SEQUENCE,
-    true,
-    [
-      forge.asn1.create(
-        forge.asn1.Class.UNIVERSAL,
-        forge.asn1.Type.OID,
-        false,
-        forge.asn1.oidToDer(SEAL_TEST_OIDS.signedData).getBytes(),
-      ),
-    ],
-  );
-  let requestContentType: string | undefined;
+// A stand-in time-stamping service. It answers "granted" with a token
+// shaped like a real one (ContentInfo > SignedData > TSTInfo) that echoes
+// the request's hash and nonce, or a wrong hash when told to. The token's
+// own signature is not made: readers check that, not this code.
+async function withTimestampServer(
+  { wrongImprint = false }: { wrongImprint?: boolean },
+  run: (url: string, seen: { contentType?: string }) => Promise<void>,
+) {
+  const a = forge.asn1;
+  const seq = (value: forge.asn1.Asn1[]) =>
+    a.create(a.Class.UNIVERSAL, a.Type.SEQUENCE, true, value);
+  const oid = (value: string) =>
+    a.create(
+      a.Class.UNIVERSAL,
+      a.Type.OID,
+      false,
+      a.oidToDer(value).getBytes(),
+    );
+  const integer = (value: string) =>
+    a.create(a.Class.UNIVERSAL, a.Type.INTEGER, false, value);
+  const seen: { contentType?: string } = {};
   const server = createServer((request, response) => {
-    requestContentType = request.headers["content-type"];
-    request.resume();
+    seen.contentType = request.headers["content-type"];
+
+    const chunks: Buffer[] = [];
+
+    request.on("data", (chunk: Buffer) => chunks.push(chunk));
     request.on("end", () => {
-      const answer = forge.asn1.create(
-        forge.asn1.Class.UNIVERSAL,
-        forge.asn1.Type.SEQUENCE,
-        true,
-        [
-          forge.asn1.create(
-            forge.asn1.Class.UNIVERSAL,
-            forge.asn1.Type.SEQUENCE,
-            true,
-            [
-              forge.asn1.create(
-                forge.asn1.Class.UNIVERSAL,
-                forge.asn1.Type.INTEGER,
-                false,
-                String.fromCharCode(0),
-              ),
-            ],
-          ),
-          marker,
-        ],
-      );
+      // TimeStampReq { version, messageImprint, nonce, certReq }
+      const query = a.fromDer(Buffer.concat(chunks).toString("binary"));
+      const [, messageImprint, nonce] = query.value as forge.asn1.Asn1[];
+      const imprintFields = messageImprint!.value as forge.asn1.Asn1[];
+      const hashed = wrongImprint
+        ? "x".repeat(32)
+        : (imprintFields[1]!.value as string);
+      const tstInfo = seq([
+        integer(String.fromCharCode(1)),
+        oid("1.2.3.4"),
+        seq([
+          imprintFields[0]!,
+          a.create(a.Class.UNIVERSAL, a.Type.OCTETSTRING, false, hashed),
+        ]),
+        integer(String.fromCharCode(7)),
+        a.create(
+          a.Class.UNIVERSAL,
+          a.Type.GENERALIZEDTIME,
+          false,
+          "20261112120000Z",
+        ),
+        integer(nonce!.value as string),
+      ]);
+      const token = seq([
+        oid(SEAL_TEST_OIDS.signedData),
+        a.create(a.Class.CONTEXT_SPECIFIC, 0, true, [
+          seq([
+            integer(String.fromCharCode(3)),
+            a.create(a.Class.UNIVERSAL, a.Type.SET, true, []),
+            seq([
+              oid(SEAL_TEST_OIDS.tstInfo),
+              a.create(a.Class.CONTEXT_SPECIFIC, 0, true, [
+                a.create(
+                  a.Class.UNIVERSAL,
+                  a.Type.OCTETSTRING,
+                  false,
+                  a.toDer(tstInfo).getBytes(),
+                ),
+              ]),
+            ]),
+          ]),
+        ]),
+      ]);
+      const answer = seq([seq([integer(String.fromCharCode(0))]), token]);
 
       response.writeHead(200, {
         "content-type": "application/timestamp-reply",
       });
-      response.end(Buffer.from(forge.asn1.toDer(answer).getBytes(), "binary"));
+      response.end(Buffer.from(a.toDer(answer).getBytes(), "binary"));
     });
   });
 
@@ -217,21 +245,43 @@ test("a timestamp token from the service is stored with the signature", async ()
   try {
     const address = server.address();
     const port = typeof address === "object" && address ? address.port : 0;
+
+    await run(`http://127.0.0.1:${String(port)}/`, seen);
+  } finally {
+    server.close();
+  }
+}
+
+test("a timestamp token from the service is stored with the signature", async () => {
+  const identity = makeIdentity();
+
+  await withTimestampServer({}, async (timestampUrl, seen) => {
     const cms = await buildCadesSignature(new Uint8Array([1, 2, 3]), identity, {
-      timestampUrl: `http://127.0.0.1:${String(port)}/`,
+      timestampUrl,
     });
     const der = Buffer.from(cms).toString("binary");
 
-    assert.equal(requestContentType, "application/timestamp-query");
+    assert.equal(seen.contentType, "application/timestamp-query");
     assert.ok(
       der.includes(
         forge.asn1.oidToDer(SEAL_TEST_OIDS.timeStampToken).getBytes(),
       ),
       "the token attribute is present",
     );
-  } finally {
-    server.close();
-  }
+  });
+});
+
+test("a timestamp token for some other request is refused", async () => {
+  const identity = makeIdentity();
+
+  await withTimestampServer({ wrongImprint: true }, async (timestampUrl) => {
+    await assert.rejects(
+      buildCadesSignature(new Uint8Array([1, 2, 3]), identity, {
+        timestampUrl,
+      }),
+      /does not answer this request/,
+    );
+  });
 });
 
 test("a PKCS#12 bundle from a certificate authority can be used", () => {

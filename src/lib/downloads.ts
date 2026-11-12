@@ -831,6 +831,26 @@ export async function renewRecipientDownloadLinks(
     );
   }
 
+  // The new links replace the old ones, so keep the old rows to put back
+  // if the email does not go out: the signer can then try again.
+  const previousTokens = await queryMany<{
+    createdAt: number;
+    expiresAt: number;
+    fileType: string;
+    tokenHash: string;
+  }>(
+    database,
+    `
+      SELECT
+        token_hash AS "tokenHash",
+        file_type AS "fileType",
+        expires_at AS "expiresAt",
+        created_at AS "createdAt"
+      FROM recipient_download_tokens
+      WHERE envelope_id = $1 AND signer_id = $2
+    `,
+    [envelope.id, signer.id],
+  );
   const issuedAt = Math.floor(Date.now() / 1000);
   const [signedLink, evidenceLink] = await Promise.all([
     envelope.status === "completed"
@@ -855,12 +875,34 @@ export async function renewRecipientDownloadLinks(
     ),
   ]);
 
-  await sendLinks({
-    envelope,
-    evidenceUrl: evidenceLink.url,
-    signedUrl: signedLink?.url ?? null,
-    signer,
-  });
+  try {
+    await sendLinks({
+      envelope,
+      evidenceUrl: evidenceLink.url,
+      signedUrl: signedLink?.url ?? null,
+      signer,
+    });
+  } catch (error) {
+    for (const previous of previousTokens) {
+      await database.query(
+        `
+          UPDATE recipient_download_tokens
+          SET token_hash = $1, expires_at = $2, created_at = $3
+          WHERE envelope_id = $4 AND signer_id = $5 AND file_type = $6
+        `,
+        [
+          previous.tokenHash,
+          previous.expiresAt,
+          previous.createdAt,
+          envelope.id,
+          signer.id,
+          previous.fileType,
+        ],
+      );
+    }
+
+    throw error;
+  }
 
   return { maskedEmail: maskEmail(signer.email) };
 }

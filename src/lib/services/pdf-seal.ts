@@ -26,6 +26,7 @@ const OID = {
   signedData: "1.2.840.113549.1.7.2",
   signingCertificateV2: "1.2.840.113549.1.9.16.2.47",
   timeStampToken: "1.2.840.113549.1.9.16.2.14",
+  tstInfo: "1.2.840.113549.1.9.16.1.4",
 } as const;
 
 // Room for the CMS structure, a certificate chain and a timestamp token.
@@ -110,6 +111,17 @@ function derOf(value: forge.asn1.Asn1): string {
 }
 
 /** Builds the detached CMS SignedData that goes into the PDF. */
+/** The issuer Name exactly as encoded in the certificate (RFC 5280 4.1). */
+function certificateIssuerAsn1(certificate: forge.asn1.Asn1): forge.asn1.Asn1 {
+  const tbs = (certificate.value as forge.asn1.Asn1[])[0]!;
+  const fields = tbs.value as forge.asn1.Asn1[];
+  // [0] version is optional; after it come serial, signature, issuer.
+  const offset =
+    fields[0]!.tagClass === forge.asn1.Class.CONTEXT_SPECIFIC ? 1 : 0;
+
+  return fields[offset + 2]!;
+}
+
 export async function buildCadesSignature(
   content: Uint8Array,
   identity: SealIdentity,
@@ -119,13 +131,17 @@ export async function buildCadesSignature(
     throw new PdfSealError("The seal identity has no certificate.");
   }
 
-  const certificates = identity.certificateChainPem.map((pem) =>
-    forge.pki.certificateFromPem(pem),
+  // The certificates as they were issued, byte for byte. Re-encoding them
+  // through forge's parsed form can change non-ASCII names, which would
+  // break both the certificate and the issuer match below.
+  const certificateAsn1s = identity.certificateChainPem.map((pem) =>
+    forge.asn1.fromDer(forge.pem.decode(pem)[0]!.body),
   );
-  const signingCertificate = certificates[0]!;
-  const signingCertificateDer = derOf(
-    forge.pki.certificateToAsn1(signingCertificate),
+  const signingCertificateAsn1 = certificateAsn1s[0]!;
+  const signingCertificate = forge.pki.certificateFromAsn1(
+    signingCertificateAsn1,
   );
+  const signingCertificateDer = derOf(signingCertificateAsn1);
   const contentDigest = createHash("sha256").update(content).digest();
   const certificateDigest = createHash("sha256")
     .update(Buffer.from(signingCertificateDer, "binary"))
@@ -155,7 +171,7 @@ export async function buildCadesSignature(
   }
 
   const issuerAndSerial = seq([
-    forge.pki.distinguishedNameToAsn1(signingCertificate.issuer),
+    certificateIssuerAsn1(signingCertificateAsn1),
     integer(forge.util.hexToBytes(signingCertificate.serialNumber)),
   ]);
   const signerInfo = seq([
@@ -173,12 +189,7 @@ export async function buildCadesSignature(
     integer(String.fromCharCode(1)),
     set([seq([oid(OID.sha256), nullValue()])]),
     seq([oid(OID.data)]),
-    contextTag(
-      0,
-      certificates.map((certificate) =>
-        forge.pki.certificateToAsn1(certificate),
-      ),
-    ),
+    contextTag(0, certificateAsn1s),
     set([signerInfo]),
   ]);
   const contentInfo = seq([oid(OID.signedData), contextTag(0, [signedData])]);
@@ -190,6 +201,65 @@ export async function buildCadesSignature(
  * Asks an RFC 3161 service to timestamp the signature value, and returns the
  * token (a CMS ContentInfo) to store beside it.
  */
+function stripLeadingZeros(bytes: string): string {
+  return bytes.replace(/^\x00+/, "");
+}
+
+/**
+ * Checks that a token answers this request: its TSTInfo carries the hash of
+ * this signature and this request's nonce (RFC 3161 2.4.2). The token's own
+ * signature is the time-stamping service's, and PDF readers check it.
+ */
+function assertTokenMatchesRequest(
+  token: forge.asn1.Asn1,
+  imprint: Buffer,
+  nonce: Buffer,
+) {
+  try {
+    // ContentInfo { contentType, [0] SignedData }
+    const signedData = (
+      (token.value as forge.asn1.Asn1[])[1]!.value as forge.asn1.Asn1[]
+    )[0]!;
+    // SignedData { version, digestAlgorithms, encapContentInfo, ... }
+    const encapsulated = (signedData.value as forge.asn1.Asn1[])[2]!;
+    const [contentType, explicitContent] =
+      encapsulated.value as forge.asn1.Asn1[];
+
+    if (asn1.derToOid(contentType!.value as string) !== OID.tstInfo) {
+      throw new Error("not a TSTInfo");
+    }
+
+    const octetString = (explicitContent!.value as forge.asn1.Asn1[])[0]!;
+    const tstInfo = asn1.fromDer(octetString.value as string);
+    // TSTInfo { version, policy, messageImprint, serialNumber, genTime,
+    //           accuracy?, ordering?, nonce?, ... }
+    const fields = tstInfo.value as forge.asn1.Asn1[];
+    const messageImprint = fields[2]!.value as forge.asn1.Asn1[];
+    const hashed = messageImprint[1]!.value as string;
+    const tokenNonce = fields
+      .slice(5)
+      .find(
+        (field) =>
+          field.tagClass === asn1.Class.UNIVERSAL &&
+          field.type === asn1.Type.INTEGER,
+      )?.value as string | undefined;
+
+    if (
+      hashed !== imprint.toString("binary") ||
+      tokenNonce === undefined ||
+      stripLeadingZeros(tokenNonce) !==
+        stripLeadingZeros(nonce.toString("binary"))
+    ) {
+      throw new Error("imprint or nonce differs");
+    }
+  } catch (error) {
+    throw new PdfSealError(
+      "The time-stamping service sent a token that does not answer this request.",
+      { cause: error },
+    );
+  }
+}
+
 async function requestTimestampToken(
   signatureValue: Buffer,
   timestampUrl: string,
@@ -261,6 +331,8 @@ async function requestTimestampToken(
   if ((status !== 0 && status !== 1) || !parts[1]) {
     throw new PdfSealError("The time-stamping service refused the request.");
   }
+
+  assertTokenMatchesRequest(parts[1], imprint, nonce);
 
   return parts[1];
 }

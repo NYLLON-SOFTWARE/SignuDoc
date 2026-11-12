@@ -460,8 +460,18 @@ type FinishedEnvelopeRow = EnvelopeArtifactRow & {
   title: string;
 };
 
-async function listFinishedEnvelopesOlderThan(
-  finishedBefore: number,
+/**
+ * Finished envelopes there is something to do with now: not yet warned and
+ * inside the warning window, or warned long enough ago and past the period.
+ * Envelopes waiting out their notice are left out, so they cannot fill the
+ * batch and hold back the ones behind them.
+ */
+async function listFinishedEnvelopesToHandle(
+  {
+    deleteBefore,
+    warnBefore,
+    warnedBefore,
+  }: { deleteBefore: number; warnBefore: number; warnedBefore: number },
   database: DbExecutor,
 ): Promise<FinishedEnvelopeRow[]> {
   return queryMany<FinishedEnvelopeRow>(
@@ -483,11 +493,20 @@ async function listFinishedEnvelopesOlderThan(
       FROM envelopes e
       JOIN "user" u ON u.id = e.user_id
       WHERE e.status IN ('completed', 'declined', 'voided')
-        AND COALESCE(e.completed_at, e.declined_at, e.voided_at, e.updated_at) < $1
+        AND (
+          (
+            e.retention_warned_at IS NULL
+            AND COALESCE(e.completed_at, e.declined_at, e.voided_at, e.updated_at) < $1
+          )
+          OR (
+            e.retention_warned_at <= $3
+            AND COALESCE(e.completed_at, e.declined_at, e.voided_at, e.updated_at) < $2
+          )
+        )
       ORDER BY "finishedAt" ASC, e.id ASC
       LIMIT 500
     `,
-    [finishedBefore],
+    [warnBefore, deleteBefore, warnedBefore],
   );
 }
 
@@ -543,7 +562,14 @@ async function applyRetentionPeriod(
 ) {
   const warnBefore =
     now - (retentionDays - RETENTION_WARNING_DAYS) * DAY_IN_SECONDS;
-  const candidates = await listFinishedEnvelopesOlderThan(warnBefore, database);
+  const candidates = await listFinishedEnvelopesToHandle(
+    {
+      deleteBefore: now - retentionDays * DAY_IN_SECONDS,
+      warnBefore,
+      warnedBefore: now - RETENTION_MIN_NOTICE_DAYS * DAY_IN_SECONDS,
+    },
+    database,
+  );
   const fieldImagesByEnvelopeId = await listFieldImagesForEnvelopeIds(
     candidates.map((envelope) => envelope.id),
     database,
@@ -573,19 +599,21 @@ async function applyRetentionPeriod(
         continue;
       }
 
+      // Files first: a failure leaves the row, so the next run retries.
+      await deleteStorageKeys(
+        buildEnvelopeStorageKeys(
+          envelope,
+          fieldImagesByEnvelopeId.get(envelope.id) ?? [],
+        ),
+        storageService,
+      );
+
       const deleted = await database.query(
         `DELETE FROM envelopes WHERE id = $1 AND status = $2`,
         [envelope.id, envelope.status],
       );
 
       if (deleted.rowCount === 1) {
-        await deleteStorageKeys(
-          buildEnvelopeStorageKeys(
-            envelope,
-            fieldImagesByEnvelopeId.get(envelope.id) ?? [],
-          ),
-          storageService,
-        );
         summary.finishedEnvelopesDeleted += 1;
       }
     } catch (error) {
@@ -628,11 +656,9 @@ export async function deleteEnvelopesAndFiles(
     envelopes.map((envelope) => envelope.id),
     database,
   );
-  const deleted = await database.query(
-    `DELETE FROM envelopes WHERE id = ANY($1::text[])`,
-    [envelopes.map((envelope) => envelope.id)],
-  );
-
+  // Files first, then rows: if a file cannot be deleted, the row (and the
+  // list of its files) is still there for the next attempt. Deleting a
+  // file that is already gone succeeds.
   for (const envelope of envelopes) {
     await deleteStorageKeys(
       buildEnvelopeStorageKeys(
@@ -640,13 +666,13 @@ export async function deleteEnvelopesAndFiles(
         fieldImagesByEnvelopeId.get(envelope.id) ?? [],
       ),
       storageService,
-    ).catch((error) => {
-      console.error(
-        `Failed to delete files of envelope ${envelope.id}:`,
-        error,
-      );
-    });
+    );
   }
+
+  const deleted = await database.query(
+    `DELETE FROM envelopes WHERE id = ANY($1::text[])`,
+    [envelopes.map((envelope) => envelope.id)],
+  );
 
   return deleted.rowCount ?? 0;
 }

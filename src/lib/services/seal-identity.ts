@@ -126,6 +126,9 @@ async function identityFromDatabase(
   database: DbPool,
 ): Promise<CachedIdentity> {
   const key = encryptionKey(env);
+  // Read before the transaction: settings come through another connection,
+  // which a full pool could not give while this one waits on the lock.
+  const branding = await getBranding(env);
 
   return withTransaction(async (tx) => {
     // One instance makes the key; any other waits here and then reads it.
@@ -162,7 +165,6 @@ async function identityFromDatabase(
       );
     }
 
-    const branding = await getBranding(env);
     const { privateKey, publicKey } = generateKeyPairSync("rsa", {
       modulusLength: 3072,
       privateKeyEncoding: { format: "pem", type: "pkcs8" },

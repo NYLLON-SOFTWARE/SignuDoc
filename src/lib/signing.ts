@@ -1133,13 +1133,32 @@ export async function sendSignerEmailCode(
     `<p>It works for ${String(minutes)} minutes. If you did not just open a signing link, ignore this email.</p>`,
   ].join("");
   const body = withUserEmailLegalFooter({ htmlBody, textBody }, branding);
-  const delivery = await emailService.send({
-    htmlBody: body.htmlBody,
-    subject: `Your code for "${context.envelope.title}"`,
-    template: "signing_code",
-    textBody: body.textBody,
-    to: context.signer.email,
-  });
+  let delivery: Awaited<ReturnType<EmailService["send"]>>;
+
+  try {
+    delivery = await emailService.send({
+      htmlBody: body.htmlBody,
+      subject: `Your code for "${context.envelope.title}"`,
+      template: "signing_code",
+      textBody: body.textBody,
+      to: context.signer.email,
+    });
+  } catch (error) {
+    // Not sent, so the signer may ask again at once.
+    await database.query(
+      `
+        UPDATE signers
+        SET
+          email_code_hash = NULL,
+          email_code_expires_at = NULL,
+          email_code_sent_at = NULL,
+          email_code_attempts = 0
+        WHERE id = $1 AND email_code_hash = $2
+      `,
+      [context.signer.id, issued.hash],
+    );
+    throw error;
+  }
 
   await recordEmailSent(
     {
@@ -1184,27 +1203,54 @@ export async function verifySignerCheck(
   if (parsed.method === "access_code") {
     passed = checkAccessCode(parsed.code, state.accessCodeHash!);
   } else {
-    if (
-      !state.emailCodeHash ||
-      state.emailCodeExpiresAt === null ||
-      state.emailCodeExpiresAt < now
-    ) {
+    // Count the attempt and read the code in one statement, so parallel
+    // guesses cannot share an attempt.
+    const attempt = await database.query<{
+      attempts: number;
+      hash: string;
+    }>(
+      `
+        UPDATE signers
+        SET email_code_attempts = email_code_attempts + 1
+        WHERE id = $1
+          AND email_code_hash IS NOT NULL
+          AND email_code_expires_at >= $2
+          AND email_code_attempts < $3
+        RETURNING email_code_hash AS hash, email_code_attempts AS attempts
+      `,
+      [context.signer.id, now, EMAIL_CODE_MAX_ATTEMPTS],
+    );
+    const current = attempt.rows[0];
+
+    if (!current) {
       throw new SigningMutationError(
         "That code has expired. Send a new one.",
         410,
       );
     }
 
-    passed = checkEmailCode(parsed.code, state.emailCodeHash);
+    if (checkEmailCode(parsed.code, current.hash)) {
+      // Used once: only the request that clears it passes.
+      const consumed = await database.query(
+        `
+          UPDATE signers
+          SET email_code_hash = NULL, email_code_expires_at = NULL
+          WHERE id = $1 AND email_code_hash = $2
+        `,
+        [context.signer.id, current.hash],
+      );
 
-    const attempts = state.emailCodeAttempts + 1;
-
-    await database.query(
-      passed || attempts >= EMAIL_CODE_MAX_ATTEMPTS
-        ? `UPDATE signers SET email_code_hash = NULL, email_code_expires_at = NULL, email_code_attempts = $1 WHERE id = $2`
-        : `UPDATE signers SET email_code_attempts = $1 WHERE id = $2`,
-      [attempts, context.signer.id],
-    );
+      passed = consumed.rowCount === 1;
+    } else if (current.attempts >= EMAIL_CODE_MAX_ATTEMPTS) {
+      await database.query(
+        `
+          UPDATE signers
+          SET email_code_hash = NULL, email_code_expires_at = NULL
+          WHERE id = $1 AND email_code_hash = $2
+        `,
+        [context.signer.id, current.hash],
+      );
+    }
   }
 
   await recordAuditEvent(

@@ -1,4 +1,10 @@
-import { type DbExecutor, getDb, queryMany } from "./db/connection.ts";
+import {
+  type DbExecutor,
+  type DbPool,
+  getDb,
+  queryMany,
+  withTransaction,
+} from "./db/connection.ts";
 import { deleteEnvelopesAndFiles } from "./retention.ts";
 import { emailSchema } from "./schemas/common.ts";
 
@@ -153,7 +159,7 @@ export type SignerErasureResult = {
 export async function eraseSignerData(
   rawEmail: unknown,
   confirmation: unknown,
-  database: DbExecutor = getDb(),
+  database: DbPool = getDb(),
 ): Promise<SignerErasureResult> {
   const email = parseEmail(rawEmail);
 
@@ -173,17 +179,36 @@ export async function eraseSignerData(
   );
   const inProgress = envelopes.filter((row) => row.envelopeStatus === "sent");
 
-  if (drafts.length > 0) {
-    await database.query(
-      `
-        DELETE FROM fields WHERE signer_id = ANY($1::text[])
-      `,
-      [drafts.map((row) => row.signerId)],
-    );
-    await database.query(`DELETE FROM signers WHERE id = ANY($1::text[])`, [
-      drafts.map((row) => row.signerId),
-    ]);
-  }
+  // Lock the drafts and look at their status again: one that was sent in
+  // the meantime is skipped, not stripped of a signer mid-signing.
+  const removedFromDrafts =
+    drafts.length === 0
+      ? []
+      : await withTransaction(async (tx) => {
+          const stillDrafts = await tx.query<{ id: string }>(
+            `
+              SELECT id FROM envelopes
+              WHERE id = ANY($1::text[]) AND status = 'draft'
+              FOR UPDATE
+            `,
+            [drafts.map((row) => row.envelopeId)],
+          );
+          const draftIds = new Set(stillDrafts.rows.map((row) => row.id));
+          const signerIds = drafts
+            .filter((row) => draftIds.has(row.envelopeId))
+            .map((row) => row.signerId);
+
+          await tx.query(
+            `DELETE FROM fields WHERE signer_id = ANY($1::text[])`,
+            [signerIds],
+          );
+          await tx.query(`DELETE FROM signers WHERE id = ANY($1::text[])`, [
+            signerIds,
+          ]);
+
+          return drafts.filter((row) => draftIds.has(row.envelopeId));
+        }, database);
+  const raced = drafts.filter((row) => !removedFromDrafts.includes(row));
 
   const deletedEnvelopes = await deleteEnvelopesAndFiles(
     [...new Set(finished.map((row) => row.envelopeId))],
@@ -192,8 +217,8 @@ export async function eraseSignerData(
 
   return {
     deletedEnvelopes,
-    removedFromDrafts: drafts.length,
-    skippedInProgress: inProgress.map((row) => ({
+    removedFromDrafts: removedFromDrafts.length,
+    skippedInProgress: [...inProgress, ...raced].map((row) => ({
       id: row.envelopeId,
       title: row.envelopeTitle,
     })),

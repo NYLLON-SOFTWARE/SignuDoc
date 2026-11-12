@@ -8,7 +8,7 @@ import {
 
 import { type DbExecutor, getDb, queryOne } from "./db/connection.ts";
 import { hashOpaqueToken } from "./services/opaque-tokens.ts";
-import { resolveAuthSecret } from "./utils/env.ts";
+import { isProduction, resolveAuthSecret } from "./utils/env.ts";
 
 // Extra checks a sender can ask for before a signer may open and sign:
 //
@@ -131,7 +131,20 @@ export function checkEmailCode(code: string, storedHash: string): boolean {
 }
 
 function cookieSecret(): string {
-  return resolveAuthSecret() ?? "signudoc-development-only";
+  const secret = resolveAuthSecret();
+
+  if (secret) {
+    return secret;
+  }
+
+  // A known key would let anyone forge a passed check.
+  if (isProduction(process.env)) {
+    throw new Error(
+      "Signer checks need an auth secret: set BETTER_AUTH_SECRET or a database password.",
+    );
+  }
+
+  return "signudoc-development-only";
 }
 
 export function verificationCookieName(signingTokenHash: string): string {
@@ -205,7 +218,12 @@ export function readCookie(
     const [key, ...rest] = part.trim().split("=");
 
     if (key === name) {
-      return decodeURIComponent(rest.join("="));
+      try {
+        return decodeURIComponent(rest.join("="));
+      } catch {
+        // A malformed value is treated as no cookie.
+        return null;
+      }
     }
   }
 

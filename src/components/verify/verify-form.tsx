@@ -98,6 +98,8 @@ export function VerifyForm() {
           accept="application/pdf,.pdf"
           aria-label="PDF to verify"
           className="mx-auto mt-4 block text-sm"
+          // One file at a time, so a verdict cannot land on the wrong one.
+          disabled={isChecking}
           onChange={handleFile}
           type="file"
         />

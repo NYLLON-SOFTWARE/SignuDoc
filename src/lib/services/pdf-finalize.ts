@@ -19,6 +19,7 @@ import {
 } from "../schemas/envelope.ts";
 import type { FieldRecord } from "../schemas/field.ts";
 import type { SignerRecord } from "../schemas/signer.ts";
+import { canonicalJson } from "../utils/canonical-json.ts";
 import { normalizedRectToPdfRect } from "../utils/pdf-coords.ts";
 import { sha256Hex } from "./pdf-seal.ts";
 import { saveInstallSealedPdf, type SealPurpose } from "./seal-identity.ts";
@@ -88,7 +89,7 @@ export function computeAuditFingerprint(
 ): string {
   return sha256Hex(
     new TextEncoder().encode(
-      JSON.stringify({
+      canonicalJson({
         events: auditEvents.map((event) => [
           event.id,
           event.createdAt,
@@ -122,6 +123,8 @@ function redactAuditEventMetadataForRecipients(
   const nextMetadata = { ...metadata };
 
   delete nextMetadata.signerEmail;
+  // Who an email went to is another party's address.
+  delete nextMetadata.recipient;
 
   return Object.keys(nextMetadata).length > 0 ? nextMetadata : null;
 }

@@ -10,6 +10,7 @@ import {
   queryMany,
   withTransaction,
 } from "../db/connection.ts";
+import { canonicalJson } from "../utils/canonical-json.ts";
 
 export type AuditEventMetadata = Record<string, unknown> | null;
 
@@ -97,25 +98,6 @@ type ChainedFields = {
   sequence: number;
   userAgent: string | null;
 };
-
-/** Key order is fixed so the same row always hashes the same way. */
-function canonicalJson(value: unknown): string {
-  if (Array.isArray(value)) {
-    return `[${value.map(canonicalJson).join(",")}]`;
-  }
-
-  if (value && typeof value === "object") {
-    return `{${Object.keys(value)
-      .sort()
-      .map(
-        (key) =>
-          `${JSON.stringify(key)}:${canonicalJson((value as Record<string, unknown>)[key])}`,
-      )
-      .join(",")}}`;
-  }
-
-  return JSON.stringify(value ?? null);
-}
 
 export function computeAuditRowHash(
   previousHash: string | null,
