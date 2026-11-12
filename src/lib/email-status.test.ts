@@ -96,12 +96,21 @@ function fakeResend(
 
       return respond("get", () => domains.find((domain) => domain.id === id));
     },
-    list() {
-      calls.push("list");
+    // Pages like Resend does: up to "limit" domains after the "after" id.
+    list({ after, limit = 20 }: { after?: string; limit?: number } = {}) {
+      calls.push(after ? `list after ${after}` : "list");
 
-      return respond("list", () => ({
-        data: domains.map(({ id, name, status }) => ({ id, name, status })),
-      }));
+      return respond("list", () => {
+        const start = after
+          ? domains.findIndex((domain) => domain.id === after) + 1
+          : 0;
+        const page = domains.slice(start, start + limit);
+
+        return {
+          data: page.map(({ id, name, status }) => ({ id, name, status })),
+          has_more: start + limit < domains.length,
+        };
+      });
     },
     verify(id: string) {
       calls.push(`verify ${id}`);
@@ -287,6 +296,75 @@ test("checking again asks Resend to verify, then reads the result", async () => 
   resend.domains[0]!.status = "verified";
 
   assert.equal((await recheckEmailDomain(resend.options)).state, "ready");
+});
+
+test("a check that Resend refuses to start is reported, not passed off as still waiting", async () => {
+  const resend = fakeResend({
+    domains: [
+      {
+        id: "domain_1",
+        name: "acme.com",
+        records: [DKIM_RECORD],
+        status: "pending",
+      },
+    ],
+    errors: {
+      verify: [
+        {
+          message: "Something went wrong on Resend's side.",
+          name: "internal_server_error",
+          statusCode: 500,
+        },
+      ],
+    },
+  });
+
+  assert.deepEqual(await recheckEmailDomain(resend.options), {
+    message: "Something went wrong on Resend's side.",
+    senderAddress: "sign@acme.com",
+    state: "error",
+  });
+  // The domain was not read again, and nothing was recorded either way.
+  assert.deepEqual(resend.calls, ["list", "verify domain_1"]);
+  assert.deepEqual(resend.readyMarks, []);
+});
+
+test("a domain beyond the first page of a large Resend account is still found", async () => {
+  const others = Array.from({ length: 230 }, (_, index) => ({
+    id: `other_${String(index)}`,
+    name: `client-${String(index)}.example`,
+    records: [],
+    status: "verified",
+  }));
+  const resend = fakeResend({
+    domains: [
+      ...others,
+      { id: "domain_acme", name: "acme.com", records: [], status: "verified" },
+    ],
+  });
+
+  assert.equal((await getEmailStatus(resend.options)).state, "ready");
+  assert.deepEqual(resend.calls, [
+    "list",
+    "list after other_99",
+    "list after other_199",
+  ]);
+  assert.deepEqual(resend.readyMarks, [true]);
+});
+
+test("a domain is only called missing once every page has been read", async () => {
+  const resend = fakeResend({
+    domains: Array.from({ length: 150 }, (_, index) => ({
+      id: `other_${String(index)}`,
+      name: `client-${String(index)}.example`,
+      records: [],
+      status: "verified",
+    })),
+  });
+
+  assert.equal((await getEmailStatus(resend.options)).state, "domain_missing");
+  assert.deepEqual(resend.calls, ["list", "list after other_99"]);
+  assert.deepEqual(resend.readyMarks, [false]);
 });
 
 test("a key that may only send points the administrator at Resend instead", async () => {

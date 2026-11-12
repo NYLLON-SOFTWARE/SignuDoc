@@ -1,6 +1,11 @@
 import { buildBranding, type Branding } from "./branding.ts";
 import { getDb, queryOne, type DbExecutor } from "./db/connection.ts";
-import { type SignupMode, type SignupPolicy } from "./signup-policy.ts";
+import {
+  evaluateSignup,
+  type SignupDecision,
+  type SignupMode,
+  type SignupPolicy,
+} from "./signup-policy.ts";
 import { getEnv, isHostedMode, type EnvSource } from "./utils/env.ts";
 
 // Install-wide settings: one row in app_settings, written by the first-run
@@ -44,6 +49,13 @@ export type SettingsUpdate = Partial<AppSettings>;
  */
 export type SetupState = {
   status: "complete" | "fresh" | "unclaimed" | "unmigrated";
+};
+
+/** The answer to a sign-up attempt on an install nobody has set up yet. */
+export type SetupRequiredDecision = {
+  allowed: false;
+  code: "setup_required";
+  message: string;
 };
 
 type AppSettingsRow = {
@@ -288,13 +300,26 @@ export async function saveSettings(
   return row ? mapSettingsRow(row) : next;
 }
 
+/** The sender address a check or a test email was made with. */
+export type CheckedSender = Pick<
+  ResolvedSettings,
+  "senderAddress" | "senderAddressFromEnv"
+>;
+
 /**
- * Records whether email has been seen working from the current sender
- * address. Only touches an existing row: noticing that email works is not a
- * reason to create settings nobody chose.
+ * Records whether email has been seen working from the sender address that
+ * was checked. Only touches an existing row: noticing that email works is
+ * not a reason to create settings nobody chose.
+ *
+ * A check talks to the email provider and can take a while. If an
+ * administrator saves a different sender address in the meantime, the
+ * result belongs to the old address and is dropped, so it cannot vouch for
+ * one that was never tried. An address fixed by the environment cannot
+ * change under a running check, so there is nothing to compare.
  */
 export async function markEmailReady(
   ready: boolean,
+  checked: CheckedSender,
   database: DbExecutor = getDb(),
 ): Promise<void> {
   const now = Math.floor(Date.now() / 1000);
@@ -303,9 +328,44 @@ export async function markEmailReady(
     `
       update public.app_settings
       set email_ready_at = $1, updated_at = $2
-      where id and (email_ready_at is null) = $3
+      where id
+        and (email_ready_at is null) = $3
+        and ($4::boolean or sender_address is not distinct from $5)
     `,
-    [ready ? now : null, now, ready],
+    [
+      ready ? now : null,
+      now,
+      ready,
+      checked.senderAddressFromEnv,
+      checked.senderAddressFromEnv ? null : checked.senderAddress,
+    ],
+  );
+
+  invalidateSettingsCache();
+}
+
+/**
+ * Closes sign-up on an install that has no stored rule yet, and leaves an
+ * existing rule alone.
+ *
+ * First-run setup calls this just before it creates the administrator's
+ * account. That account is created on its own connection and so can be seen
+ * before setup's transaction commits; without a stored rule, an install
+ * with an account counts as open to anyone. With this row in place nobody
+ * else can register in that gap, or after a setup that failed halfway.
+ */
+export async function closeSignupUntilSetupFinishes(
+  database: DbExecutor = getDb(),
+): Promise<void> {
+  const now = Math.floor(Date.now() / 1000);
+
+  await database.query(
+    `
+      insert into public.app_settings (id, signup_mode, created_at, updated_at)
+      values (true, 'closed', $1, $1)
+      on conflict (id) do nothing
+    `,
+    [now],
   );
 
   invalidateSettingsCache();
@@ -367,6 +427,40 @@ export async function getSetupState(): Promise<SetupState> {
   }
 
   return state;
+}
+
+/**
+ * Applies this install's sign-up rule to one email address. Before first-run
+ * setup has happened nobody can sign up at all: the first account is the
+ * administrator's, and only the setup page creates it.
+ *
+ * The rule is read from the database every time rather than from the short
+ * cache the pages use. Sign-ups are rare, and a rule that an administrator
+ * (or setup) has just saved has to hold at once on every instance, not
+ * thirty seconds later.
+ */
+export async function evaluateSignupRequest(
+  email: string,
+  env: EnvSource = process.env,
+  database: DbExecutor = getDb(),
+): Promise<SignupDecision | SetupRequiredDecision> {
+  const setupState =
+    cache.setupCompleteUntil > Date.now()
+      ? ({ status: "complete" } as const)
+      : await readSetupState(database);
+
+  if (setupState.status === "fresh") {
+    return {
+      allowed: false,
+      code: "setup_required",
+      message: "This site has not been set up yet.",
+    };
+  }
+
+  return evaluateSignup(
+    email,
+    resolveSettings(await readStoredSettings(database), env),
+  );
 }
 
 /** True when every visitor should be sent to the setup page. */

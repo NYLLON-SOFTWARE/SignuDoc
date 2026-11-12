@@ -5,6 +5,7 @@ import { z } from "zod";
 import { getDb, withTransaction, type DbPool } from "./db/connection.ts";
 import { emailSchema, nameSchema } from "./schemas/common.ts";
 import {
+  closeSignupUntilSetupFinishes,
   invalidateSettingsCache,
   readSetupState,
   readStoredSettings,
@@ -287,6 +288,13 @@ export async function completeSetup(
 
         const account = parsedAccount.data;
         const email = account.email.toLowerCase();
+
+        // The account below is created on its own connection, so it can be
+        // seen before this transaction commits. Sign-up is closed first,
+        // also outside the transaction, so nobody else can register while
+        // an account exists and the rule chosen here has not landed yet.
+        await closeSignupUntilSetupFinishes(database);
+
         const { userId } = await createAdminAccount({
           email,
           name: account.fullName,

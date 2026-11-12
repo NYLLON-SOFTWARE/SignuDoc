@@ -5,7 +5,7 @@ import {
   type EmailService,
 } from "./services/email.ts";
 import { withUserEmailLegalFooter } from "./services/email-legal-footer.ts";
-import { getBranding, markEmailReady } from "./settings.ts";
+import { getBranding, getSettings, markEmailReady } from "./settings.ts";
 import { type EnvSource } from "./utils/env.ts";
 import { escapeHtml } from "./utils/html.ts";
 
@@ -48,6 +48,11 @@ export async function sendTestEmail({
       env,
     );
 
+    // Which sender this test is about to prove, noted before it is sent:
+    // an administrator may save a different one while it is on its way.
+    const testedSettings = await getSettings(env);
+    const { senderAddress: testedSender } = await resolveEmailAddresses(env);
+
     await (emailService ?? createEmailService({ env })).send({
       htmlBody: content.htmlBody,
       subject: `Test email from ${productName}`,
@@ -60,10 +65,8 @@ export async function sendTestEmail({
     // address's domain is verified, even when the API key is not allowed to
     // say so. The shared test address proves nothing: it only ever reaches
     // the owner of the Resend account.
-    const { senderAddress } = await resolveEmailAddresses(env);
-
-    if (!isResendTestSender(senderAddress)) {
-      await markEmailReady(true);
+    if (!isResendTestSender(testedSender)) {
+      await markEmailReady(true, testedSettings);
     }
 
     return { sent: true, to };

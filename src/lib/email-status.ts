@@ -143,7 +143,7 @@ async function defaultRecordReady(
     return;
   }
 
-  await markEmailReady(ready);
+  await markEmailReady(ready, settings);
 }
 
 const RATE_LIMIT_RETRY_DELAY_MS = 1_100;
@@ -216,6 +216,69 @@ async function describeDomain(
   };
 }
 
+const DOMAIN_PAGE_SIZE = 100;
+// Enough for two thousand domains. Past that the answer is "could not
+// tell", not "the domain is missing".
+const MAX_DOMAIN_PAGES = 20;
+
+type ListedDomain = { id: string; name: string; status: string };
+
+type DomainSearch =
+  | { error: null; match: ListedDomain | null }
+  | {
+      error: { message: string; name?: string; statusCode?: number | null };
+      match: null;
+    };
+
+// Resend hands the account's domains over a page at a time, so the search
+// follows the pages until the domain turns up or there are no more.
+async function findDomain(
+  client: ResendDomainsClient,
+  domain: string,
+): Promise<DomainSearch> {
+  let after: string | undefined;
+
+  for (let page = 0; page < MAX_DOMAIN_PAGES; page += 1) {
+    const cursor = after;
+    const listed = await callResend(() =>
+      client.list(
+        cursor
+          ? { after: cursor, limit: DOMAIN_PAGE_SIZE }
+          : { limit: DOMAIN_PAGE_SIZE },
+      ),
+    );
+
+    if (listed.error) {
+      return { error: listed.error, match: null };
+    }
+
+    const domains = listed.data.data;
+    const match = domains.find(
+      (candidate) => candidate.name.toLowerCase() === domain,
+    );
+
+    if (match) {
+      return { error: null, match };
+    }
+
+    const last = domains[domains.length - 1];
+
+    if (!listed.data.has_more || !last) {
+      return { error: null, match: null };
+    }
+
+    after = last.id;
+  }
+
+  return {
+    error: {
+      message:
+        "This Resend account has too many domains to search. Send a test email to check instead.",
+    },
+    match: null,
+  };
+}
+
 // Finds out everything short of the domain's DNS records, which cost one
 // more request and are fetched by whoever needs them.
 async function inspectEmail({
@@ -262,20 +325,18 @@ async function inspectEmail({
     return { ...base, status: { senderAddress, state: "test_sender" } };
   }
 
-  const listed = await callResend(() => client.list({ limit: 100 }));
+  const found = await findDomain(client, domain);
 
-  if (listed.error) {
+  if (found.error) {
     // Nothing is known either way, so the mark is left as it is. A test
     // email that gets through is what sets it in this case.
     return {
       ...base,
-      status: toErrorStatus(listed.error, domain, senderAddress),
+      status: toErrorStatus(found.error, domain, senderAddress),
     };
   }
 
-  const match = listed.data.data.find(
-    (candidate) => candidate.name.toLowerCase() === domain,
-  );
+  const { match } = found;
 
   if (!match) {
     await markReady(false);
@@ -375,7 +436,12 @@ export async function recheckEmailDomain(
 
   // Starts a check on Resend's side. Its result can take a moment to show,
   // so the status returned here may still say the records are pending.
-  await callResend(() => client.verify(domainId));
+  const started = await callResend(() => client.verify(domainId));
+
+  if (started.error) {
+    // The check never started, which is not the same as "still waiting".
+    return toErrorStatus(started.error, status.domain, status.senderAddress);
+  }
 
   return describeDomain(
     client,

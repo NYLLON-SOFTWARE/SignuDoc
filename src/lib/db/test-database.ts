@@ -3,8 +3,9 @@ import pg from "pg";
 import { runMigrations } from "../../../db/migrate.mjs";
 
 // For the tests that need a real Postgres (npm run test:db). They use the
-// same disposable database as the end-to-end test, bring its schema up to
-// date, and leave whatever else is in it alone.
+// same disposable database as the end-to-end test and bring its schema up
+// to date. Some of them empty its accounts and settings, which the
+// end-to-end test does on every run anyway.
 
 const DEFAULT_TEST_DATABASE_URL =
   "postgres://signudoc:signudoc@127.0.0.1:5432/signudoc_e2e";

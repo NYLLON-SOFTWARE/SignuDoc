@@ -18,8 +18,7 @@ import { withUserEmailLegalFooter } from "../services/email-legal-footer.ts";
 import { consumeRateLimit } from "../security/rate-limit.ts";
 import { getClientIpHeaderNames } from "../security/request.ts";
 import { requireConfigValue } from "../services/service-config.ts";
-import { getBranding, getSettings, getSetupState } from "../settings.ts";
-import { evaluateSignup } from "../signup-policy.ts";
+import { evaluateSignupRequest, getBranding } from "../settings.ts";
 import {
   getEnv,
   resolveDeploymentOrigins,
@@ -225,28 +224,6 @@ function sendAuthEmailInBackground(input: {
     // response to wait for.
     void deliver();
   }
-}
-
-/**
- * Applies this install's sign-up rule to one email address. Before first-run
- * setup has happened nobody can sign up at all: the first account is the
- * administrator's, and only the setup page creates it.
- */
-export async function evaluateSignupRequest(
-  email: string,
-  env: EnvSource = process.env,
-) {
-  const setupState = await getSetupState();
-
-  if (setupState.status === "fresh") {
-    return {
-      allowed: false as const,
-      code: "setup_required" as const,
-      message: "This site has not been set up yet.",
-    };
-  }
-
-  return evaluateSignup(email, await getSettings(env));
 }
 
 // In production, new passwords are checked against the Have I Been Pwned
