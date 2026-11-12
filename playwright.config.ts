@@ -70,10 +70,13 @@ export default defineConfig({
     },
     reuseExistingServer: false,
     timeout: 300_000,
-    // Playwright starts the server before the test database is wiped, so
-    // the readiness check must not be a page: a page would look at last
-    // run's data and remember for a minute that the site is already set up.
-    url: `${baseURL}/api/auth/ok`,
+    // Playwright starts the server before the test database is prepared:
+    // on a first run, as in CI, it has no tables at all, and on later runs
+    // it holds the last run's data. So the readiness check must be
+    // something that never touches the database. A page would remember for
+    // a minute that the site is already set up, and an API route can fail
+    // outright for want of tables.
+    url: `${baseURL}/icon.svg`,
   },
   workers: 1,
 });
