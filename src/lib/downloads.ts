@@ -536,8 +536,9 @@ async function buildSignedPdfDownload(
   } catch (error) {
     // The signed PDF is gone and so is the source it would be rebuilt from,
     // for example after the retention period removed both.
+    // The same words as when any other stored file turns out to be gone.
     if (error instanceof StorageObjectNotFoundError) {
-      throw new DownloadAccessError("Signed PDF is unavailable.", 404);
+      throw new DownloadAccessError("This file is no longer available.", 404);
     }
 
     throw error;
