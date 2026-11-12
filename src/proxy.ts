@@ -1,5 +1,5 @@
 import type { NextRequest } from "next/server";
-import { getCookieCache, getSessionCookie } from "better-auth/cookies";
+import { getCookieCache } from "better-auth/cookies";
 import { NextResponse } from "next/server";
 
 import { supportsDirectUploads } from "@/lib/services/storage/driver";
@@ -153,27 +153,32 @@ function applySecurityHeaders(response: NextResponse, pathname: string) {
   return response;
 }
 
-async function hasOptimisticSession(request: NextRequest) {
+// True only for a session the auth server would accept without looking it
+// up: its signed, short-lived copy in the cookie cache. The session token
+// cookie on its own proves nothing. It outlives a session that was signed
+// out elsewhere, expired, or belongs to a database that has been replaced,
+// and sending such a visitor to the dashboard would bounce them straight
+// back here, forever. Someone signed in whose cached copy has run out is
+// sent on by the page itself, which asks the auth server.
+async function hasVerifiedSession(request: NextRequest) {
   // Resolved the same way the auth server does, so this keeps working when
   // the secret is derived rather than set.
   const secret = resolveAuthSecret();
 
-  if (secret) {
-    try {
-      const session = await getCookieCache(request, {
-        isSecure: resolveAuthUrl()?.startsWith("https://") ?? false,
-        secret,
-      });
-
-      if (session) {
-        return true;
-      }
-    } catch {
-      // Fall back to the session token check if cookie-cache parsing fails.
-    }
+  if (!secret) {
+    return false;
   }
 
-  return getSessionCookie(request) !== null;
+  try {
+    const session = await getCookieCache(request, {
+      isSecure: resolveAuthUrl()?.startsWith("https://") ?? false,
+      secret,
+    });
+
+    return session !== null;
+  } catch {
+    return false;
+  }
 }
 
 async function maybeRedirectAuthenticatedAuthRoute(request: NextRequest) {
@@ -193,7 +198,7 @@ async function maybeRedirectAuthenticatedAuthRoute(request: NextRequest) {
     }
   }
 
-  const hasSession = await hasOptimisticSession(request);
+  const hasSession = await hasVerifiedSession(request);
 
   if (!hasSession) {
     return null;

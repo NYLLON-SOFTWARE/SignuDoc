@@ -3,6 +3,7 @@ import { createAuthMiddleware } from "better-auth/api";
 import { nextCookies } from "better-auth/next-js";
 import { haveIBeenPwned } from "better-auth/plugins";
 import { headers } from "next/headers";
+import { redirect, unstable_rethrow } from "next/navigation";
 import { after } from "next/server";
 import type { Pool } from "pg";
 import { cache } from "react";
@@ -17,7 +18,10 @@ import {
 import { withUserEmailLegalFooter } from "../services/email-legal-footer.ts";
 import { consumeRateLimit } from "../security/rate-limit.ts";
 import { getClientIpHeaderNames } from "../security/request.ts";
-import { requireConfigValue } from "../services/service-config.ts";
+import {
+  requireConfigValue,
+  ServiceConfigurationError,
+} from "../services/service-config.ts";
 import { evaluateSignupRequest, getBranding } from "../settings.ts";
 import {
   getEnv,
@@ -475,4 +479,30 @@ const getCachedAuthSession = cache(async () => {
 
 export function getAuthSession() {
   return getCachedAuthSession();
+}
+
+/**
+ * For the sign-in and sign-up pages: someone who is already signed in is
+ * sent on to their documents. This asks the auth server, so a cookie left
+ * over from a session that no longer exists does not count as signed in.
+ */
+export async function redirectIfSignedIn(): Promise<void> {
+  let signedIn = false;
+
+  try {
+    signedIn = (await getAuthSession()) !== null;
+  } catch (error) {
+    // Next.js throws to say a page cannot be built ahead of time. That is
+    // not a failure, and it is Next's to handle.
+    unstable_rethrow(error);
+
+    // Not being able to ask is no reason to fail a page that shows a form.
+    if (!(error instanceof ServiceConfigurationError)) {
+      console.error("[auth] Could not check for a session:", error);
+    }
+  }
+
+  if (signedIn) {
+    redirect("/dashboard");
+  }
 }

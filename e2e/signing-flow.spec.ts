@@ -34,6 +34,7 @@ async function expectPdfResponse(response: {
 }
 
 test("a new install is set up, a sender sends a PDF and a recipient signs it", async ({
+  baseURL,
   browser,
   page,
 }, testInfo) => {
@@ -204,6 +205,38 @@ test("a new install is set up, a sender sends a PDF and a recipient signs it", a
         })
       ).status(),
     ).toBe(403);
+
+    // Signed in, the login page has nothing to offer and sends them on.
+    await page.goto("/login");
+    await expect(page).toHaveURL(/\/dashboard$/);
+  });
+
+  await test.step("a cookie left from a session that is gone still reaches the login page", async () => {
+    // Signed out elsewhere, expired, or from a database since replaced:
+    // the browser keeps the cookie either way. Treating it as signed in
+    // would send the visitor to the dashboard, which sends them back.
+    const staleContext = await browser.newContext();
+
+    await staleContext.addCookies([
+      {
+        name: "better-auth.session_token",
+        url: baseURL ?? "",
+        value: "no-such-session.c2lnbmF0dXJl",
+      },
+    ]);
+
+    const stalePage = await staleContext.newPage();
+
+    for (const authPage of ["/login", "/signup"]) {
+      await stalePage.goto(authPage);
+      await expect(stalePage).toHaveURL(new RegExp(`${authPage}$`));
+    }
+
+    await stalePage.goto("/login");
+    await expect(
+      stalePage.getByRole("button", { name: "Log in" }),
+    ).toBeVisible();
+    await staleContext.close();
   });
 
   await test.step("upload a PDF", async () => {

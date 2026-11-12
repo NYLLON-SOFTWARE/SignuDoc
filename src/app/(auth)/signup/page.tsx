@@ -1,9 +1,12 @@
 import { SignupShell } from "@/components/auth/signup-shell";
+import { redirectIfSignedIn } from "@/lib/auth/server";
 import { buildBranding } from "@/lib/branding";
 import { getSettings } from "@/lib/settings";
 import { describeSignupPolicy } from "@/lib/signup-policy";
 
 export default async function SignupPage() {
+  await redirectIfSignedIn();
+
   const settings = await getSettings();
 
   return (
