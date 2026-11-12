@@ -17,9 +17,10 @@ import {
   ACCOUNT_CLOSURE_EXPORT_WINDOW_DAYS,
   scheduleAccountClosure,
 } from "./retention.ts";
+import { resolvePublicSupportAddress } from "./public-contact.ts";
 import { createEmailService } from "./services/email.ts";
-import { ServiceConfigurationError } from "./services/service-config.ts";
-import { getEnv, type EnvSource } from "./utils/env.ts";
+import { getBranding } from "./settings.ts";
+import { type EnvSource } from "./utils/env.ts";
 
 type SenderAccountRow = {
   email: string;
@@ -215,15 +216,6 @@ async function formatEnvelopeCounts(
   );
 }
 
-function resolveSupportAddress(env: EnvSource): string {
-  const supportAddress = getEnv(env).email.supportAddress;
-
-  if (supportAddress) {
-    return supportAddress;
-  }
-
-  throw new ServiceConfigurationError("email", ["SUPPORT_EMAIL"]);
-}
 
 function formatRetentionDeadline(timestamp: number): string {
   return new Date(timestamp * 1000).toISOString().replace(".000Z", " UTC");
@@ -253,13 +245,15 @@ export async function requestAccountClosure(
 
     try {
       const emailService = createEmailService({ env });
+      const supportAddress = await resolvePublicSupportAddress(env);
+      const { productName } = await getBranding(env);
 
       await emailService.send({
         replyTo: account.email,
         subject: `Account closure request — ${account.name}`,
         template: "account_closure_request",
         textBody: [
-          "A sender requested account closure from the SignuDoc settings page.",
+          `A sender requested account closure from the ${productName} settings page.`,
           "",
           `Sender: ${account.name} <${account.email}>`,
           `User ID: ${userId}`,
@@ -273,7 +267,7 @@ export async function requestAccountClosure(
           "",
           "This request came through the guarded in-app danger-zone flow.",
         ].join("\n"),
-        to: resolveSupportAddress(env),
+        to: supportAddress,
       });
     } catch (error) {
       console.error(

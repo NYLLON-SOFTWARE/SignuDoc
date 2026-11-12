@@ -1,3 +1,4 @@
+import { type Branding } from "./branding.ts";
 import {
   type DbExecutor,
   type DbPool,
@@ -10,6 +11,7 @@ import {
   type EnvelopeRecord,
 } from "./schemas/envelope.ts";
 import { type SignerRecord } from "./schemas/signer.ts";
+import { getBranding } from "./settings.ts";
 import { recordAuditEvent } from "./services/audit.ts";
 import { createEmailService } from "./services/email.ts";
 import { withUserEmailLegalFooter } from "./services/email-legal-footer.ts";
@@ -154,6 +156,7 @@ async function getCurrentSignerForEnvelope(
 }
 
 function buildReminderEmail(input: {
+  branding: Branding;
   envelopeId: string;
   envelopeTitle: string;
   senderName: string;
@@ -162,7 +165,7 @@ function buildReminderEmail(input: {
   signingUrl: string;
 }) {
   const subject = `${input.senderName} sent you a reminder to sign "${input.envelopeTitle}"`;
-  const introLine = `${input.senderName} sent you a reminder to sign "${input.envelopeTitle}" through SignuDoc.`;
+  const introLine = `${input.senderName} sent you a reminder to sign "${input.envelopeTitle}" through ${input.branding.productName}.`;
   const textBody = [
     `Hi ${input.signerName},`,
     "",
@@ -171,20 +174,23 @@ function buildReminderEmail(input: {
     "Review and sign the document here:",
     input.signingUrl,
     "",
-    "You do not need a SignuDoc account to sign.",
+    `You do not need a ${input.branding.productName} account to sign.`,
     "If you receive a newer invitation or reminder link, use the newest one.",
   ].join("\n");
   const htmlBody = [
     `<p>Hi ${escapeHtml(input.signerName)},</p>`,
     `<p>${escapeHtml(introLine)}</p>`,
     `<p><a href="${escapeHtml(input.signingUrl)}">Review and sign the document</a></p>`,
-    "<p>You do not need a SignuDoc account to sign.</p>",
+    `<p>You do not need a ${escapeHtml(input.branding.productName)} account to sign.</p>`,
     "<p>If you receive a newer invitation or reminder link, use the newest one.</p>",
   ].join("");
-  const legalFooter = withUserEmailLegalFooter({
-    htmlBody,
-    textBody,
-  });
+  const legalFooter = withUserEmailLegalFooter(
+    {
+      htmlBody,
+      textBody,
+    },
+    input.branding,
+  );
 
   return {
     htmlBody: legalFooter.htmlBody,
@@ -375,6 +381,7 @@ export async function sendManualEnvelopeNudge(
   try {
     await emailService.send(
       buildReminderEmail({
+        branding: await getBranding(),
         envelopeId: persisted.envelopeId,
         envelopeTitle: persisted.envelopeTitle,
         senderName: persisted.senderName,

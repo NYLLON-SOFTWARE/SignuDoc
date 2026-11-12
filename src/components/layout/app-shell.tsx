@@ -44,6 +44,8 @@ import { authClient } from "@/lib/auth/client";
 
 type AppShellProps = {
   children: ReactNode;
+  /** Shown to the administrator until email can reach signers. */
+  showEmailSetupNotice?: boolean;
   user: {
     email: string;
     name: string;
@@ -59,7 +61,11 @@ const sectionLabelMap: Record<ShellSection, string> = {
   workspace: "Workspace",
 };
 
-export function AppShell({ children, user }: AppShellProps) {
+export function AppShell({
+  children,
+  showEmailSetupNotice = false,
+  user,
+}: AppShellProps) {
   const pathname = usePathname() ?? "/dashboard";
   const router = useRouter();
   const [isSigningOut, setIsSigningOut] = useState(false);
@@ -213,7 +219,29 @@ export function AppShell({ children, user }: AppShellProps) {
         </header>
 
         <main className="flex-1 px-4 py-5 sm:px-6 sm:py-7 lg:px-8 xl:px-10">
-          <div className="mx-auto w-full max-w-[1080px]">{children}</div>
+          <div className="mx-auto w-full max-w-[1080px]">
+            {showEmailSetupNotice && currentSection !== "settings" ? (
+              <div
+                className="mb-6 flex flex-col gap-3 border border-[rgba(180,35,53,0.18)] bg-[rgba(180,35,53,0.04)] px-5 py-4 sm:flex-row sm:items-center sm:justify-between"
+                role="status"
+              >
+                <p className="text-sm leading-6 text-(--fg)">
+                  <span className="font-semibold">
+                    Email is not set up yet.
+                  </span>{" "}
+                  Until it is, signers and new users will not receive
+                  messages from this site.
+                </p>
+                <Link
+                  className="shrink-0 text-sm font-semibold text-(--accent) underline underline-offset-4"
+                  href="/settings#organization"
+                >
+                  Finish email setup
+                </Link>
+              </div>
+            ) : null}
+            {children}
+          </div>
         </main>
       </SidebarInset>
     </SidebarProvider>

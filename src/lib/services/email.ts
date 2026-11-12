@@ -4,19 +4,19 @@ import path from "node:path";
 
 import { Resend } from "resend";
 
+import { getSettings } from "../settings.ts";
 import { type EmailTemplateKind } from "../types/domain.ts";
 import { getEnv, isLocalDeployment, type EnvSource } from "../utils/env.ts";
+import { buildEmailAddresses, type EmailAddresses } from "./email-addresses.ts";
 import { assertServiceConfig } from "./service-config.ts";
 
-const EMAIL_ENV_KEYS = [
-  "RESEND_API_KEY",
-  "RESEND_FROM_EMAIL",
-  "SUPPORT_EMAIL",
-] as const;
+// The addresses mail is sent from and replied to are not needed here: they
+// come from RESEND_FROM_EMAIL and SUPPORT_EMAIL when those are set, and from
+// the install's settings otherwise, and are looked up when a message is sent.
+const EMAIL_ENV_KEYS = ["RESEND_API_KEY"] as const;
 
 const DEFAULT_CAPTURE_DIR = ".data/outbox";
-const DEFAULT_CAPTURE_SENDER_ADDRESS = "SignuDoc <dev@signudoc.localhost>";
-const DEFAULT_CAPTURE_SUPPORT_ADDRESS = "support@signudoc.localhost";
+const DEFAULT_CAPTURE_SENDER_ADDRESS = "dev@signudoc.localhost";
 
 export type EmailDriver = "capture" | "resend";
 
@@ -41,6 +41,8 @@ export type EmailSendOptions = {
 
 type CreateEmailServiceOptions = {
   env?: EnvSource;
+  /** Replaced in tests, where there is no database to read settings from. */
+  resolveAddresses?: () => Promise<EmailAddresses>;
   resendClient?: Resend;
 };
 
@@ -67,15 +69,12 @@ function buildResendOptions(options?: EmailSendOptions) {
 
 function buildResendPayload(
   message: TransactionalEmailMessage,
-  config: {
-    senderAddress: string;
-    supportAddress: string;
-  },
+  config: EmailAddresses,
 ) {
   return {
     from: config.senderAddress,
     html: message.htmlBody,
-    replyTo: message.replyTo ?? config.supportAddress,
+    replyTo: message.replyTo ?? config.supportAddress ?? undefined,
     subject: message.subject,
     tags: [
       {
@@ -119,7 +118,10 @@ export function resolveEmailDriver(env: EnvSource = process.env): EmailDriver {
  * Development and test driver: nothing is sent. Each message is written as a
  * JSON file so a person (or the end-to-end test) can read the links in it.
  */
-function createCaptureEmailService(env: EnvSource): EmailService {
+function createCaptureEmailService(
+  env: EnvSource,
+  resolveAddresses: () => Promise<EmailAddresses>,
+): EmailService {
   // Allowed in development, and for a production build that is being run on
   // localhost (which is what the end-to-end test does). Never on a real site.
   if (env.NODE_ENV === "production" && !isLocalDeployment(env)) {
@@ -128,21 +130,17 @@ function createCaptureEmailService(env: EnvSource): EmailService {
     );
   }
 
-  const emailEnv = getEnv(env).email;
   // The comment stops Turbopack from tracing the whole project into the
   // server bundle because of a path it cannot analyse.
   const captureDir = path.resolve(
     /*turbopackIgnore: true*/ env.EMAIL_CAPTURE_DIR?.trim() ||
       DEFAULT_CAPTURE_DIR,
   );
-  const config = {
-    senderAddress: emailEnv.senderAddress ?? DEFAULT_CAPTURE_SENDER_ADDRESS,
-    supportAddress: emailEnv.supportAddress ?? DEFAULT_CAPTURE_SUPPORT_ADDRESS,
-  };
 
   async function capture(
     message: TransactionalEmailMessage,
   ): Promise<EmailDeliveryResult> {
+    const config = await resolveAddresses();
     const messageId = `capture-${randomUUID()}`;
     const filePath = path.join(
       /*turbopackIgnore: true*/ captureDir,
@@ -193,25 +191,35 @@ function createCaptureEmailService(env: EnvSource): EmailService {
   };
 }
 
+/** The addresses this install sends from, as configured right now. */
+export async function resolveEmailAddresses(
+  env: EnvSource = process.env,
+): Promise<EmailAddresses> {
+  const settings = await getSettings(env);
+
+  return resolveEmailDriver(env) === "capture"
+    ? buildEmailAddresses(settings, DEFAULT_CAPTURE_SENDER_ADDRESS)
+    : buildEmailAddresses(settings);
+}
+
 export function createEmailService({
   env = process.env,
+  resolveAddresses = () => resolveEmailAddresses(env),
   resendClient,
 }: CreateEmailServiceOptions = {}): EmailService {
   if (!resendClient && resolveEmailDriver(env) === "capture") {
-    return createCaptureEmailService(env);
+    return createCaptureEmailService(env, resolveAddresses);
   }
 
-  assertServiceConfig("email", EMAIL_ENV_KEYS, env);
+  if (!resendClient) {
+    assertServiceConfig("email", EMAIL_ENV_KEYS, env);
+  }
 
-  const emailEnv = getEnv(env).email;
-  const client = resendClient ?? new Resend(emailEnv.apiKey!);
-  const config = {
-    senderAddress: emailEnv.senderAddress!,
-    supportAddress: emailEnv.supportAddress!,
-  };
+  const client = resendClient ?? new Resend(getEnv(env).email.apiKey!);
 
   return {
     async send(message, options) {
+      const config = await resolveAddresses();
       const { data, error } = await client.emails.send(
         buildResendPayload(message, config),
         buildResendOptions(options),
@@ -233,6 +241,7 @@ export function createEmailService({
         return [];
       }
 
+      const config = await resolveAddresses();
       const { data, error } = await client.batch.send(
         messages.map((message) => buildResendPayload(message, config)),
         buildResendOptions(options),

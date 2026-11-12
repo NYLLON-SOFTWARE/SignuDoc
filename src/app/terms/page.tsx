@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 
 import { PublicDocumentShell } from "@/components/layout/public-document-shell";
+import { requireHostedMode } from "@/lib/hosted-pages";
 import { resolvePublicSupportAddress } from "@/lib/public-contact";
 
 export const metadata: Metadata = {
@@ -10,8 +11,10 @@ export const metadata: Metadata = {
   title: "Terms of Service | SignuDoc",
 };
 
-export default function TermsPage() {
-  const supportAddress = resolvePublicSupportAddress();
+export default async function TermsPage() {
+  await requireHostedMode();
+
+  const supportAddress = await resolvePublicSupportAddress();
 
   return (
     <PublicDocumentShell

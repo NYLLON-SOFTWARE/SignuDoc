@@ -103,7 +103,7 @@ export async function submitPublicContactMessage(
     };
   }
 
-  const supportAddress = resolvePublicSupportAddress(env);
+  const supportAddress = await resolvePublicSupportAddress(env);
   const submittedAt = formatSubmittedAt();
   const escapedMessageHtml = escapeHtml(parsedInput.message).replaceAll(
     "\n",

@@ -55,6 +55,7 @@ export const emailTemplateKinds = [
   "decline_notification",
   "void_notification",
   "password_reset",
+  "test_email",
 ] as const;
 
 export type EnvelopeStatus = (typeof envelopeStatuses)[number];

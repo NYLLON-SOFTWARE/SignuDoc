@@ -244,6 +244,18 @@ export function hasEnv(
   return readEnv(env, variableName) !== undefined;
 }
 
+/**
+ * Hosted mode is for running SignuDoc as a public service under its own
+ * name: the landing page, the built-in legal and contact pages, and the
+ * SignuDoc name everywhere. Without it an install is neutral and carries
+ * the name of the organization that runs it.
+ */
+export function isHostedMode(env: EnvSource = process.env): boolean {
+  const value = readEnv(env, "HOSTED_MODE")?.toLowerCase();
+
+  return value === "1" || value === "true";
+}
+
 // Every value is optional here. Code that needs one checks it at the point of
 // use (see requireConfigValue), so a missing email setting cannot stop a page
 // that never sends email from rendering.
@@ -262,6 +274,9 @@ export function getEnv(env: EnvSource = process.env) {
     },
     internal: {
       retentionJobSecret: readEnv(env, "RETENTION_JOB_SECRET"),
+    },
+    setup: {
+      token: readEnv(env, "SETUP_TOKEN"),
     },
   };
 }

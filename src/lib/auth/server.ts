@@ -1,10 +1,13 @@
-import { betterAuth } from "better-auth";
+import { APIError, betterAuth } from "better-auth";
+import { createAuthMiddleware } from "better-auth/api";
 import { nextCookies } from "better-auth/next-js";
 import { haveIBeenPwned } from "better-auth/plugins";
 import { headers } from "next/headers";
+import { after } from "next/server";
 import type { Pool } from "pg";
 import { cache } from "react";
 
+import { type Branding } from "../branding.ts";
 import { getDb } from "../db/connection.ts";
 import {
   createEmailService,
@@ -13,11 +16,15 @@ import {
 } from "../services/email.ts";
 import { withUserEmailLegalFooter } from "../services/email-legal-footer.ts";
 import { requireConfigValue } from "../services/service-config.ts";
+import { getBranding, getSettings, getSetupState } from "../settings.ts";
+import { evaluateSignup } from "../signup-policy.ts";
 import {
   getEnv,
   resolveDeploymentOrigins,
   type EnvSource,
 } from "../utils/env.ts";
+import { escapeHtml } from "../utils/html.ts";
+import { isRunningSetup } from "./setup-context.ts";
 
 type CreateAppAuthOptions = {
   database?: Pool;
@@ -67,81 +74,177 @@ function addTrustedOrigin(
   }
 }
 
-function buildEmailVerificationMessage(input: { name: string; url: string }) {
+function buildEmailVerificationMessage(input: {
+  branding: Branding;
+  name: string;
+  url: string;
+}) {
+  const { productName } = input.branding;
   const textBody = [
     `Hi ${input.name},`,
     "",
-    "Verify your email address to finish setting up your SignuDoc sender account:",
+    `Verify your email address to finish setting up your ${productName} sender account:`,
     input.url,
     "",
     "If you didn't request this, you can ignore this email.",
   ].join("\n");
   const htmlBody = [
-    `<p>Hi ${input.name},</p>`,
-    "<p>Verify your email address to finish setting up your SignuDoc sender account.</p>",
-    `<p><a href="${input.url}">Verify your email</a></p>`,
+    `<p>Hi ${escapeHtml(input.name)},</p>`,
+    `<p>Verify your email address to finish setting up your ${escapeHtml(productName)} sender account.</p>`,
+    `<p><a href="${escapeHtml(input.url)}">Verify your email</a></p>`,
     "<p>If you didn't request this, you can ignore this email.</p>",
   ].join("");
-  const legalFooter = withUserEmailLegalFooter({
-    htmlBody,
-    textBody,
-  });
+  const legalFooter = withUserEmailLegalFooter(
+    {
+      htmlBody,
+      textBody,
+    },
+    input.branding,
+  );
 
   return {
     htmlBody: legalFooter.htmlBody,
-    subject: "Verify your SignuDoc email",
+    subject: `Verify your ${productName} email`,
     template: "email_verification" as const,
     textBody: legalFooter.textBody,
   };
 }
 
 function buildChangeEmailConfirmationMessage(input: {
+  branding: Branding;
   name: string;
   newEmail: string;
   url: string;
 }) {
+  const { productName } = input.branding;
   const textBody = [
     `Hi ${input.name},`,
     "",
-    `Confirm that you want to change your SignuDoc sender email to ${input.newEmail}:`,
+    `Confirm that you want to change your ${productName} sender email to ${input.newEmail}:`,
     input.url,
     "",
     "If you didn't request this, you can ignore this email.",
   ].join("\n");
   const htmlBody = [
-    `<p>Hi ${input.name},</p>`,
-    `<p>Confirm that you want to change your SignuDoc sender email to ${input.newEmail}.</p>`,
-    `<p><a href="${input.url}">Confirm this email change</a></p>`,
+    `<p>Hi ${escapeHtml(input.name)},</p>`,
+    `<p>Confirm that you want to change your ${escapeHtml(productName)} sender email to ${escapeHtml(input.newEmail)}.</p>`,
+    `<p><a href="${escapeHtml(input.url)}">Confirm this email change</a></p>`,
     "<p>If you didn't request this, you can ignore this email.</p>",
   ].join("");
-  const legalFooter = withUserEmailLegalFooter({
-    htmlBody,
-    textBody,
-  });
+  const legalFooter = withUserEmailLegalFooter(
+    {
+      htmlBody,
+      textBody,
+    },
+    input.branding,
+  );
 
   return {
     htmlBody: legalFooter.htmlBody,
-    subject: "Confirm your SignuDoc email change",
+    subject: `Confirm your ${productName} email change`,
     template: "change_email_confirmation" as const,
     textBody: legalFooter.textBody,
   };
 }
 
-// The email service is created when a message is sent, not when auth is set
-// up. Email that is not configured yet then fails that one message (and is
-// logged) instead of taking sign-in down with it.
-function sendAuthEmailInBackground(
-  getEmailService: () => EmailService,
-  message: TransactionalEmailMessage,
-) {
-  void Promise.resolve()
-    .then(() => getEmailService().send(message))
-    .catch((error: unknown) => {
+function buildPasswordResetMessage(input: {
+  branding: Branding;
+  name: string;
+  url: string;
+}) {
+  const { productName } = input.branding;
+  const textBody = [
+    `Hi ${input.name},`,
+    "",
+    `Use the link below to reset your ${productName} password:`,
+    input.url,
+    "",
+    "If you didn't request this reset, you can ignore this email.",
+  ].join("\n");
+  const htmlBody = [
+    `<p>Hi ${escapeHtml(input.name)},</p>`,
+    `<p>Use the link below to reset your ${escapeHtml(productName)} password.</p>`,
+    `<p><a href="${escapeHtml(input.url)}">Reset your password</a></p>`,
+    "<p>If you didn't request this reset, you can ignore this email.</p>",
+  ].join("");
+  const legalFooter = withUserEmailLegalFooter(
+    {
+      htmlBody,
+      textBody,
+    },
+    input.branding,
+  );
+
+  return {
+    htmlBody: legalFooter.htmlBody,
+    subject: `Reset your ${productName} password`,
+    template: "password_reset" as const,
+    textBody: legalFooter.textBody,
+  };
+}
+
+type AuthEmailContent = Omit<TransactionalEmailMessage, "to">;
+
+// Auth emails are sent after the response, so sign-in is never slowed down
+// by the mail provider, and a message that cannot be sent (email that is not
+// configured yet, for one) is logged instead of failing the request.
+//
+// after() keeps a Vercel function alive until the message has gone out. A
+// promise that nothing waits for could be cut off when the function is
+// suspended at the end of the response.
+// https://nextjs.org/docs/app/api-reference/functions/after
+function sendAuthEmailInBackground(input: {
+  buildContent: (branding: Branding) => AuthEmailContent;
+  env: EnvSource;
+  getEmailService: () => EmailService;
+  template: TransactionalEmailMessage["template"];
+  to: string;
+}) {
+  const deliver = async () => {
+    try {
+      const branding = await getBranding(input.env);
+
+      await input.getEmailService().send({
+        ...input.buildContent(branding),
+        to: input.to,
+      });
+    } catch (error) {
       console.error(
-        `Failed to send auth email "${message.template}" to ${message.to}:`,
+        `Failed to send auth email "${input.template}" to ${input.to}:`,
         error,
       );
-    });
+    }
+  };
+
+  try {
+    after(deliver);
+  } catch {
+    // Not inside a request (a script or the auth CLI), so there is no
+    // response to wait for.
+    void deliver();
+  }
+}
+
+/**
+ * Applies this install's sign-up rule to one email address. Before first-run
+ * setup has happened nobody can sign up at all: the first account is the
+ * administrator's, and only the setup page creates it.
+ */
+export async function evaluateSignupRequest(
+  email: string,
+  env: EnvSource = process.env,
+) {
+  const setupState = await getSetupState();
+
+  if (setupState.status === "fresh") {
+    return {
+      allowed: false as const,
+      code: "setup_required" as const,
+      message: "This site has not been set up yet.",
+    };
+  }
+
+  return evaluateSignup(email, await getSettings(env));
 }
 
 // In production, new passwords are checked against the Have I Been Pwned
@@ -216,11 +319,22 @@ export function createAppAuth({
       sendOnSignIn: true,
       sendOnSignUp: true,
       sendVerificationEmail: async ({ url, user }) => {
-        sendAuthEmailInBackground(emailService, {
-          ...buildEmailVerificationMessage({
-            name: user.name,
-            url,
-          }),
+        // The administrator created by first-run setup is verified by
+        // setup itself; there is no working email to send through yet.
+        if (isRunningSetup()) {
+          return;
+        }
+
+        sendAuthEmailInBackground({
+          buildContent: (branding) =>
+            buildEmailVerificationMessage({
+              branding,
+              name: user.name,
+              url,
+            }),
+          env,
+          getEmailService: emailService,
+          template: "email_verification",
           to: user.email,
         });
       },
@@ -232,33 +346,50 @@ export function createAppAuth({
       requireEmailVerification: true,
       revokeSessionsOnPasswordReset: true,
       sendResetPassword: async ({ url, user }) => {
-        const textBody = [
-          `Hi ${user.name},`,
-          "",
-          "Use the link below to reset your SignuDoc password:",
-          url,
-          "",
-          "If you didn't request this reset, you can ignore this email.",
-        ].join("\n");
-        const htmlBody = [
-          `<p>Hi ${user.name},</p>`,
-          "<p>Use the link below to reset your SignuDoc password.</p>",
-          `<p><a href="${url}">Reset your password</a></p>`,
-          "<p>If you didn't request this reset, you can ignore this email.</p>",
-        ].join("");
-        const legalFooter = withUserEmailLegalFooter({
-          htmlBody,
-          textBody,
-        });
-
-        sendAuthEmailInBackground(emailService, {
-          htmlBody: legalFooter.htmlBody,
-          subject: "Reset your SignuDoc password",
+        sendAuthEmailInBackground({
+          buildContent: (branding) =>
+            buildPasswordResetMessage({
+              branding,
+              name: user.name,
+              url,
+            }),
+          env,
+          getEmailService: emailService,
           template: "password_reset",
-          textBody: legalFooter.textBody,
           to: user.email,
         });
       },
+    },
+    hooks: {
+      // The sign-up rule, asked before anything else so the person filling
+      // in the form is told. The same rule is enforced again in
+      // validateUserInfo below, but a refusal there is answered as if the
+      // sign-up had worked: Better Auth cannot let it look different from
+      // "this address already has an account". The rule is about the
+      // address's domain and is printed on the sign-up page, so saying it
+      // here gives nothing away.
+      before: createAuthMiddleware(async (ctx) => {
+        if (ctx.path !== "/sign-up/email" || isRunningSetup()) {
+          return;
+        }
+
+        const body: unknown = ctx.body;
+        const email =
+          typeof body === "object" &&
+          body !== null &&
+          "email" in body &&
+          typeof body.email === "string"
+            ? body.email
+            : "";
+        const decision = await evaluateSignupRequest(email, env);
+
+        if (!decision.allowed) {
+          throw new APIError("FORBIDDEN", {
+            code: decision.code,
+            message: decision.message,
+          });
+        }
+      }),
     },
     session: {
       cookieCache: {
@@ -273,16 +404,41 @@ export function createAppAuth({
       changeEmail: {
         enabled: true,
         sendChangeEmailConfirmation: async ({ newEmail, url, user }) => {
-          sendAuthEmailInBackground(emailService, {
-            ...buildChangeEmailConfirmationMessage({
-              name: user.name,
-              newEmail,
-              url,
-            }),
+          sendAuthEmailInBackground({
+            buildContent: (branding) =>
+              buildChangeEmailConfirmationMessage({
+                branding,
+                name: user.name,
+                newEmail,
+                url,
+              }),
+            env,
+            getEmailService: emailService,
+            template: "change_email_confirmation",
             to: user.email,
           });
         },
         updateEmailWithoutVerification: false,
+      },
+      // Decides who may create an account. Runs for every new user, however
+      // the account comes to be created, so the check in hooks.before above
+      // is not the only thing standing in the way.
+      validateUserInfo: async ({ source, user }) => {
+        if (source.action !== "create-user" || isRunningSetup()) {
+          return;
+        }
+
+        const decision = await evaluateSignupRequest(
+          typeof user.email === "string" ? user.email : "",
+          env,
+        );
+
+        if (!decision.allowed) {
+          return {
+            error: decision.code,
+            errorDescription: decision.message,
+          };
+        }
       },
     },
   });

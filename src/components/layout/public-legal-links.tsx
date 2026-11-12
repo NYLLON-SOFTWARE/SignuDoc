@@ -1,10 +1,11 @@
+"use client";
+
 import Link from "next/link";
 import { IBM_Plex_Mono } from "next/font/google";
 
-import {
-  PUBLIC_COPYRIGHT_YEAR,
-  publicFooterLinks,
-} from "@/lib/legal";
+import { useBranding } from "@/components/layout/branding-provider";
+import { SIGNUDOC_NAME, SIGNUDOC_URL } from "@/lib/branding";
+import { PUBLIC_COPYRIGHT_YEAR, publicFooterLinks } from "@/lib/legal";
 import { cn } from "@/lib/cn";
 
 const ibmPlexMono = IBM_Plex_Mono({
@@ -20,13 +21,51 @@ type PublicLegalFooterProps = {
   linkClassName?: string;
 };
 
+type FooterLink = {
+  external: boolean;
+  href: string;
+  label: string;
+};
+
 export function PublicLegalFooter({
   className = "",
   contentClassName = "",
   labelVariant = "short",
   linkClassName,
 }: PublicLegalFooterProps) {
+  const branding = useBranding();
   const monoClassName = ibmPlexMono.className;
+  const resolvedLinkClassName =
+    linkClassName ??
+    `${monoClassName} text-xs text-[#71717a] transition-colors hover:text-black`;
+  // The hosted service links to its own pages. Any other install links to
+  // whatever terms and privacy policy its organization has published.
+  const links: FooterLink[] = branding.hosted
+    ? publicFooterLinks.map((link) => ({
+        external: false,
+        href: link.href,
+        label: labelVariant === "long" ? link.longLabel : link.shortLabel,
+      }))
+    : [
+        ...(branding.termsUrl
+          ? [
+              {
+                external: true,
+                href: branding.termsUrl,
+                label: labelVariant === "long" ? "Terms of Service" : "Terms",
+              },
+            ]
+          : []),
+        ...(branding.privacyUrl
+          ? [
+              {
+                external: true,
+                href: branding.privacyUrl,
+                label: labelVariant === "long" ? "Privacy Policy" : "Privacy",
+              },
+            ]
+          : []),
+      ];
 
   return (
     <footer
@@ -43,31 +82,53 @@ export function PublicLegalFooter({
       >
         <div className="flex flex-col items-center justify-between gap-4 sm:flex-row">
           <p className={`${monoClassName} text-xs text-[#71717a]`}>
-            © {PUBLIC_COPYRIGHT_YEAR} SignuDoc
+            © {PUBLIC_COPYRIGHT_YEAR} {branding.productName}
           </p>
 
-          <nav
-            aria-label="Footer"
-            className="flex flex-wrap items-center justify-center gap-6"
-          >
-            {publicFooterLinks.map((link) => (
-              <Link
-                className={
-                  linkClassName ??
-                  `${monoClassName} text-xs text-[#71717a] transition-colors hover:text-black`
-                }
-                href={link.href}
-                key={link.href}
-              >
-                {labelVariant === "long" ? link.longLabel : link.shortLabel}
-              </Link>
-            ))}
-          </nav>
+          {links.length > 0 ? (
+            <nav
+              aria-label="Footer"
+              className="flex flex-wrap items-center justify-center gap-6"
+            >
+              {links.map((link) =>
+                link.external ? (
+                  <a
+                    className={resolvedLinkClassName}
+                    href={link.href}
+                    key={link.href}
+                    rel="noreferrer"
+                    target="_blank"
+                  >
+                    {link.label}
+                  </a>
+                ) : (
+                  <Link
+                    className={resolvedLinkClassName}
+                    href={link.href}
+                    key={link.href}
+                  >
+                    {link.label}
+                  </Link>
+                ),
+              )}
+            </nav>
+          ) : null}
 
-          <div className="hidden items-center gap-2 sm:flex">
-            <span className="h-[2px] w-8 bg-[#e50000]" />
-            <span className="inline-block h-[6px] w-[6px] rounded-full bg-[#e50000]" />
-          </div>
+          {branding.hosted ? (
+            <div className="hidden items-center gap-2 sm:flex">
+              <span className="h-[2px] w-8 bg-[#e50000]" />
+              <span className="inline-block h-[6px] w-[6px] rounded-full bg-[#e50000]" />
+            </div>
+          ) : (
+            <a
+              className={`${monoClassName} text-xs text-[#71717a] transition-colors hover:text-black`}
+              href={SIGNUDOC_URL}
+              rel="noreferrer"
+              target="_blank"
+            >
+              Powered by {SIGNUDOC_NAME}
+            </a>
+          )}
         </div>
       </div>
     </footer>

@@ -1,6 +1,7 @@
 import { Buffer } from "node:buffer";
 import { randomUUID } from "node:crypto";
 
+import { type Branding } from "./branding.ts";
 import {
   type DbExecutor,
   type DbPool,
@@ -31,6 +32,7 @@ import {
   type SigningUnavailableResponse,
 } from "./schemas/signing.ts";
 import { declineEnvelopeSchema, signerRecordSchema } from "./schemas/signer.ts";
+import { getBranding } from "./settings.ts";
 import {
   listAuditEventsForEnvelope,
   recordAuditEvent,
@@ -241,6 +243,7 @@ const RECIPIENT_DOWNLOAD_LINK_TTL_DAYS =
   RECIPIENT_DOWNLOAD_LINK_TTL_SECONDS / (24 * 60 * 60);
 
 function buildCompletionSenderEmail(input: {
+  branding: Branding;
   envelopeId: string;
   envelopeTitle: string;
   senderEmail: string;
@@ -251,7 +254,7 @@ function buildCompletionSenderEmail(input: {
   const textBody = [
     `Hi ${input.senderName},`,
     "",
-    `"${input.envelopeTitle}" has been fully signed in SignuDoc.`,
+    `"${input.envelopeTitle}" has been fully signed in ${input.branding.productName}.`,
     "The final signed PDF and certificate are ready in your dashboard.",
     "",
     "Review the completed envelope:",
@@ -259,14 +262,17 @@ function buildCompletionSenderEmail(input: {
   ].join("\n");
   const htmlBody = [
     `<p>Hi ${escapeHtml(input.senderName)},</p>`,
-    `<p>&ldquo;${escapeHtml(input.envelopeTitle)}&rdquo; has been fully signed in SignuDoc.</p>`,
+    `<p>&ldquo;${escapeHtml(input.envelopeTitle)}&rdquo; has been fully signed in ${escapeHtml(input.branding.productName)}.</p>`,
     "<p>The final signed PDF and certificate are ready in your dashboard.</p>",
     `<p><a href="${escapeHtml(completedUrl)}">Review the completed envelope</a></p>`,
   ].join("");
-  const legalFooter = withUserEmailLegalFooter({
-    htmlBody,
-    textBody,
-  });
+  const legalFooter = withUserEmailLegalFooter(
+    {
+      htmlBody,
+      textBody,
+    },
+    input.branding,
+  );
 
   return {
     htmlBody: legalFooter.htmlBody,
@@ -278,6 +284,7 @@ function buildCompletionSenderEmail(input: {
 }
 
 function buildDeclineNotificationEmail(input: {
+  branding: Branding;
   declineReason?: string;
   envelopeId: string;
   envelopeTitle: string;
@@ -294,7 +301,7 @@ function buildDeclineNotificationEmail(input: {
   const textBody = [
     `Hi ${input.senderName},`,
     "",
-    `${input.signerName} (${input.signerEmail}) declined "${input.envelopeTitle}" in SignuDoc.`,
+    `${input.signerName} (${input.signerEmail}) declined "${input.envelopeTitle}" in ${input.branding.productName}.`,
     ...(reasonLine ? ["", reasonLine] : []),
     "",
     "Review the envelope:",
@@ -302,16 +309,19 @@ function buildDeclineNotificationEmail(input: {
   ].join("\n");
   const htmlBody = [
     `<p>Hi ${escapeHtml(input.senderName)},</p>`,
-    `<p>${escapeHtml(input.signerName)} (${escapeHtml(input.signerEmail)}) declined &ldquo;${escapeHtml(input.envelopeTitle)}&rdquo; in SignuDoc.</p>`,
+    `<p>${escapeHtml(input.signerName)} (${escapeHtml(input.signerEmail)}) declined &ldquo;${escapeHtml(input.envelopeTitle)}&rdquo; in ${escapeHtml(input.branding.productName)}.</p>`,
     reasonLine
       ? `<p><strong>Reason provided:</strong> ${escapeHtml(input.declineReason!.trim())}</p>`
       : "",
     `<p><a href="${escapeHtml(envelopeUrl)}">Review the envelope</a></p>`,
   ].join("");
-  const legalFooter = withUserEmailLegalFooter({
-    htmlBody,
-    textBody,
-  });
+  const legalFooter = withUserEmailLegalFooter(
+    {
+      htmlBody,
+      textBody,
+    },
+    input.branding,
+  );
 
   return {
     htmlBody: legalFooter.htmlBody,
@@ -323,6 +333,7 @@ function buildDeclineNotificationEmail(input: {
 }
 
 function buildCompletionSignerEmail(input: {
+  branding: Branding;
   evidenceDownloadUrl: string;
   envelopeId: string;
   envelopeTitle: string;
@@ -335,7 +346,7 @@ function buildCompletionSignerEmail(input: {
   const textBody = [
     `Hi ${input.signerName},`,
     "",
-    `"${input.envelopeTitle}" from ${input.senderName} has been fully signed in SignuDoc.`,
+    `"${input.envelopeTitle}" from ${input.senderName} has been fully signed in ${input.branding.productName}.`,
     "The completed document and redacted certificate are ready.",
     "",
     `Download links (available for ${RECIPIENT_DOWNLOAD_LINK_TTL_DAYS} days):`,
@@ -344,15 +355,18 @@ function buildCompletionSignerEmail(input: {
   ].join("\n");
   const htmlBody = [
     `<p>Hi ${escapeHtml(input.signerName)},</p>`,
-    `<p>&ldquo;${escapeHtml(input.envelopeTitle)}&rdquo; from ${escapeHtml(input.senderName)} has been fully signed in SignuDoc.</p>`,
+    `<p>&ldquo;${escapeHtml(input.envelopeTitle)}&rdquo; from ${escapeHtml(input.senderName)} has been fully signed in ${escapeHtml(input.branding.productName)}.</p>`,
     "<p>The completed document and redacted certificate are ready.</p>",
     `<p>Download links are available for ${RECIPIENT_DOWNLOAD_LINK_TTL_DAYS} days.</p>`,
     `<p><a href="${escapeHtml(input.signedDownloadUrl)}">Download signed PDF</a><br /><a href="${escapeHtml(input.evidenceDownloadUrl)}">Download redacted certificate</a></p>`,
   ].join("");
-  const legalFooter = withUserEmailLegalFooter({
-    htmlBody,
-    textBody,
-  });
+  const legalFooter = withUserEmailLegalFooter(
+    {
+      htmlBody,
+      textBody,
+    },
+    input.branding,
+  );
 
   return {
     htmlBody: legalFooter.htmlBody,
@@ -838,6 +852,7 @@ async function sendCompletionEmails(input: {
 }) {
   const senderName = normalizeSenderName(input.sender);
   const issuedAt = Math.floor(Date.now() / 1000);
+  const branding = await getBranding();
   const signerMessages = await Promise.all(
     input.signers.map(async (signer) => {
       if (!signer.id) {
@@ -874,6 +889,7 @@ async function sendCompletionEmails(input: {
       ]);
 
       return buildCompletionSignerEmail({
+        branding,
         envelopeId: input.envelopeId,
         envelopeTitle: input.envelopeTitle,
         evidenceDownloadUrl: redactedEvidenceLink.url,
@@ -886,6 +902,7 @@ async function sendCompletionEmails(input: {
   );
   const messages = [
     buildCompletionSenderEmail({
+      branding,
       envelopeId: input.envelopeId,
       envelopeTitle: input.envelopeTitle,
       senderEmail: input.sender.email,
@@ -1420,6 +1437,7 @@ export async function submitSigningForToken(
       try {
         await emailService.send(
           buildSigningInvitationEmail({
+            branding: await getBranding(),
             envelopeTitle: context.envelope.title,
             senderName: normalizeSenderName(context.sender),
             signerEmail: nextSigner.email,
@@ -1844,6 +1862,7 @@ export async function declineSigningForToken(
   try {
     await emailService.send(
       buildDeclineNotificationEmail({
+        branding: await getBranding(),
         declineReason,
         envelopeId: context.envelope.id,
         envelopeTitle: context.envelope.title,

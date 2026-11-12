@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 
+import { type Branding } from "./branding.ts";
 import {
   type DbExecutor,
   type DbPool,
@@ -38,6 +39,7 @@ import {
   type ReplaceSignersResponse,
   type SignerRecord,
 } from "./schemas/signer.ts";
+import { getBranding } from "./settings.ts";
 import { importPdfDocument } from "./services/document-import.ts";
 import {
   listAuditEventsForEnvelope,
@@ -848,6 +850,7 @@ function getMissingSignatureSigner(
 }
 
 function buildVoidNotificationEmail(input: {
+  branding: Branding;
   envelopeId: string;
   envelopeTitle: string;
   senderName: string;
@@ -858,18 +861,21 @@ function buildVoidNotificationEmail(input: {
   const textBody = [
     `Hi ${input.signerName},`,
     "",
-    `${input.senderName} voided "${input.envelopeTitle}" in SignuDoc.`,
+    `${input.senderName} voided "${input.envelopeTitle}" in ${input.branding.productName}.`,
     "The signing process has been canceled. No further action is needed.",
   ].join("\n");
   const htmlBody = [
     `<p>Hi ${escapeHtml(input.signerName)},</p>`,
-    `<p>${escapeHtml(input.senderName)} voided &ldquo;${escapeHtml(input.envelopeTitle)}&rdquo; in SignuDoc.</p>`,
+    `<p>${escapeHtml(input.senderName)} voided &ldquo;${escapeHtml(input.envelopeTitle)}&rdquo; in ${escapeHtml(input.branding.productName)}.</p>`,
     "<p>The signing process has been canceled. No further action is needed.</p>",
   ].join("");
-  const legalFooter = withUserEmailLegalFooter({
-    htmlBody,
-    textBody,
-  });
+  const legalFooter = withUserEmailLegalFooter(
+    {
+      htmlBody,
+      textBody,
+    },
+    input.branding,
+  );
 
   return {
     htmlBody: legalFooter.htmlBody,
@@ -1495,6 +1501,7 @@ export async function sendDraftEnvelope(
   try {
     await emailService.send(
       buildSigningInvitationEmail({
+        branding: await getBranding(),
         envelopeTitle: envelope.title,
         senderName: input.senderName,
         signerEmail: firstSigner.email,
@@ -1769,11 +1776,18 @@ export async function voidSentEnvelope(
     throw error;
   }
 
+  const branding = await getBranding().catch(() => null);
+
   await Promise.all(
     notifiedSigners.map(async (signer) => {
       try {
+        if (!branding) {
+          throw new Error("Could not load settings for the notification email.");
+        }
+
         await emailService.send(
           buildVoidNotificationEmail({
+            branding,
             envelopeId,
             envelopeTitle: envelope.title,
             senderName: input.senderName,

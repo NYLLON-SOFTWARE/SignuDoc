@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState, type ChangeEvent, type FormEvent } from "react";
 
+import { useBranding } from "@/components/layout/branding-provider";
 import { FieldShell, ShellButton } from "@/components/shared/form-shell";
 import { authClient } from "@/lib/auth/client";
 import { forgotPasswordSchema, loginSchema } from "@/lib/schemas/auth";
@@ -112,6 +113,7 @@ function LiveLoginShell({
   resetToken = null,
 }: LoginShellProps) {
   const router = useRouter();
+  const { signupAvailable } = useBranding();
   const [values, setValues] = useState<LoginFormValues>(
     createLoginFormValues(),
   );
@@ -412,15 +414,17 @@ function LiveLoginShell({
             >
               Forgot your password?
             </button>
-            <p>
-              Don&apos;t have an account?{" "}
-              <Link
-                className="font-semibold text-(--fg) transition hover:text-(--accent)"
-                href="/signup"
-              >
-                Sign up
-              </Link>
-            </p>
+            {signupAvailable ? (
+              <p>
+                Don&apos;t have an account?{" "}
+                <Link
+                  className="font-semibold text-(--fg) transition hover:text-(--accent)"
+                  href="/signup"
+                >
+                  Sign up
+                </Link>
+              </p>
+            ) : null}
           </div>
         </div>
       </section>

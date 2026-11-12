@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 
 import { PublicDocumentShell } from "@/components/layout/public-document-shell";
+import { requireHostedMode } from "@/lib/hosted-pages";
 import { resolvePublicSupportAddress } from "@/lib/public-contact";
 
 export const metadata: Metadata = {
@@ -10,8 +11,10 @@ export const metadata: Metadata = {
   title: "Privacy Policy | SignuDoc",
 };
 
-export default function PrivacyPage() {
-  const privacyAddress = resolvePublicSupportAddress();
+export default async function PrivacyPage() {
+  await requireHostedMode();
+
+  const privacyAddress = await resolvePublicSupportAddress();
 
   return (
     <PublicDocumentShell

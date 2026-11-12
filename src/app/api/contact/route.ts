@@ -14,8 +14,15 @@ import {
   getRequestPathname,
   getRequestUserAgent,
 } from "@/lib/security/request";
+import { isHostedMode } from "@/lib/utils/env";
 
 export async function POST(request: Request) {
+  // The public contact form belongs to the hosted service. Other installs
+  // have no such page, so there is nothing for this route to accept.
+  if (!isHostedMode()) {
+    return NextResponse.json({ error: "Not found." }, { status: 404 });
+  }
+
   const ipAddress = getClientIpAddress(request.headers);
   const userAgent = getRequestUserAgent(request.headers);
   const rateLimitResponse = applyRateLimit({

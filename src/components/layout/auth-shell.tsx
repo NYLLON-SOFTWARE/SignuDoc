@@ -5,6 +5,7 @@ import { usePathname } from "next/navigation";
 import type { ReactNode } from "react";
 
 import { Brand } from "@/components/layout/brand";
+import { useBranding } from "@/components/layout/branding-provider";
 import { PublicLegalFooter } from "@/components/layout/public-legal-links";
 import { PublicSessionMenu } from "@/components/layout/public-session-menu";
 
@@ -33,7 +34,10 @@ function getAuthNavAction(pathname: string): AuthNavAction {
 
 export function AuthShell({ children }: AuthShellProps) {
   const pathname = usePathname() ?? "/login";
+  const { signupAvailable } = useBranding();
   const navAction = getAuthNavAction(pathname);
+  // No "Sign up" link to a page that would only say sign-up is closed.
+  const showNavAction = navAction.href !== "/signup" || signupAvailable;
 
   return (
     <div className="flex min-h-screen flex-col bg-white">
@@ -45,13 +49,15 @@ export function AuthShell({ children }: AuthShellProps) {
             className="flex items-center gap-3"
           >
             <PublicSessionMenu>
-              <Link
-                className="editorial-meta transition-colors hover:text-(--fg)"
-                href={navAction.href}
-                prefetch
-              >
-                {navAction.label}
-              </Link>
+              {showNavAction ? (
+                <Link
+                  className="editorial-meta transition-colors hover:text-(--fg)"
+                  href={navAction.href}
+                  prefetch
+                >
+                  {navAction.label}
+                </Link>
+              ) : null}
             </PublicSessionMenu>
           </nav>
         </div>

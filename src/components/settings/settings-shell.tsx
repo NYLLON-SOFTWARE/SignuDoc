@@ -2,6 +2,7 @@
 
 import { useState, type ChangeEvent, type FormEvent } from "react";
 
+import { useBranding } from "@/components/layout/branding-provider";
 import { FieldShell, ShellButton } from "@/components/shared/form-shell";
 import { PageHeader } from "@/components/shared/page-header";
 import {
@@ -160,6 +161,7 @@ function isNoOpEmailChangeMessage(message: string) {
 export function SettingsShell({
   initialProfile = defaultProfileValues,
 }: SettingsShellProps) {
+  const { productName } = useBranding();
   const [profileValues, setProfileValues] = useState(initialProfile);
   const [savedProfileValues, setSavedProfileValues] = useState(initialProfile);
   const [profileErrors, setProfileErrors] = useState<ProfileErrors>({});
@@ -664,7 +666,7 @@ export function SettingsShell({
               <SectionHeading title="Danger zone" />
               <p className="max-w-2xl text-sm leading-6 text-muted-foreground">
                 Before closing your account, download any documents you want to
-                keep. After closure, SignuDoc may provide a 30-day export window
+                keep. After closure, {productName} may provide a 30-day export window
                 and then delete stored document files and related envelope
                 records.
               </p>
@@ -740,6 +742,8 @@ function AccountClosureDialog({
   onChange,
   onConfirm,
 }: AccountClosureDialogProps) {
+  const { productName } = useBranding();
+
   return (
     <Dialog
       open
@@ -760,7 +764,7 @@ function AccountClosureDialog({
             </DialogTitle>
             <DialogDescription className="text-sm leading-6 text-muted-foreground">
               Before closing your account, download any documents you want to
-              keep. After closure, SignuDoc may provide a 30-day export window
+              keep. After closure, {productName} may provide a 30-day export window
               and then delete stored document files and related envelope
               records.
             </DialogDescription>
