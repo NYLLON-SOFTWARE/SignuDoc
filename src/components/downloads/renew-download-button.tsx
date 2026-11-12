@@ -45,7 +45,7 @@ export function RenewDownloadButton({ token }: { token: string }) {
   return (
     <div className="space-y-4">
       {state.kind === "sent" ? (
-        <p role="status" className="font-semibold text-(--fg)">
+        <p role="status" className="notice notice-success">
           New links are on their way to {state.maskedEmail}.
         </p>
       ) : (
@@ -56,7 +56,7 @@ export function RenewDownloadButton({ token }: { token: string }) {
         </ShellButton>
       )}
       {state.kind === "error" ? (
-        <p role="alert" className="text-(--accent)">
+        <p role="alert" className="notice notice-danger">
           {state.message}
         </p>
       ) : null}

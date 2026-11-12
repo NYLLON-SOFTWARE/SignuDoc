@@ -67,10 +67,10 @@ export function SignerDataPanel() {
   return (
     <div className="space-y-5 border-t border-(--border) pt-8">
       <div className="space-y-2">
-        <h3 className="text-xl font-bold tracking-[-0.03em] text-(--fg)">
+        <h3 className="text-lg font-extrabold tracking-[-0.02em] text-(--fg)">
           Signer data requests
         </h3>
-        <p className="max-w-2xl text-sm leading-6 text-muted-foreground">
+        <p className="max-w-2xl text-sm leading-6 text-(--secondary)">
           When a signer asks what you hold about them, download it here. When
           they ask for it to be erased, you can delete every finished envelope
           they signed, with its files and audit trail. Signed records are often
@@ -90,10 +90,8 @@ export function SignerDataPanel() {
         />
         <a
           aria-disabled={trimmed.length === 0}
-          className={`w-fit border border-(--border) px-5 py-3 text-sm font-semibold ${
-            trimmed.length === 0
-              ? "pointer-events-none text-(--placeholder)"
-              : "text-(--fg) hover:border-black"
+          className={`btn-quiet min-h-12 w-fit px-5 text-sm ${
+            trimmed.length === 0 ? "pointer-events-none" : ""
           }`}
           download
           href={exportHref}
@@ -109,7 +107,7 @@ export function SignerDataPanel() {
           value={confirmation}
         />
         <ShellButton
-          className="w-fit"
+          className="w-fit border-[rgba(180,35,24,0.35)] text-(--danger) hover:border-(--danger) hover:bg-(--danger-soft) hover:text-(--danger)"
           disabled={
             trimmed.length === 0 ||
             confirmation.trim().toLowerCase() !== trimmed.toLowerCase()
@@ -122,7 +120,9 @@ export function SignerDataPanel() {
         </ShellButton>
         {message ? (
           <p
-            className={`text-sm ${message.tone === "error" ? "text-(--accent)" : "text-muted-foreground"}`}
+            className={`notice ${
+              message.tone === "error" ? "notice-danger" : "notice-success"
+            }`}
             role={message.tone === "error" ? "alert" : "status"}
           >
             {message.text}

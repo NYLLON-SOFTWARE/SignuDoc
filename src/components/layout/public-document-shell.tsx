@@ -7,7 +7,8 @@ import { PublicSessionMenu } from "@/components/layout/public-session-menu";
 type PublicDocumentShellProps = {
   children: ReactNode;
   description: string;
-  lastUpdated: string;
+  /** For policies. A page that is a tool, not a policy, leaves it out. */
+  lastUpdated?: string;
   title: string;
 };
 
@@ -33,8 +34,12 @@ export function PublicDocumentShell({
             data-animate="enter"
           >
             <div className="px-6 pb-2 pt-9 sm:px-12 sm:pt-12">
-              <p className="section-eyebrow">Last updated {lastUpdated}</p>
-              <h1 className="mt-3 max-w-[20ch] text-[clamp(2rem,4.5vw,3rem)] font-extrabold leading-[1.06] tracking-[-0.035em] text-(--fg)">
+              {lastUpdated ? (
+                <p className="section-eyebrow mb-3">
+                  Last updated {lastUpdated}
+                </p>
+              ) : null}
+              <h1 className="max-w-[20ch] text-[clamp(2rem,4.5vw,3rem)] font-extrabold leading-[1.06] tracking-[-0.035em] text-(--fg)">
                 {title}
               </h1>
               <p className="mt-4 max-w-[680px] text-base leading-7 text-(--secondary) sm:text-[1.0625rem]">

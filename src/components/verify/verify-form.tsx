@@ -87,17 +87,17 @@ export function VerifyForm() {
 
   return (
     <div className="space-y-6">
-      <label className="block border border-dashed border-(--border) bg-(--surface) px-6 py-8 text-center">
-        <span className="block text-sm font-semibold text-(--fg)">
+      <label className="block cursor-pointer rounded-[1.25rem] border-2 border-dashed border-(--border-strong) bg-(--surface) px-6 py-8 text-center transition hover:border-(--accent) hover:bg-(--accent-softer)">
+        <span className="block text-[0.9375rem] font-bold text-(--fg)">
           Choose a signed PDF or audit certificate
         </span>
-        <span className="mt-1 block text-sm text-muted-foreground">
+        <span className="mt-1 block text-sm text-(--secondary)">
           The file stays on your device. Only its SHA-256 fingerprint is sent.
         </span>
         <input
           accept="application/pdf,.pdf"
           aria-label="PDF to verify"
-          className="mx-auto mt-4 block text-sm"
+          className="mx-auto mt-4 block max-w-full text-sm text-(--secondary) file:mr-3 file:min-h-10 file:cursor-pointer file:rounded-xl file:border-0 file:bg-(--accent) file:px-4 file:text-sm file:font-bold file:text-white hover:file:bg-(--accent-hover)"
           // One file at a time, so a verdict cannot land on the wrong one.
           disabled={isChecking}
           onChange={handleFile}
@@ -107,17 +107,17 @@ export function VerifyForm() {
 
       <div aria-live="polite" className="space-y-3" role="status">
         {isChecking ? <p>Checking {fileName}...</p> : null}
-        {error ? <p className="text-(--accent)">{error}</p> : null}
+        {error ? <p className="notice notice-danger">{error}</p> : null}
         {answer?.match === true ? (
-          <div className="border border-[rgba(24,132,74,0.3)] bg-[rgba(24,132,74,0.06)] px-5 py-4 text-(--fg)">
-            <p className="font-semibold">
+          <div className="rounded-2xl bg-(--success-soft) px-5 py-4">
+            <p className="font-bold text-(--success)">
               This file is unchanged. It is the{" "}
               {answer.fileKind === "signed-document"
                 ? "signed document"
                 : "audit certificate"}{" "}
               this site produced for &ldquo;{answer.title}&rdquo;.
             </p>
-            <p className="mt-2 text-sm text-muted-foreground">
+            <p className="mt-2 text-sm text-(--secondary)">
               The envelope was {STATUS_WORDS[answer.status]}
               {answer.finishedAt
                 ? ` on ${dateFormatter.format(new Date(answer.finishedAt * 1000))} UTC`
@@ -129,9 +129,9 @@ export function VerifyForm() {
           </div>
         ) : null}
         {answer?.match === false ? (
-          <div className="border border-[rgba(180,35,53,0.18)] bg-[rgba(180,35,53,0.06)] px-5 py-4 text-(--fg)">
-            <p className="font-semibold">No match.</p>
-            <p className="mt-2 text-sm text-muted-foreground">
+          <div className="rounded-2xl bg-(--danger-soft) px-5 py-4">
+            <p className="font-bold text-(--danger)">No match.</p>
+            <p className="mt-2 text-sm text-(--secondary)">
               This site did not produce this exact file. It may have been
               changed, saved again by another program, or come from somewhere
               else. Ask the sender for the copy kept on this site.
@@ -139,7 +139,7 @@ export function VerifyForm() {
           </div>
         ) : null}
         {hash ? (
-          <p className="break-all font-mono text-xs text-muted-foreground">
+          <p className="well break-all px-4 py-3 font-mono text-xs text-(--secondary)">
             SHA-256: {hash}
           </p>
         ) : null}

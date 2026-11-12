@@ -20,7 +20,6 @@ export default async function ExpiredDownloadPage({
   return (
     <PublicDocumentShell
       description="Download links work for a limited time. You can have new ones sent to the email address this document was sent to."
-      lastUpdated="November 13, 2026"
       title="This download link has expired"
     >
       <div className="mx-auto w-full max-w-[52rem]">

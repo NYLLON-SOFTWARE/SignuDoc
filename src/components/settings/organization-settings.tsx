@@ -313,9 +313,13 @@ export function OrganizationSettings({
                   value={values.privacyUrl}
                 />
               </div>
-              <p className="max-w-2xl text-sm leading-6 text-muted-foreground">
+              <p className="max-w-2xl text-sm leading-6 text-(--secondary)">
                 Without a privacy policy link, signers see{" "}
-                <a className="underline" href="/signer-privacy" target="_blank">
+                <a
+                  className="font-semibold text-(--accent-ink) underline decoration-[rgba(83,64,214,0.35)] underline-offset-4"
+                  href="/signer-privacy"
+                  target="_blank"
+                >
                   a notice built from these settings
                 </a>
                 . Check that it is right for your organization.
@@ -325,10 +329,10 @@ export function OrganizationSettings({
 
           <div className="space-y-5 border-t border-(--border) pt-8">
             <div className="space-y-2">
-              <h3 className="text-xl font-bold tracking-[-0.03em] text-(--fg)">
+              <h3 className="text-lg font-extrabold tracking-[-0.02em] text-(--fg)">
                 How long to keep finished documents
               </h3>
-              <p className="max-w-2xl text-sm leading-6 text-muted-foreground">
+              <p className="max-w-2xl text-sm leading-6 text-(--secondary)">
                 Optional. After this many days a completed, declined or voided
                 envelope is deleted with its audit trail. Its sender is emailed
                 30 days before. Leave empty to keep them until someone deletes

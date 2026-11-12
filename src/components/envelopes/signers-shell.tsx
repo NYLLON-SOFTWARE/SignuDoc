@@ -376,15 +376,13 @@ function SignerCard({
           </label>
         </div>
 
-        <fieldset className="grid gap-3 border-t border-(--border) pt-4 text-sm">
+        <fieldset className="grid gap-3 rounded-2xl bg-white p-4 text-sm text-(--fg) sm:p-5">
           <legend className="sr-only">Extra check before signing</legend>
-          <p className="font-semibold text-(--fg)">
+          <p className="font-bold text-(--fg)">
             Extra check before signing{" "}
-            <span className="font-normal text-muted-foreground">
-              (optional)
-            </span>
+            <span className="font-normal text-(--secondary)">(optional)</span>
           </p>
-          <p className="text-xs leading-5 text-muted-foreground">
+          <p className="text-[0.8125rem] leading-5 text-(--secondary)">
             By default anyone holding the emailed link can sign. Add a check
             when the signer&apos;s identity matters.
           </p>
@@ -392,7 +390,7 @@ function SignerCard({
             <input
               aria-label={`Email signer ${order} a one-time code`}
               checked={signer.requireEmailCode}
-              className="mt-1 size-4"
+              className="mt-0.5 size-4.5 shrink-0 cursor-pointer accent-(--accent)"
               disabled={disabled}
               onChange={(event: ChangeEvent<HTMLInputElement>) =>
                 onChecksChange({ requireEmailCode: event.target.checked })
@@ -402,7 +400,7 @@ function SignerCard({
             <span>Email a one-time code when they open the link</span>
           </label>
           <label className="grid gap-2">
-            <span>
+            <span className="text-[0.8125rem] font-semibold text-(--secondary)">
               Access code you will give them yourself, for example by phone
               {signer.hasAccessCode && !signer.removeAccessCode
                 ? " (a code is set; type a new one to change it)"
@@ -413,7 +411,7 @@ function SignerCard({
                 aria-invalid={accessCodeError ? true : undefined}
                 aria-label={`Signer ${order} access code`}
                 autoComplete="off"
-                className="min-h-11 flex-1 rounded-none border border-(--border) bg-popover px-4 text-(--fg) outline-none placeholder:text-(--placeholder)"
+                className="field-input flex-1"
                 disabled={disabled}
                 maxLength={64}
                 onChange={(event: ChangeEvent<HTMLInputElement>) =>
@@ -432,7 +430,7 @@ function SignerCard({
               />
               {signer.hasAccessCode && !signer.removeAccessCode ? (
                 <button
-                  className="min-h-11 border border-(--border) px-4 text-xs font-semibold text-muted-foreground hover:border-black hover:text-(--fg)"
+                  className="btn-quiet btn-quiet-danger min-h-12"
                   disabled={disabled}
                   onClick={() =>
                     onChecksChange({ accessCode: "", removeAccessCode: true })
@@ -445,7 +443,7 @@ function SignerCard({
             </div>
             {accessCodeError ? (
               <span
-                className="text-xs font-semibold text-(--accent)"
+                className="text-xs font-semibold text-(--danger)"
                 role="alert"
               >
                 {accessCodeError}

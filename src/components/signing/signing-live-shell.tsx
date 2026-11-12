@@ -1,5 +1,6 @@
 "use client";
 
+import { DownloadIcon } from "lucide-react";
 import Image from "next/image";
 import {
   type PointerEvent as ReactPointerEvent,
@@ -633,11 +634,12 @@ export function SigningLiveShell({ record }: { record: SigningPayload }) {
           </div>
           <div className="flex items-center gap-3">
             <a
-              className="inline-flex min-h-11 items-center px-2 text-sm font-semibold text-(--fg) underline decoration-[rgba(17,17,17,0.35)] underline-offset-4"
+              className="btn-quiet min-h-11 px-3 sm:px-4"
               download="document.pdf"
               href={`${record.documentUrl}?download=1`}
             >
-              Download PDF
+              <DownloadIcon aria-hidden="true" className="size-4" />
+              <span className="sr-only sm:not-sr-only">Download PDF</span>
             </a>
             <ShellButton
               className="min-h-11 px-4"
@@ -992,10 +994,10 @@ export function SigningLiveShell({ record }: { record: SigningPayload }) {
           onClose={() => undefined}
           title="Before you sign"
         >
-          <div className="max-h-[45vh] space-y-4 overflow-y-auto border border-(--border) bg-(--surface) px-4 py-4 text-sm leading-6 text-muted-foreground">
+          <div className="well max-h-[45vh] space-y-4 overflow-y-auto px-4 py-4 text-sm leading-6 text-(--secondary) sm:px-5">
             {record.disclosure.sections.map((section) => (
               <section key={section.heading}>
-                <h3 className="font-semibold text-(--fg)">{section.heading}</h3>
+                <h3 className="font-bold text-(--fg)">{section.heading}</h3>
                 <p className="mt-1">{section.text}</p>
               </section>
             ))}
@@ -1013,7 +1015,7 @@ export function SigningLiveShell({ record }: { record: SigningPayload }) {
             <span>{record.disclosure.statement}</span>
           </label>
           {consentError ? (
-            <div className="border border-[rgba(180,35,53,0.18)] bg-[rgba(180,35,53,0.08)] px-4 py-3 text-sm text-(--accent)">
+            <div className="notice notice-danger" role="alert">
               {consentError}
             </div>
           ) : null}
@@ -1764,10 +1766,7 @@ function DialogFrame({
 }) {
   return (
     <Dialog open onOpenChange={(open) => !open && onClose()}>
-      <DialogContent
-        className="max-w-[600px] p-0"
-        showCloseButton={false}
-      >
+      <DialogContent className="max-w-[600px] p-0" showCloseButton={false}>
         <div>
           <DialogHeader className="space-y-2 px-6 pt-6 sm:px-8 sm:pt-8">
             <DialogTitle>{title}</DialogTitle>

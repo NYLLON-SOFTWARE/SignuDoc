@@ -1,5 +1,6 @@
 "use client";
 
+import { ShieldCheckIcon } from "lucide-react";
 import { useState, type FormEvent } from "react";
 
 import { Brand } from "@/components/layout/brand";
@@ -101,18 +102,27 @@ export function SignerVerificationScreen({
   const step = state.required.indexOf(method) + 1;
 
   return (
-    <div className="flex min-h-screen flex-col bg-white">
-      <header className="border-b border-(--border) bg-white">
-        <div className="mx-auto flex max-w-[1360px] items-center px-4 py-5 sm:px-6 lg:px-8">
+    <div className="flex min-h-screen flex-col">
+      <header>
+        <div className="page-width flex items-center py-4">
           <Brand href="/" />
         </div>
       </header>
-      <main className="mx-auto flex w-full max-w-[1360px] flex-1 items-center justify-center px-4 py-12 sm:px-6 lg:px-8">
-        <section className="editorial-panel w-full max-w-[560px] px-6 py-10 sm:px-10">
-          <h1 className="text-[28px] font-extrabold tracking-[-0.04em] text-(--fg)">
+      <main className="page-width flex flex-1 items-center justify-center py-10">
+        <section
+          className="panel w-full max-w-[560px] px-6 py-10 sm:px-10 sm:py-12"
+          data-animate="enter"
+        >
+          <span
+            aria-hidden="true"
+            className="inline-flex size-14 items-center justify-center rounded-2xl bg-(--accent-soft) text-(--accent)"
+          >
+            <ShieldCheckIcon className="size-6" strokeWidth={2.2} />
+          </span>
+          <h1 className="mt-6 text-[clamp(1.625rem,4vw,2rem)] font-extrabold leading-tight tracking-[-0.03em] text-(--fg)">
             Confirm it&apos;s you
           </h1>
-          <p className="mt-3 text-base leading-7 text-muted-foreground">
+          <p className="mt-3 text-base leading-7 text-(--secondary)">
             {state.senderName} asked for a check before you open &ldquo;
             {state.envelopeTitle}&rdquo;.
             {state.required.length > 1
@@ -130,12 +140,12 @@ export function SignerVerificationScreen({
               value={code}
             />
             {notice ? (
-              <p className="text-sm text-muted-foreground" role="status">
+              <p className="notice notice-accent" role="status">
                 {notice}
               </p>
             ) : null}
             {error ? (
-              <p className="text-sm text-(--accent)" role="alert">
+              <p className="notice notice-danger" role="alert">
                 {error}
               </p>
             ) : null}

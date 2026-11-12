@@ -41,21 +41,21 @@ export default async function ElectronicSignaturesPage() {
       title="What this is for"
     >
       <section className="space-y-3">
-        <h2 className="text-xl font-semibold tracking-[-0.03em] text-(--fg)">
+        <h2 className="text-xl font-extrabold tracking-[-0.02em] text-(--fg)">
           {WHAT_IT_IS.heading}
         </h2>
         <List items={WHAT_IT_IS.items} />
       </section>
 
       <section className="space-y-3">
-        <h2 className="text-xl font-semibold tracking-[-0.03em] text-(--fg)">
+        <h2 className="text-xl font-extrabold tracking-[-0.02em] text-(--fg)">
           {WHAT_IT_IS_NOT.heading}
         </h2>
         <List items={WHAT_IT_IS_NOT.items} />
       </section>
 
       <section className="space-y-3">
-        <h2 className="text-xl font-semibold tracking-[-0.03em] text-(--fg)">
+        <h2 className="text-xl font-extrabold tracking-[-0.02em] text-(--fg)">
           Do not send these documents (United States)
         </h2>
         <p>
@@ -67,7 +67,7 @@ export default async function ElectronicSignaturesPage() {
       </section>
 
       <section className="space-y-3">
-        <h2 className="text-xl font-semibold tracking-[-0.03em] text-(--fg)">
+        <h2 className="text-xl font-extrabold tracking-[-0.02em] text-(--fg)">
           Take care with these (European Union)
         </h2>
         <p>
@@ -78,7 +78,7 @@ export default async function ElectronicSignaturesPage() {
       </section>
 
       <section className="space-y-3">
-        <h2 className="text-xl font-semibold tracking-[-0.03em] text-(--fg)">
+        <h2 className="text-xl font-extrabold tracking-[-0.02em] text-(--fg)">
           Who decides
         </h2>
         <p>

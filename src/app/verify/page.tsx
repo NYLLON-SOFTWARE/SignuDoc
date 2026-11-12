@@ -13,13 +13,12 @@ export default function VerifyPage() {
   return (
     <PublicDocumentShell
       description="Check that a signed PDF or audit certificate is exactly the file this site produced when signing finished. Any change to the file, however small, gives a different fingerprint."
-      lastUpdated="November 13, 2026"
       title="Verify a document"
     >
       <div className="mx-auto w-full max-w-[52rem] space-y-8">
         <VerifyForm />
         <section className="space-y-3">
-          <h2 className="text-xl font-semibold tracking-[-0.03em] text-(--fg)">
+          <h2 className="text-xl font-extrabold tracking-[-0.02em] text-(--fg)">
             Checking the seal in a PDF reader
           </h2>
           <p>
