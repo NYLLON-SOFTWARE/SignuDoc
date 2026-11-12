@@ -2,7 +2,6 @@
 
 import { useEffect, useRef, useState } from "react";
 
-import { useBranding } from "@/components/layout/branding-provider";
 import { ShellButton } from "@/components/shared/form-shell";
 import { PageHeader } from "@/components/shared/page-header";
 import { StatusPanel } from "@/components/shared/status-panel";
@@ -16,6 +15,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import type { ReviewEnvelopeData } from "@/lib/envelopes";
+import { PERMITTED_USE_PATH } from "@/lib/permitted-uses";
 import { getSignerPalette } from "./signer-palette";
 
 const envelopeSteps = ["Upload", "Signers", "Place fields", "Review"];
@@ -37,11 +37,7 @@ type ReviewRecordView = {
 };
 
 type ReviewFieldSummaryLabel =
-  | "Checkbox"
-  | "Date"
-  | "Initials"
-  | "Signature"
-  | "Text";
+  "Checkbox" | "Date" | "Initials" | "Signature" | "Text";
 
 type ReviewSigner = {
   color?: string;
@@ -390,7 +386,6 @@ function SendConfirmationDialog({
   title,
 }: SendConfirmationDialogProps) {
   const [isPermittedUseConfirmed, setIsPermittedUseConfirmed] = useState(false);
-  const { termsUrl } = useBranding();
 
   return (
     <Dialog
@@ -437,30 +432,22 @@ function SendConfirmationDialog({
               <span className="text-sm leading-6 text-muted-foreground">
                 By sending, you confirm this document is an ordinary business
                 agreement and not a will, court order, legally required consumer
-                disclosure, or other
-                {termsUrl ? (
-                  <>
-                    {" "}
-                    excluded document type described in the{" "}
-                    <a
-                      className="font-semibold text-(--fg)"
-                      href={termsUrl}
-                      rel="noreferrer"
-                      style={{
-                        textDecorationColor: "rgba(17,17,17,0.35)",
-                        textDecorationLine: "underline",
-                        textDecorationThickness: "1px",
-                        textUnderlineOffset: "4px",
-                      }}
-                      target="_blank"
-                    >
-                      Terms of Service
-                    </a>
-                    .
-                  </>
-                ) : (
-                  " document that cannot be signed electronically."
-                )}
+                disclosure, or other{" "}
+                <a
+                  className="font-semibold text-(--fg)"
+                  href={PERMITTED_USE_PATH}
+                  rel="noreferrer"
+                  style={{
+                    textDecorationColor: "rgba(17,17,17,0.35)",
+                    textDecorationLine: "underline",
+                    textDecorationThickness: "1px",
+                    textUnderlineOffset: "4px",
+                  }}
+                  target="_blank"
+                >
+                  document that cannot be signed electronically
+                </a>
+                .
               </span>
             </span>
           </label>

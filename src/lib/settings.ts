@@ -21,6 +21,11 @@ export type AppSettings = {
   emailReadyAt: number | null;
   organizationName: string | null;
   privacyUrl: string | null;
+  /**
+   * Days a finished envelope is kept before the nightly job deletes it, or
+   * null to keep finished envelopes until someone deletes them.
+   */
+  retentionDays: number | null;
   senderAddress: string | null;
   setupCompletedAt: number | null;
   signupMode: SignupMode;
@@ -63,6 +68,7 @@ type AppSettingsRow = {
   email_ready_at: number | null;
   organization_name: string | null;
   privacy_url: string | null;
+  retention_days: number | null;
   sender_address: string | null;
   setup_completed_at: number | null;
   signup_mode: SignupMode;
@@ -75,6 +81,7 @@ const SETTINGS_COLUMNS = `
   email_ready_at,
   organization_name,
   privacy_url,
+  retention_days,
   sender_address,
   setup_completed_at,
   signup_mode,
@@ -90,6 +97,7 @@ const UNSET_SETTINGS: AppSettings = {
   emailReadyAt: null,
   organizationName: null,
   privacyUrl: null,
+  retentionDays: null,
   senderAddress: null,
   setupCompletedAt: null,
   signupMode: "open",
@@ -144,6 +152,7 @@ function mapSettingsRow(row: AppSettingsRow): AppSettings {
     emailReadyAt: row.email_ready_at,
     organizationName: row.organization_name,
     privacyUrl: row.privacy_url,
+    retentionDays: row.retention_days,
     senderAddress: row.sender_address,
     setupCompletedAt: row.setup_completed_at,
     signupMode: row.signup_mode,
@@ -264,10 +273,11 @@ export async function saveSettings(
         signup_mode,
         support_address,
         terms_url,
+        retention_days,
         created_at,
         updated_at
       )
-      values (true, $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $10)
+      values (true, $1, $2, $3, $4, $5, $6, $7, $8, $9, $11, $10, $10)
       on conflict (id) do update set
         allowed_email_domains = excluded.allowed_email_domains,
         email_ready_at = excluded.email_ready_at,
@@ -278,6 +288,7 @@ export async function saveSettings(
         signup_mode = excluded.signup_mode,
         support_address = excluded.support_address,
         terms_url = excluded.terms_url,
+        retention_days = excluded.retention_days,
         updated_at = excluded.updated_at
       returning ${SETTINGS_COLUMNS}
     `,
@@ -292,6 +303,7 @@ export async function saveSettings(
       next.supportAddress,
       next.termsUrl,
       now,
+      next.retentionDays,
     ],
   );
 

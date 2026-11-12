@@ -18,7 +18,10 @@ export class MissingEnvError extends Error {
 const PLACEHOLDER_PREFIX = "replace-with-";
 
 // Values copied from .env.example and never filled in count as not set.
-function readEnv(env: EnvSource, variableName: string): string | undefined {
+export function readEnv(
+  env: EnvSource,
+  variableName: string,
+): string | undefined {
   const value = env[variableName];
 
   if (typeof value !== "string") {
@@ -37,7 +40,7 @@ function readEnv(env: EnvSource, variableName: string): string | undefined {
   return trimmedValue;
 }
 
-function isProduction(env: EnvSource): boolean {
+export function isProduction(env: EnvSource): boolean {
   return env.NODE_ENV === "production";
 }
 

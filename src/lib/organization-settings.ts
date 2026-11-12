@@ -15,6 +15,7 @@ export type OrganizationSettingsField =
   | "allowedEmailDomains"
   | "organizationName"
   | "privacyUrl"
+  | "retentionDays"
   | "senderAddress"
   | "signupMode"
   | "supportAddress"
@@ -36,6 +37,8 @@ export type OrganizationSettingsView = {
   hosted: boolean;
   organizationName: string;
   privacyUrl: string;
+  /** Days, as typed. Empty keeps finished envelopes until deleted by hand. */
+  retentionDays: string;
   senderAddress: string;
   senderAddressFromEnv: boolean;
   signupMode: AppSettings["signupMode"];
@@ -52,6 +55,8 @@ export function toOrganizationSettingsView(
     hosted: settings.hosted,
     organizationName: settings.organizationName ?? "",
     privacyUrl: settings.privacyUrl ?? "",
+    retentionDays:
+      settings.retentionDays === null ? "" : String(settings.retentionDays),
     senderAddress: settings.senderAddress ?? "",
     senderAddressFromEnv: settings.senderAddressFromEnv,
     signupMode: settings.signupMode,
@@ -88,6 +93,13 @@ const organizationSettingsSchema = z.object({
   allowedEmailDomains: z.string().max(4000).default(""),
   organizationName: z.string().trim().min(1).max(120),
   privacyUrl: optionalWebUrl.default(null),
+  retentionDays: z
+    .preprocess((value) => {
+      const blank = blankToNull(value);
+
+      return typeof blank === "string" ? Number(blank) : blank;
+    }, z.number().int().min(30).max(36_500).nullable())
+    .default(null),
   senderAddress: optionalEmail.default(null),
   signupMode: z.enum(SIGNUP_MODES),
   supportAddress: optionalEmail.default(null),
@@ -98,6 +110,7 @@ const FIELD_MESSAGES: Record<OrganizationSettingsField, string> = {
   allowedEmailDomains: "Enter one or more domains, such as yourcompany.com",
   organizationName: "Enter the name of your organization",
   privacyUrl: "Enter a full web address starting with https://",
+  retentionDays: "Enter a number of days, 30 or more, or leave this empty",
   senderAddress: "Enter a valid email address, or leave this empty",
   signupMode: "Choose who can create an account",
   supportAddress: "Enter a valid email address, or leave this empty",
@@ -187,6 +200,7 @@ export async function updateOrganizationSettings(
     {
       ...(domainRule ? { allowedEmailDomains: domains } : {}),
       organizationName: input.organizationName,
+      retentionDays: input.retentionDays,
       signupMode: input.signupMode,
       ...(current.hosted
         ? {}

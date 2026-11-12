@@ -12,7 +12,11 @@ import {
 } from "./schemas/envelope.ts";
 import { type SignerRecord } from "./schemas/signer.ts";
 import { getBranding } from "./settings.ts";
-import { recordAuditEvent } from "./services/audit.ts";
+import {
+  lockEnvelopeAuditChain,
+  recordAuditEvent,
+  recordEmailSent,
+} from "./services/audit.ts";
 import { createEmailService } from "./services/email.ts";
 import { withUserEmailLegalFooter } from "./services/email-legal-footer.ts";
 import {
@@ -378,18 +382,22 @@ export async function sendManualEnvelopeNudge(
   );
   const emailService = createEmailService();
 
+  let reminderMessageId: string | undefined;
+
   try {
-    await emailService.send(
-      buildReminderEmail({
-        branding: await getBranding(),
-        envelopeId: persisted.envelopeId,
-        envelopeTitle: persisted.envelopeTitle,
-        senderName: persisted.senderName,
-        signerEmail: persisted.signerEmail,
-        signerName: persisted.signerName,
-        signingUrl: persisted.issuedLink.url,
-      }),
-    );
+    reminderMessageId = (
+      await emailService.send(
+        buildReminderEmail({
+          branding: await getBranding(),
+          envelopeId: persisted.envelopeId,
+          envelopeTitle: persisted.envelopeTitle,
+          senderName: persisted.senderName,
+          signerEmail: persisted.signerEmail,
+          signerName: persisted.signerName,
+          signingUrl: persisted.issuedLink.url,
+        }),
+      )
+    ).messageId;
   } catch (error) {
     await withTransaction(async (tx) => {
       await tx.query(
@@ -427,6 +435,7 @@ export async function sendManualEnvelopeNudge(
         ],
       );
 
+      await lockEnvelopeAuditChain(persisted.envelopeId, tx);
       await tx.query(
         `
           DELETE FROM audit_events
@@ -434,6 +443,12 @@ export async function sendManualEnvelopeNudge(
             AND event = 'reminded_manual'
             AND created_at = $2
             AND actor_email = $3
+            -- Only while it is still the newest link of the audit chain: an
+            -- event recorded after it (say, the invitation was opened before
+            -- the send failed) chains to it, so it stays as history.
+            AND sequence = (
+              SELECT max(sequence) FROM audit_events WHERE envelope_id = $1
+            )
         `,
         [persisted.envelopeId, nowUnixTimestamp, input.senderEmail],
       );
@@ -446,6 +461,17 @@ export async function sendManualEnvelopeNudge(
 
     throw error;
   }
+
+  await recordEmailSent(
+    {
+      envelopeId: persisted.envelopeId,
+      messageId: reminderMessageId,
+      recipient: persisted.signerEmail,
+      signerId: persisted.signerId,
+      template: "manual_nudge",
+    },
+    database,
+  );
 
   return manualNudgeResponseSchema.parse({
     envelopeId: persisted.envelopeId,

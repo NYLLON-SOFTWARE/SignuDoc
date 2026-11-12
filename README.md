@@ -67,21 +67,57 @@ After that first time, `git merge upstream/main` works as above.
 
 A deployment made with the button needs no environment variables. These are there if you want them, under Settings, Environment Variables in the Vercel project. Deploy again after changing one.
 
-| Variable                             | What it does                                                                                                                              |
-| ------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------- |
-| `SETUP_TOKEN`                        | A secret the setup page asks for. See [Lock down a new install](#lock-down-a-new-install).                                                |
-| `CRON_SECRET`                        | Closes the daily cleanup route to everyone but Vercel's own cron call. See [Daily cleanup](#daily-cleanup).                               |
-| `BOTID`                              | `1` turns on Vercel BotID for sign-in, sign-up and setup. See [Bot protection](#bot-protection).                                          |
-| `RESEND_FROM_EMAIL`, `SUPPORT_EMAIL` | Fix the sender and support addresses from the environment instead of in Settings.                                                         |
-| `BETTER_AUTH_SECRET`                 | Your own secret for signing sessions. Without it one is derived from the database password, so changing that password signs everyone out. |
-| `APP_URL`                            | The site's public address, if it should not be the project's production domain.                                                           |
-| `HOSTED_MODE`                        | `1` runs SignuDoc as a public service under its own name. See [Hosted mode](#hosted-mode).                                                |
+| Variable                               | What it does                                                                                                                                                |
+| -------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `SETUP_TOKEN`                          | A secret the setup page asks for. See [Lock down a new install](#lock-down-a-new-install).                                                                  |
+| `CRON_SECRET`                          | Closes the daily cleanup route to everyone but Vercel's own cron call. See [Daily cleanup](#daily-cleanup).                                                 |
+| `BOTID`                                | `1` turns on Vercel BotID for sign-in, sign-up and setup. See [Bot protection](#bot-protection).                                                            |
+| `RESEND_FROM_EMAIL`, `SUPPORT_EMAIL`   | Fix the sender and support addresses from the environment instead of in Settings.                                                                           |
+| `BETTER_AUTH_SECRET`                   | Your own secret for signing sessions. Without it one is derived from the database password, so changing that password signs everyone out.                   |
+| `APP_URL`                              | The site's public address, if it should not be the project's production domain.                                                                             |
+| `HOSTED_MODE`                          | `1` runs SignuDoc as a public service under its own name. See [Hosted mode](#hosted-mode).                                                                  |
+| `RESEND_REGION`                        | Where Resend sends from when the app adds your domain, for example `eu-west-1`. See [Running in the EU](#running-in-the-eu).                                |
+| `SEAL_P12_BASE64`, `SEAL_P12_PASSWORD` | Seal finished PDFs with a certificate from a certificate authority instead of the install's own. See [Signed PDFs and the seal](#signed-pdfs-and-the-seal). |
+| `SEAL_TIMESTAMP_URL`                   | An RFC 3161 timestamp server that adds a trusted time to each seal.                                                                                         |
 
 ## Important notes
 
-- SignuDoc is designed for U.S. small businesses and ordinary business agreements such as NDAs, SOWs, and vendor contracts.
-- SignuDoc is not a law firm and does not provide legal advice. It does not determine whether a particular document is legally suitable for electronic signing.
-- If you self-host SignuDoc, your install carries your organization's name, not SignuDoc's, and does not show SignuDoc's own terms, privacy, contact or accessibility pages. You are responsible for linking to your own terms and privacy policy (in Settings), setting your own support address, and making sure your deployment meets any applicable compliance, retention, or consent requirements.
+SignuDoc is not a law firm and does not give legal advice. Whoever runs an install decides what it may be used for. Every install has a page at `/electronic-signatures` that says what follows, and senders confirm it before each send.
+
+### What SignuDoc is for
+
+- Ordinary business agreements: sales and service contracts, NDAs, statements of work, offer letters, purchase orders, approvals.
+- In the US, signatures made with it are electronic signatures under the federal ESIGN Act and the state UETA laws (New York: ESRA). Each signer first agrees to use electronic records, and that agreement is recorded.
+- In the EU and UK, they are **simple electronic signatures (SES)** under eIDAS. A court cannot reject them only for being electronic, but you may have to show who signed. The sealed PDF, the audit certificate and the optional access code or emailed code help.
+
+### What SignuDoc is not
+
+- **Not an advanced or qualified electronic signature (AdES or QES)** under eIDAS. Where a law asks for a QES, use a qualified trust service.
+- **Not built for FDA 21 CFR Part 11** records.
+- **Not HIPAA-ready.** Do not send protected health information without your own agreements with every service the install runs on.
+- **Not for documents the law keeps out of electronic signature**, such as wills, family-law matters, court orders, and notices of foreclosure, eviction, utility shut-off or insurance cancellation (ESIGN section 103, UETA section 3), and in most EU countries real estate transfers and documents that need a notary.
+
+### Your responsibilities when you self-host
+
+Your install carries your organization's name, not SignuDoc's. In Settings, link your own terms and privacy policy (without a privacy link, signers see a notice built from your settings at `/signer-privacy`; check it), set a support address, and choose how long finished documents are kept. Under GDPR your organization is the controller; Settings, Organization has the tools to answer a signer who asks for their data or for its erasure.
+
+## Signed PDFs and the seal
+
+Every finished PDF and audit certificate is sealed with a PAdES signature, so any change after signing shows in Adobe Acrobat and other PDF readers, and its SHA-256 is recorded. Anyone can check a copy at `/verify`. The audit trail in the database is a hash chain, so an edited or deleted row shows too.
+
+By default each install makes its own seal key and self-signed certificate the first time it seals, and keeps the key encrypted in the database with a key derived from `BETTER_AUTH_SECRET` (or the database password, when that is unset). Keep that secret stable: a new one makes a new seal key, and old PDFs still verify but under the old certificate. Readers show a self-signed seal as "validity unknown" until the certificate is trusted. For a seal readers trust on sight, buy a document-signing certificate and set `SEAL_P12_BASE64` and `SEAL_P12_PASSWORD`. `SEAL_TIMESTAMP_URL` adds a trusted time from a timestamp server.
+
+## Running in the EU
+
+By default the parts of an install run in the US. To keep signers' data in the EU:
+
+1. **Functions.** Add `"regions": ["fra1"]` to `vercel.json` (or pick Frankfurt under Settings, Functions in the Vercel project).
+2. **Database.** Create the Neon database in an EU region (Frankfurt) when you connect it.
+3. **Files.** Create the Vercel Blob store in an EU region (Frankfurt).
+4. **Email.** Set `RESEND_REGION=eu-west-1` before you add your domain in Settings, or create the domain in Resend's dashboard with the Ireland region. Resend still keeps account data and email logs in the US.
+5. **Agreements.** Accept the data processing agreements of Vercel, Neon and Resend, which include the EU standard contractual clauses, and list them in your privacy policy.
+
+Some data still leaves the EU: Vercel's and Resend's account metadata and logs, for example. The processors' agreements and the EU-US Data Privacy Framework cover that, but check it against your own obligations.
 
 ## What it does
 
