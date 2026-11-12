@@ -197,7 +197,7 @@ function UploadShellLayout({
                     </p>
                     <p className="text-sm text-(--secondary)">
                       or{" "}
-                      <span className="font-bold text-(--accent-ink) underline decoration-[rgba(83,64,214,0.35)] underline-offset-4">
+                      <span className="font-bold text-(--accent-ink) underline decoration-[rgb(var(--accent-rgb)/0.35)] underline-offset-4">
                         click to browse
                       </span>
                     </p>

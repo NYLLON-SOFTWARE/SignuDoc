@@ -18,7 +18,14 @@ import { getEnv, isHostedMode, type EnvSource } from "./utils/env.ts";
 /** What is stored. Null means "not set". */
 export type AppSettings = {
   allowedEmailDomains: string[];
+  /** The install's own color as "#rrggbb", or null for the default. */
+  brandColor: string | null;
   emailReadyAt: number | null;
+  /**
+   * A short hash of the install's logo, or null when it has none. The logo
+   * itself is read and written in brand-logo.ts, never here.
+   */
+  logoVersion: string | null;
   organizationName: string | null;
   privacyUrl: string | null;
   /**
@@ -40,7 +47,7 @@ export type ResolvedSettings = AppSettings & {
   supportAddressFromEnv: boolean;
 };
 
-export type SettingsUpdate = Partial<AppSettings>;
+export type SettingsUpdate = Partial<Omit<AppSettings, "logoVersion">>;
 
 /**
  * Where an install stands on first-run setup.
@@ -65,7 +72,9 @@ export type SetupRequiredDecision = {
 
 type AppSettingsRow = {
   allowed_email_domains: string[] | null;
+  brand_color: string | null;
   email_ready_at: number | null;
+  logo_hash: string | null;
   organization_name: string | null;
   privacy_url: string | null;
   retention_days: number | null;
@@ -78,7 +87,9 @@ type AppSettingsRow = {
 
 const SETTINGS_COLUMNS = `
   allowed_email_domains,
+  brand_color,
   email_ready_at,
+  logo_hash,
   organization_name,
   privacy_url,
   retention_days,
@@ -94,7 +105,9 @@ const SETTINGS_COLUMNS = `
 // until someone decides otherwise.
 const UNSET_SETTINGS: AppSettings = {
   allowedEmailDomains: [],
+  brandColor: null,
   emailReadyAt: null,
+  logoVersion: null,
   organizationName: null,
   privacyUrl: null,
   retentionDays: null,
@@ -149,7 +162,9 @@ export function isMissingSchemaError(error: unknown): boolean {
 function mapSettingsRow(row: AppSettingsRow): AppSettings {
   return {
     allowedEmailDomains: row.allowed_email_domains ?? [],
+    brandColor: row.brand_color,
     emailReadyAt: row.email_ready_at,
+    logoVersion: row.logo_hash,
     organizationName: row.organization_name,
     privacyUrl: row.privacy_url,
     retentionDays: row.retention_days,
@@ -274,10 +289,11 @@ export async function saveSettings(
         support_address,
         terms_url,
         retention_days,
+        brand_color,
         created_at,
         updated_at
       )
-      values (true, $1, $2, $3, $4, $5, $6, $7, $8, $9, $11, $10, $10)
+      values (true, $1, $2, $3, $4, $5, $6, $7, $8, $9, $11, $12, $10, $10)
       on conflict (id) do update set
         allowed_email_domains = excluded.allowed_email_domains,
         email_ready_at = excluded.email_ready_at,
@@ -289,6 +305,7 @@ export async function saveSettings(
         support_address = excluded.support_address,
         terms_url = excluded.terms_url,
         retention_days = excluded.retention_days,
+        brand_color = excluded.brand_color,
         updated_at = excluded.updated_at
       returning ${SETTINGS_COLUMNS}
     `,
@@ -304,6 +321,7 @@ export async function saveSettings(
       next.termsUrl,
       now,
       next.retentionDays,
+      next.brandColor,
     ],
   );
 

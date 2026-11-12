@@ -93,7 +93,7 @@ export default async function AccessibilityPage() {
           If you need help creating, sending, reviewing, or signing a document,
           email{" "}
           <Link
-            className="font-semibold text-(--accent-ink) underline decoration-[rgba(83,64,214,0.35)] underline-offset-4"
+            className="font-semibold text-(--accent-ink) underline decoration-[rgb(var(--accent-rgb)/0.35)] underline-offset-4"
             href={`mailto:${supportAddress}`}
           >
             {supportAddress}
@@ -134,14 +134,14 @@ export default async function AccessibilityPage() {
           Accessibility feedback helps us prioritize the right fixes. If you
           find a barrier, email{" "}
           <Link
-            className="font-semibold text-(--accent-ink) underline decoration-[rgba(83,64,214,0.35)] underline-offset-4"
+            className="font-semibold text-(--accent-ink) underline decoration-[rgb(var(--accent-rgb)/0.35)] underline-offset-4"
             href={`mailto:${supportAddress}`}
           >
             {supportAddress}
           </Link>{" "}
           or use the{" "}
           <Link
-            className="font-semibold text-(--accent-ink) underline decoration-[rgba(83,64,214,0.35)] underline-offset-4"
+            className="font-semibold text-(--accent-ink) underline decoration-[rgb(var(--accent-rgb)/0.35)] underline-offset-4"
             href="/contact"
           >
             Contact

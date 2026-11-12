@@ -928,7 +928,7 @@ export function SignersShell({
 
           <div className="flex flex-wrap items-center gap-3">
             <button
-              className="inline-flex min-h-11 items-center justify-center rounded-[0.875rem] bg-(--accent-soft) px-4.5 text-sm font-bold text-(--accent-ink) transition hover:bg-[#e0dbfb] disabled:cursor-not-allowed disabled:opacity-50"
+              className="inline-flex min-h-11 items-center justify-center rounded-[0.875rem] bg-(--accent-soft) px-4.5 text-sm font-bold text-(--accent-ink) transition hover:bg-(--accent-soft-hover) disabled:cursor-not-allowed disabled:opacity-50"
               disabled={!canAddSigner || isSubmitting}
               onClick={handleAddSigner}
               type="button"

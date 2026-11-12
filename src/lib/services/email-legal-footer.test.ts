@@ -8,8 +8,10 @@ const env = { APP_URL: "https://sign.acme.com" };
 const body = { htmlBody: "<p>Hello</p>", textBody: "Hello" };
 
 const neutral: Branding = {
+  brandColor: null,
   contactUrl: null,
   hosted: false,
+  logoUrl: null,
   organizationName: "Acme Corp",
   privacyUrl: null,
   productName: "Acme Corp",
@@ -124,4 +126,34 @@ test("the organization's name and links are escaped in the HTML part", () => {
 
 test("a neutral install with no links does not need to know its own URL", () => {
   assert.doesNotThrow(() => withUserEmailLegalFooter(body, neutral, {}));
+});
+
+test("an install with a logo puts it at the top of the HTML part only", () => {
+  const result = withUserEmailLegalFooter(
+    body,
+    {
+      ...neutral,
+      logoUrl: "/api/brand/logo?v=0123456789abcdef",
+      productName: 'Acme "Signing" & Co',
+    },
+    env,
+  );
+
+  assert.ok(
+    result.htmlBody.startsWith(
+      '<p style="margin:0 0 24px;"><img src="https://sign.acme.com/api/brand/logo?v=0123456789abcdef" alt="Acme &quot;Signing&quot; &amp; Co"',
+    ),
+  );
+  assert.ok(result.htmlBody.includes("<p>Hello</p>"));
+  assert.doesNotMatch(result.textBody, /logo/);
+});
+
+test("without the site's address there is nowhere to fetch a logo from", () => {
+  const result = withUserEmailLegalFooter(
+    body,
+    { ...neutral, logoUrl: "/api/brand/logo?v=0123456789abcdef" },
+    {},
+  );
+
+  assert.doesNotMatch(result.htmlBody, /<img/);
 });

@@ -925,7 +925,7 @@ function PrepareLiveShellContent({
                     })}
 
                     {armedTool ? (
-                      <div className="pointer-events-none absolute inset-x-4 bottom-4 z-11 rounded-2xl bg-white/95 px-4 py-3 shadow-(--shadow-lift) ring-1 ring-[rgba(83,64,214,0.18)] sm:inset-x-6 sm:bottom-6">
+                      <div className="pointer-events-none absolute inset-x-4 bottom-4 z-11 rounded-2xl bg-white/95 px-4 py-3 shadow-(--shadow-lift) ring-1 ring-[rgb(var(--accent-rgb)/0.18)] sm:inset-x-6 sm:bottom-6">
                         <p className="text-[0.8125rem] font-bold text-(--accent-ink)">
                           Ready to place
                         </p>

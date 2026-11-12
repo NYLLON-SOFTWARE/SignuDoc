@@ -13,7 +13,9 @@ import { resolveSettings, type AppSettings } from "./settings.ts";
 
 const stored: AppSettings = {
   allowedEmailDomains: ["acme.com"],
+  brandColor: null,
   emailReadyAt: null,
+  logoVersion: null,
   organizationName: "Acme Corp",
   privacyUrl: null,
   retentionDays: null,

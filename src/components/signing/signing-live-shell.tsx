@@ -1179,8 +1179,8 @@ function CurrentSignerField({
         aria-label={getSummaryLabel(field)}
         className={`absolute z-2 overflow-hidden rounded-[0.375rem] border-2 border-(--accent) text-(--accent-ink) transition ${
           signatureEntry?.value
-            ? "bg-[rgba(83,64,214,0.10)]"
-            : "bg-[rgba(83,64,214,0.07)] hover:bg-[rgba(83,64,214,0.16)]"
+            ? "bg-[rgb(var(--accent-rgb)/0.10)]"
+            : "bg-[rgb(var(--accent-rgb)/0.07)] hover:bg-[rgb(var(--accent-rgb)/0.16)]"
         }`}
         data-signing-field="true"
         onClick={onSignatureClick}
@@ -1244,7 +1244,7 @@ function CurrentSignerField({
   if (field.type === "text") {
     return (
       <div
-        className="absolute z-2 overflow-hidden rounded-[0.375rem] border-2 border-(--accent) bg-[rgba(83,64,214,0.07)] focus-within:bg-white"
+        className="absolute z-2 overflow-hidden rounded-[0.375rem] border-2 border-(--accent) bg-[rgb(var(--accent-rgb)/0.07)] focus-within:bg-white"
         data-signing-field="true"
         style={frame}
       >
@@ -1267,8 +1267,8 @@ function CurrentSignerField({
       aria-pressed={checkboxValue}
       className={`absolute z-2 flex items-center justify-center rounded-[0.25rem] border-2 border-(--accent) text-(--accent-ink) transition ${
         checkboxValue
-          ? "bg-[rgba(83,64,214,0.14)]"
-          : "bg-white hover:bg-[rgba(83,64,214,0.10)]"
+          ? "bg-[rgb(var(--accent-rgb)/0.14)]"
+          : "bg-white hover:bg-[rgb(var(--accent-rgb)/0.10)]"
       }`}
       data-signing-field="true"
       onClick={() => onCheckboxChange(!checkboxValue)}

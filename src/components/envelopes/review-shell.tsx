@@ -509,7 +509,7 @@ function SendConfirmationDialog({
                 agreement and not a will, court order, legally required consumer
                 disclosure, or other{" "}
                 <a
-                  className="font-semibold text-(--accent-ink) underline decoration-[rgba(83,64,214,0.35)] underline-offset-4"
+                  className="font-semibold text-(--accent-ink) underline decoration-[rgb(var(--accent-rgb)/0.35)] underline-offset-4"
                   href={PERMITTED_USE_PATH}
                   rel="noreferrer"
                   target="_blank"

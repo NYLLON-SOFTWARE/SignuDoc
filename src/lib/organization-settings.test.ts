@@ -10,7 +10,9 @@ import { resolveSettings, type AppSettings } from "./settings.ts";
 
 const stored: AppSettings = {
   allowedEmailDomains: ["acme.com"],
+  brandColor: null,
   emailReadyAt: null,
+  logoVersion: null,
   organizationName: "Acme Corp",
   privacyUrl: null,
   retentionDays: null,
@@ -23,7 +25,9 @@ const stored: AppSettings = {
 
 const storedRow = {
   allowed_email_domains: stored.allowedEmailDomains,
+  brand_color: stored.brandColor,
   email_ready_at: stored.emailReadyAt,
+  logo_hash: stored.logoVersion,
   organization_name: stored.organizationName,
   privacy_url: stored.privacyUrl,
   retention_days: stored.retentionDays,
@@ -167,4 +171,56 @@ test("under the domain rule the list is checked and saved", async () => {
     );
     assert.equal(refused.saved.values, null);
   }
+});
+
+test("the brand color is stored as #rrggbb however it was typed, and empty clears it", async () => {
+  const current = resolveSettings(stored, {});
+
+  for (const [typed, expected] of [
+    ["1A73E8", "#1a73e8"],
+    ["#17e", "#1177ee"],
+    [" #0b3d2e ", "#0b3d2e"],
+    ["", null],
+    [undefined, null],
+  ] as const) {
+    const { database } = fakeDatabase();
+    const result = await updateOrganizationSettings(
+      { ...form, brandColor: typed },
+      current,
+      database,
+    );
+
+    assert.equal(result.brandColor, expected, String(typed));
+  }
+});
+
+test("something that is not a color is refused", async () => {
+  const current = resolveSettings(stored, {});
+
+  for (const brandColor of ["red", "#12345", "#fff;}body{display:none}", 7]) {
+    const { database, saved } = fakeDatabase();
+
+    await assert.rejects(
+      updateOrganizationSettings({ ...form, brandColor }, current, database),
+      (error: unknown) => {
+        assert.ok(error instanceof OrganizationSettingsError);
+        assert.deepEqual(Object.keys(error.fieldErrors), ["brandColor"]);
+
+        return true;
+      },
+    );
+    assert.equal(saved.values, null);
+  }
+});
+
+test("the hosted service keeps its own color whatever the form sends", async () => {
+  const current = resolveSettings(stored, { HOSTED_MODE: "1" });
+  const { database } = fakeDatabase();
+  const result = await updateOrganizationSettings(
+    { ...form, brandColor: "not a color" },
+    current,
+    database,
+  );
+
+  assert.equal(result.brandColor, null);
 });

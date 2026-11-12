@@ -229,7 +229,7 @@ export default async function TermsPage() {
           Account-closure requests may be submitted through the settings page or
           by contacting{" "}
           <Link
-            className="font-semibold text-(--accent-ink) underline decoration-[rgba(83,64,214,0.35)] underline-offset-4"
+            className="font-semibold text-(--accent-ink) underline decoration-[rgb(var(--accent-rgb)/0.35)] underline-offset-4"
             href={`mailto:${supportAddress}`}
           >
             {supportAddress}
@@ -324,14 +324,14 @@ export default async function TermsPage() {
         <p>
           Questions about these Terms may be sent to{" "}
           <Link
-            className="font-semibold text-(--accent-ink) underline decoration-[rgba(83,64,214,0.35)] underline-offset-4"
+            className="font-semibold text-(--accent-ink) underline decoration-[rgb(var(--accent-rgb)/0.35)] underline-offset-4"
             href={`mailto:${supportAddress}`}
           >
             {supportAddress}
           </Link>{" "}
           or through the{" "}
           <Link
-            className="font-semibold text-(--accent-ink) underline decoration-[rgba(83,64,214,0.35)] underline-offset-4"
+            className="font-semibold text-(--accent-ink) underline decoration-[rgb(var(--accent-rgb)/0.35)] underline-offset-4"
             href="/contact"
           >
             Contact

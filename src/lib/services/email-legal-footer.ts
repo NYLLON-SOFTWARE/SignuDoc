@@ -42,10 +42,33 @@ function buildFooterLinks(branding: Branding, env: EnvSource): FooterLink[] {
 }
 
 /**
+ * The install's logo for the top of an email, or nothing when it has none.
+ * Email programs fetch it from this site, so it needs the site's address;
+ * many hide pictures until asked, which is why the name is the alt text.
+ */
+function buildLogoHeader(branding: Branding, env: EnvSource): string {
+  const appUrl = getEnv(env).appUrl;
+
+  if (!branding.logoUrl || !appUrl) {
+    return "";
+  }
+
+  const source = new URL(branding.logoUrl, appUrl).toString();
+
+  return [
+    '<p style="margin:0 0 24px;">',
+    `<img src="${escapeHtml(source)}" alt="${escapeHtml(branding.productName)}" height="40" `,
+    'style="display:block;height:40px;width:auto;max-width:240px;border:0;" />',
+    "</p>",
+  ].join("");
+}
+
+/**
  * Appends the footer every email to a person carries: the install's terms,
  * privacy and contact links, where it has them. On a neutral install the
  * footer also names the organization's support address and says the message
- * was sent with SignuDoc.
+ * was sent with SignuDoc, and the organization's logo, when it has one,
+ * goes at the top.
  */
 export function withUserEmailLegalFooter(
   input: EmailBodyContent,
@@ -53,6 +76,7 @@ export function withUserEmailLegalFooter(
   env: EnvSource = process.env,
 ): EmailBodyContent {
   const links = buildFooterLinks(branding, env);
+  const logoHeader = buildLogoHeader(branding, env);
   const textLines: string[] = [];
   const htmlLines: string[] = [];
 
@@ -78,7 +102,9 @@ export function withUserEmailLegalFooter(
   }
 
   if (htmlLines.length === 0) {
-    return input;
+    return logoHeader
+      ? { htmlBody: `${logoHeader}${input.htmlBody}`, textBody: input.textBody }
+      : input;
   }
 
   const htmlFooter = [
@@ -87,7 +113,7 @@ export function withUserEmailLegalFooter(
   ].join("");
 
   return {
-    htmlBody: `${input.htmlBody}${htmlFooter}`,
+    htmlBody: `${logoHeader}${input.htmlBody}${htmlFooter}`,
     // Each entry starts with an empty line; one more newline puts that
     // empty line between the message and the footer.
     textBody: `${input.textBody}\n${textLines.join("\n")}`,
