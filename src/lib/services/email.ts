@@ -1,3 +1,7 @@
+import { randomUUID } from "node:crypto";
+import { mkdir, writeFile } from "node:fs/promises";
+import path from "node:path";
+
 import { Resend } from "resend";
 
 import { type EmailTemplateKind } from "../types/domain.ts";
@@ -9,6 +13,12 @@ const EMAIL_ENV_KEYS = [
   "RESEND_FROM_EMAIL",
   "SUPPORT_EMAIL",
 ] as const;
+
+const DEFAULT_CAPTURE_DIR = ".data/outbox";
+const DEFAULT_CAPTURE_SENDER_ADDRESS = "SignuDoc <dev@signudoc.localhost>";
+const DEFAULT_CAPTURE_SUPPORT_ADDRESS = "support@signudoc.localhost";
+
+export type EmailDriver = "capture" | "resend";
 
 export type TransactionalEmailMessage = {
   htmlBody?: string;
@@ -89,10 +99,98 @@ export interface EmailService {
   ): Promise<EmailDeliveryResult[]>;
 }
 
+export function resolveEmailDriver(env: EnvSource = process.env): EmailDriver {
+  const configuredDriver = env.EMAIL_DRIVER?.trim().toLowerCase();
+
+  if (!configuredDriver) {
+    return "resend";
+  }
+
+  if (configuredDriver === "capture" || configuredDriver === "resend") {
+    return configuredDriver;
+  }
+
+  throw new Error(
+    `Unknown EMAIL_DRIVER "${configuredDriver}". Use "resend" or "capture".`,
+  );
+}
+
+/**
+ * Development and test driver: nothing is sent. Each message is written as a
+ * JSON file so a person (or the end-to-end test) can read the links in it.
+ */
+function createCaptureEmailService(env: EnvSource): EmailService {
+  if (env.NODE_ENV === "production") {
+    throw new Error(
+      "EMAIL_DRIVER=capture drops every email and cannot be used in production.",
+    );
+  }
+
+  const emailEnv = getEnv(env).email;
+  const captureDir = path.resolve(
+    env.EMAIL_CAPTURE_DIR?.trim() || DEFAULT_CAPTURE_DIR,
+  );
+  const config = {
+    senderAddress: emailEnv.senderAddress ?? DEFAULT_CAPTURE_SENDER_ADDRESS,
+    supportAddress: emailEnv.supportAddress ?? DEFAULT_CAPTURE_SUPPORT_ADDRESS,
+  };
+
+  async function capture(
+    message: TransactionalEmailMessage,
+  ): Promise<EmailDeliveryResult> {
+    const messageId = `capture-${randomUUID()}`;
+    const filePath = path.join(
+      captureDir,
+      `${String(Date.now())}-${messageId}.json`,
+    );
+
+    await mkdir(captureDir, { recursive: true });
+    await writeFile(
+      filePath,
+      JSON.stringify(
+        {
+          ...buildResendPayload(message, config),
+          capturedAt: new Date().toISOString(),
+          messageId,
+          template: message.template,
+        },
+        null,
+        2,
+      ),
+    );
+    console.info(
+      `[email:capture] ${message.template} to ${message.to} -> ${filePath}`,
+    );
+
+    return {
+      accepted: [message.to],
+      messageId,
+      rejected: [],
+    };
+  }
+
+  return {
+    send: (message) => capture(message),
+    async sendBatch(messages) {
+      const results: EmailDeliveryResult[] = [];
+
+      for (const message of messages) {
+        results.push(await capture(message));
+      }
+
+      return results;
+    },
+  };
+}
+
 export function createEmailService({
   env = process.env,
   resendClient,
 }: CreateEmailServiceOptions = {}): EmailService {
+  if (!resendClient && resolveEmailDriver(env) === "capture") {
+    return createCaptureEmailService(env);
+  }
+
   assertServiceConfig("email", EMAIL_ENV_KEYS, env);
 
   const emailEnv = getEnv(env).email;
