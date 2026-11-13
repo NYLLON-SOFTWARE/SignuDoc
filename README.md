@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="docs/images/banner.png" alt="SignuDoc: e-signatures that are yours, on your own Vercel account. Open source, deployed in one click, with no per-seat or per-envelope fees, and sealed PDFs anyone can check.">
+  <img src="docs/images/banner.png" alt="SignuDoc: e-signatures you actually own. Open source and MIT licensed. Send, sign and seal documents from your own Vercel account, at $0 per seat. Shown: a signer drawing a signature on a consulting agreement, and both signers marked Signed.">
 </p>
 
 <p align="center">
@@ -21,7 +21,7 @@
 
 ## Why SignuDoc
 
-**Pay for hosting, not for every person who sends.** SignuDoc is free and open source and runs on your own Vercel account. A team of 50 pays about $480 a year for Vercel Pro and Resend. On DocuSign Standard the same team pays $15,000, and on Business Pro $24,000.
+**Pay for hosting, not for every person who sends.** SignuDoc is free and open source and runs on your own Vercel account. A 15-person company pays DocuSign $8,100 a year for Business Pro seats, or $5,400 for Standard. With SignuDoc the seats cost nothing, and the same company pays Vercel about $240 a year to host it.
 
 **No envelope allowance to watch.** DocuSign's Standard and Business Pro plans include 100 envelopes per user per year. SignuDoc has no limit of its own: you send as many documents as your email plan carries.
 
@@ -32,6 +32,10 @@
 **One click, nothing to look after.** The Deploy button creates the database, the file store and email for you, on free plans. There are no servers to patch, and every push to your copy deploys again.
 
 ## Everything it takes to get a document signed
+
+<p align="center">
+  <img src="docs/images/how-it-works.png" alt="How it works. 1: upload a PDF and place the fields. 2: signers open a link from their email and type or draw a signature, on any device. 3: everyone gets the sealed PDF and its audit certificate.">
+</p>
 
 ### Prepare a document in minutes
 
@@ -47,7 +51,7 @@ Upload a PDF, add up to 10 signers in the order they sign, and add people who on
 
 Each signer gets a link by email, agrees to use electronic records, and signs with a typed or drawn signature on any phone, tablet or computer. Fields from earlier signers stay visible and locked. Signers can download the document before they sign, or decline with a reason, and the sender is told.
 
-![Jordan Lee signing a mutual NDA, with the signature applied and the earlier signer's signature locked](docs/images/signing.png)
+![Jordan Lee signing a consulting agreement with a drawn signature, with the earlier signer's signature locked](docs/images/signing.png)
 
 ### Know who is signing
 
@@ -91,22 +95,26 @@ SignuDoc works on small screens as well as large ones: check on your documents f
 
 ## SignuDoc and DocuSign, side by side
 
-DocuSign does more, and charges for it per user. SignuDoc does the everyday signing loop well, and it's yours. DocuSign's plans are as [DocuSign listed them](https://ecom.docusign.com/plans-and-pricing/esignature) in October 2026, for the US.
+DocuSign does more, and charges for it per user. SignuDoc does the everyday signing loop well, and it's yours. DocuSign's plans are as [DocuSign listed them](https://ecom.docusign.com/plans-and-pricing/esignature) in November 2026, for the US.
 
 <p align="center">
-  <img src="docs/images/versus.png" alt="Where SignuDoc takes the lead: price, envelope limits, where documents live, source code, features included in every install, checking a signed copy, a hash-chained audit trail and your own web address">
+  <img src="docs/images/compare.png" alt="SignuDoc and DocuSign eSignature side by side, each with a green check for: signing without an account; signing order and copy recipients; signature, initials, date, text and checkbox fields; dropdown and radio button fields (on DocuSign: Business Pro, $45 a seat); reusable templates; deadlines and automatic reminders; your own logo and brand color (on DocuSign: from Standard, $30 a seat); accounts for your whole team (on DocuSign: from Standard); consent to electronic records; audit trail and certificate of completion; a tamper-evident seal on the finished PDF; and working on a phone. To tick every box on DocuSign you need Business Pro at $45 per user a month.">
+</p>
+
+<p align="center">
+  <img src="docs/images/only-signudoc.png" alt="Six things DocuSign doesn't offer: open source (DocuSign is closed source), runs in your own cloud (DocuSign runs only in its own), no per-seat fees (DocuSign charges $30 or $45 a seat a month), no envelope allowance (DocuSign includes 100 per user a year), every feature included (DocuSign splits them across four plans), and no cap on users (DocuSign's listed plans stop at 50).">
 </p>
 
 ### Price and ownership
 
-|                                  | SignuDoc                                                                                  | DocuSign eSignature                                                                    |
-| -------------------------------- | ----------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------- |
-| **Price**                        | Free and open source. You pay Vercel, and Resend once you send more than 100 emails a day | $10 (Personal), $25 (Standard) or $40 (Business Pro) per user a month, billed annually |
-| **Envelopes**                    | No limit of its own                                                                       | 5 a month on Personal, 100 per user a year on Standard and Business Pro                |
-| **Where it runs**                | Your Vercel account, with your Neon database and Blob store                               | DocuSign's cloud                                                                       |
-| **Where data is kept**           | The region you choose, the EU included                                                    | DocuSign's data centers, the EU included                                               |
-| **Source code**                  | MIT license, on GitHub                                                                    | Closed                                                                                 |
-| **Your own domain and branding** | ✅ your domain, logo and color, on every plan                                             | Logo and colors from Standard                                                          |
+|                                  | SignuDoc                                                                                  | DocuSign eSignature                                                                      |
+| -------------------------------- | ----------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------- |
+| **Price**                        | Free and open source. You pay Vercel, and Resend once you send more than 100 emails a day | $11 (Personal), $30 (Standard) or $45 (Business Pro) per user a month, on an annual plan |
+| **Envelopes**                    | No limit of its own                                                                       | 5 a month on Personal, 100 per user a year on Standard and Business Pro                  |
+| **Where it runs**                | Your Vercel account, with your Neon database and Blob store                               | DocuSign's cloud                                                                         |
+| **Where data is kept**           | The region you choose, the EU included                                                    | DocuSign's data centers, the EU included                                                 |
+| **Source code**                  | MIT license, on GitHub                                                                    | Closed                                                                                   |
+| **Your own domain and branding** | ✅ your domain, logo and color, in every install                                          | Logo and colors from Standard                                                            |
 
 ### The signing loop
 
@@ -115,14 +123,14 @@ DocuSign does more, and charges for it per user. SignuDoc does the everyday sign
 | **Signing without an account**               | ✅                                                                                               | ✅                                                                           |
 | **Signing order**                            | ✅ in order, up to 10 signers                                                                    | ✅ in order, at the same time, or mixed                                      |
 | **People who only get a copy**               | ✅                                                                                               | ✅ and more roles: approvers, editors, in-person signers                     |
-| **Field types**                              | ✅ signature, initials, date, text, number, checkbox, dropdown, radio, each required or optional | ✅ 20+, with formulas and attachments on Business Pro                        |
+| **Field types**                              | ✅ signature, initials, date, text, number, checkbox, dropdown, radio, each required or optional | ✅ more types; dropdown, radio and signer attachments need Business Pro      |
 | **Templates**                                | ✅                                                                                               | ✅ from Personal, shared from Standard                                       |
 | **Deadlines and automatic reminders**        | ✅                                                                                               | ✅                                                                           |
 | **Access code and emailed one-time code**    | ✅                                                                                               | ✅ plus SMS, phone, knowledge-based questions and ID checks, as paid add-ons |
 | **Consent to electronic records**            | ✅ versioned, recorded in the audit trail                                                        | ✅                                                                           |
 | **Sealed PDF and certificate of completion** | ✅ PAdES seal, self-signed by default or your own trusted certificate                            | ✅ seal trusted by PDF readers                                               |
 | **Audit trail**                              | ✅ hash-chained                                                                                  | ✅                                                                           |
-| **Public check of a signed copy**            | ✅ the Verify page                                                                               | —                                                                            |
+| **Checking a signed copy**                   | ✅ the seal in a PDF reader, and a public Verify page on your own site                           | ✅ the seal in a PDF reader                                                  |
 | **Retention rules and signer data requests** | ✅ built in                                                                                      | ✅                                                                           |
 | **Phones**                                   | ✅ in the browser                                                                                | ✅ native iPhone and Android apps                                            |
 
@@ -156,17 +164,17 @@ SignuDoc is free. Vercel and its Marketplace partners run it, at their own price
 | **Your own domain, if you want one** | Whatever your registrar charges. Vercel Pro includes one free for the first year.                                                                                                                                                                                                                  |
 
 <p align="center">
-  <img src="docs/images/cost.png" alt="A year of e-signatures. 5 people: DocuSign Business Pro $2,400, Standard $1,500, SignuDoc $240. 10 people: $4,800, $3,000, $480. 25 people: $12,000, $7,500, $480. 50 people: $24,000, $15,000, $480.">
+  <img src="docs/images/price.png" alt="15 people, one year. DocuSign Business Pro: 15 seats at $45 a month each is $8,100 a year, with 1,500 envelopes included, and person 16 adds $540 a year. On DocuSign Standard, at $30 a seat, the same team pays $5,400 a year and goes without dropdown and radio fields. SignuDoc: $0 a year in seat fees, no envelope allowance, and person 16 adds $0. Hosting is separate and not per person: a company pays Vercel about $20 a month. Even after $240 a year of hosting, that team keeps $7,860 a year.">
 </p>
 
-| A year, billed annually | DocuSign Standard | DocuSign Business Pro | SignuDoc                                                     |
-| ----------------------- | ----------------- | --------------------- | ------------------------------------------------------------ |
-| **5 people**            | $1,500            | $2,400                | $240                                                         |
-| **10 people**           | $3,000            | $4,800                | $480                                                         |
-| **25 people**           | $7,500            | $12,000               | $480                                                         |
-| **50 people**           | $15,000           | $24,000               | $480, plus any database or file use past the free allowances |
+| A year, on an annual plan | DocuSign Standard | DocuSign Business Pro | SignuDoc                                                     |
+| ------------------------- | ----------------- | --------------------- | ------------------------------------------------------------ |
+| **5 people**              | $1,800            | $2,700                | $240                                                         |
+| **15 people**             | $5,400            | $8,100                | $240                                                         |
+| **25 people**             | $9,000            | $13,500               | $480                                                         |
+| **50 people**             | $18,000           | $27,000               | $480, plus any database or file use past the free allowances |
 
-SignuDoc's figures assume Vercel Pro, plus Resend Pro for any team of 10 or more. A small team that stays under Resend's 100 emails a day pays only for Vercel. DocuSign's figures are its list prices; Standard stops at 50 users, and larger plans are quoted. Prices change, so check them before you quote these.
+SignuDoc's figures are Vercel Pro at $20 a month, plus Resend Pro at $20 a month from 25 people up. A team that stays under Resend's free 100 emails a day and 3,000 a month pays only for Vercel. DocuSign's figures are its US list prices for annual plans, $30 a user a month on Standard and $45 on Business Pro, each with 100 envelopes per user a year. Those plans stop at 50 users, and larger ones are quoted. Prices change, so check them before you quote these.
 
 ## Get started
 
@@ -229,7 +237,7 @@ The project has no email address of its own. Report a security problem privately
 
 "DocuSign" and related names, marks and logos are trademarks or registered trademarks of DocuSign, Inc. in the United States and other countries. They are used in this repository only to identify DocuSign's products for the purpose of comparison. No claim is made to any of them, and their use does not imply any relationship with, or approval by, DocuSign, Inc. All other product and company names, including Vercel, Neon and Resend, are trademarks of their respective owners, and SignuDoc is not affiliated with or endorsed by them either.
 
-The comparisons on this page were made in good faith from DocuSign's publicly available website and plan documentation as of October 2026, for its US eSignature plans, and from SignuDoc's own code. DocuSign's features, plans and prices change, vary by country and contract, and may differ from what is described here. Nothing on this page is a statement by DocuSign. Check [DocuSign's own website](https://www.docusign.com) for current and authoritative information before you rely on any of it, and tell us through a GitHub issue if something here is out of date or wrong so that it can be corrected.
+The comparisons on this page were made in good faith from DocuSign's publicly available website and plan documentation as of November 2026, for its US eSignature plans, and from SignuDoc's own code. DocuSign's features, plans and prices change, vary by country and contract, and may differ from what is described here. Nothing on this page is a statement by DocuSign. Check [DocuSign's own website](https://www.docusign.com) for current and authoritative information before you rely on any of it, and tell us through a GitHub issue if something here is out of date or wrong so that it can be corrected.
 
 The cost figures are estimates for illustration, not quotes. What you pay depends on your own use and on the prices of the services your install runs on.
 
