@@ -312,7 +312,17 @@ async function defaultPasswordVerifier(input: {
 }
 
 export type SigningPasswordResult =
-  { ok: true } | { attemptsLeft: number; locked: boolean; ok: false };
+  | { ok: true }
+  | {
+      attemptsLeft: number;
+      /**
+       * An administrator took back the identity confirmation, or the email
+       * address is no longer confirmed, since the envelope was sent.
+       */
+      identityNotConfirmed?: true;
+      locked: boolean;
+      ok: false;
+    };
 
 /**
  * The two parts of a Part 11 signature: the account's email address (its
@@ -341,8 +351,10 @@ export async function checkSigningCredentials(
   const outcome = await withTransaction(async (tx) => {
     const account = await queryOne<{
       email: string;
+      emailVerified: boolean;
       failedAttempts: number;
       hash: string | null;
+      identityVerifiedAt: number | null;
       lockedAt: number | null;
       name: string;
     }>(
@@ -353,6 +365,8 @@ export async function checkSigningCredentials(
           u.name,
           u.signing_failed_attempts AS "failedAttempts",
           u.signing_locked_at AS "lockedAt",
+          u."emailVerified" AS "emailVerified",
+          u.identity_verified_at AS "identityVerifiedAt",
           (
             SELECT a.password FROM account a
             WHERE a."userId" = u.id AND a."providerId" = 'credential'
@@ -371,6 +385,20 @@ export async function checkSigningCredentials(
 
     if (account.lockedAt !== null) {
       return { attemptsLeft: 0, locked: true, ok: false as const };
+    }
+
+    // Checked again at every signature: what was true at send may not be
+    // now. Not a wrong password, so it does not count towards the lock.
+    if (!account.emailVerified || account.identityVerifiedAt === null) {
+      return {
+        attemptsLeft: Math.max(
+          0,
+          MAX_SIGNING_PASSWORD_ATTEMPTS - account.failedAttempts,
+        ),
+        identityNotConfirmed: true as const,
+        locked: false,
+        ok: false as const,
+      };
     }
 
     const emailMatches =
@@ -443,6 +471,9 @@ export async function checkSigningCredentials(
 
   return {
     attemptsLeft: outcome.attemptsLeft,
+    ...("identityNotConfirmed" in outcome && outcome.identityNotConfirmed
+      ? { identityNotConfirmed: true as const }
+      : {}),
     locked: outcome.locked,
     ok: false,
   };

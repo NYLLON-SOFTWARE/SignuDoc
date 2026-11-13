@@ -47,8 +47,9 @@ async function createUser(role: "admin" | "user" = "user") {
   createdUsers.push(id);
   await database.query(
     `
-      insert into public."user" (id, name, email, role, "emailVerified")
-      values ($1, $2, $3, $4, true)
+      insert into public."user" (
+        id, name, email, role, "emailVerified", identity_verified_at
+      ) values ($1, $2, $3, $4, true, 1)
     `,
     [id, `Person ${id.slice(0, 4)}`, `${id}@example.test`, role],
   );
@@ -272,4 +273,26 @@ test("a data request does not erase a finished Part 11 envelope", async () => {
 
   assert.equal(kept.rowCount, 1);
   await database.query(`delete from envelopes where id = $1`, [envelopeId]);
+});
+
+test("an identity confirmation taken back after send stops the signature", async () => {
+  const user = await createUser();
+
+  await database.query(
+    `update "user" set identity_verified_at = null where id = $1`,
+    [user.id],
+  );
+
+  assert.deepEqual(
+    await checkSigningCredentials(
+      { email: user.email, password: "right", userId: user.id },
+      { database, verifyPassword },
+    ),
+    {
+      attemptsLeft: MAX_SIGNING_PASSWORD_ATTEMPTS,
+      identityNotConfirmed: true,
+      locked: false,
+      ok: false,
+    },
+  );
 });

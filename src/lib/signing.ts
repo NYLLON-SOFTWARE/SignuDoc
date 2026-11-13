@@ -1360,8 +1360,13 @@ export async function sendSignerEmailCode(
  */
 function describeCredentialFailure(result: {
   attemptsLeft: number;
+  identityNotConfirmed?: true;
   locked: boolean;
 }): string {
+  if (result.identityNotConfirmed) {
+    return "Your account cannot sign this document right now: an administrator has to confirm your identity, and your email address must be confirmed. Ask the sender or an administrator.";
+  }
+
   if (result.locked) {
     return `This account is locked for signing after ${MAX_SIGNING_PASSWORD_ATTEMPTS} wrong passwords. Ask an administrator to unlock it.`;
   }

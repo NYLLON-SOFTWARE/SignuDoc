@@ -535,23 +535,52 @@ function stampSignatureManifestation(
   font: TextFace,
   text: string,
 ): void {
+  const pageWidth = page.getWidth();
   const rect = normalizedRectToPdfRect(field, {
     heightPt: page.getHeight(),
-    widthPt: page.getWidth(),
+    widthPt: pageWidth,
   });
-  const maxWidth = Math.max(
-    rect.widthPt,
-    Math.min(240, page.getWidth() - rect.xPt - 4),
+  const margin = 2;
+  const fullWidth = pageWidth - margin * 2;
+  const minimumSize = 5;
+  // One line when it fits at a readable size, otherwise one line per part
+  // (name, time, meaning), so nothing is shrunk away or runs off the page.
+  const oneLineSize = fitTextSize(font, text, fullWidth, 7, 6.5);
+  const lines =
+    font.widthOfTextAtSize(text, oneLineSize) <= fullWidth &&
+    oneLineSize >= minimumSize
+      ? [text]
+      : text.split(" | ");
+  const size = Math.max(
+    minimumSize,
+    Math.min(
+      ...lines.map((line) => fitTextSize(font, line, fullWidth, 7, 6.5)),
+    ),
   );
-  const size = fitTextSize(font, text, maxWidth, 7, 6.5);
-  const below = rect.yPt - size - 1.5;
-  const y = below >= 2 ? below : rect.yPt + rect.heightPt + 1.5;
+  const lineHeight = size + 1.5;
+  const blockHeight = lineHeight * lines.length;
+  const below = rect.yPt - blockHeight;
+  // The top line's baseline. Below the field when there is room, above it
+  // at the foot of the page.
+  const top =
+    below >= margin
+      ? rect.yPt - lineHeight
+      : Math.min(
+          rect.yPt + rect.heightPt + blockHeight - size,
+          page.getHeight() - size - margin,
+        );
 
-  font.drawText(page, text, {
-    color: rgb(0.2, 0.2, 0.24),
-    size,
-    x: rect.xPt,
-    y,
+  lines.forEach((line, index) => {
+    const width = font.widthOfTextAtSize(line, size);
+    // Starts under the field, moved left if it would run off the page.
+    const x = Math.max(margin, Math.min(rect.xPt, pageWidth - width - margin));
+
+    font.drawText(page, line, {
+      color: rgb(0.2, 0.2, 0.24),
+      size,
+      x,
+      y: top - index * lineHeight,
+    });
   });
 }
 
