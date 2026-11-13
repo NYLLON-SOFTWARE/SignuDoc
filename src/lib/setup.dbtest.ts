@@ -11,6 +11,7 @@ import {
   markEmailReady,
   readSetupState,
   readStoredSettings,
+  resolveSettings,
   saveSettings,
 } from "./settings.ts";
 import { completeSetup, SetupError } from "./setup.ts";
@@ -25,6 +26,7 @@ const setupInput = {
   fullName: "Olive Owner",
   organizationName: "Acme Corp",
   password: "a long enough passphrase",
+  supportAddress: "help@acme.com",
 };
 
 let database: pg.Pool;
@@ -87,6 +89,159 @@ test("before setup nobody can sign up, and after it the chosen rule applies", as
   assert.deepEqual(await readSetupState(database), { status: "complete" });
   assert.deepEqual(await signUp("colleague@acme.com"), { allowed: true });
   assert.equal((await signUp("stranger@elsewhere.example")).allowed, false);
+});
+
+test("the support address given at setup is saved for this install, not guessed", async () => {
+  await completeSetup(
+    { ...setupInput, supportAddress: "  Help@Acme.com " },
+    {
+      createAdminAccount: async ({ email }) => ({
+        userId: await insertUser(email),
+      }),
+      database,
+      env,
+    },
+  );
+
+  const stored = await readStoredSettings(database);
+
+  // The address that was typed, and not the administrator's own.
+  assert.equal(stored?.supportAddress, "help@acme.com");
+  assert.equal(resolveSettings(stored, env).supportAddress, "help@acme.com");
+});
+
+test("setup without a support address is refused before any account exists", async () => {
+  const withoutSupportAddress: Record<string, string> = { ...setupInput };
+
+  delete withoutSupportAddress.supportAddress;
+
+  for (const input of [
+    withoutSupportAddress,
+    { ...setupInput, supportAddress: "   " },
+  ]) {
+    await assert.rejects(
+      completeSetup(input, {
+        createAdminAccount: async () => {
+          throw new Error("no account may be created");
+        },
+        database,
+        env,
+      }),
+      (error: unknown) => {
+        assert.ok(error instanceof SetupError);
+        assert.equal(error.statusCode, 400);
+        assert.deepEqual(error.fieldErrors, {
+          supportAddress: "Enter an email address people can write to for help",
+        });
+
+        return true;
+      },
+    );
+  }
+
+  // Nothing was left behind: the next visitor starts from the beginning.
+  assert.equal(await countUsers(), 0);
+  assert.equal(await readStoredSettings(database), null);
+  assert.deepEqual(await readSetupState(database), { status: "fresh" });
+
+  // Every field that needs attention is named at once.
+  await assert.rejects(
+    completeSetup(
+      { ...withoutSupportAddress, password: "too short" },
+      {
+        createAdminAccount: async () => {
+          throw new Error("no account may be created");
+        },
+        database,
+        env,
+      },
+    ),
+    (error: unknown) => {
+      assert.ok(error instanceof SetupError);
+      assert.deepEqual(Object.keys(error.fieldErrors).sort(), [
+        "password",
+        "supportAddress",
+      ]);
+
+      return true;
+    },
+  );
+});
+
+test("a deployment that sets SUPPORT_EMAIL is not asked for a support address", async () => {
+  const fixed = { SUPPORT_EMAIL: "Acme Help <desk@acme.com>" };
+  const withoutSupportAddress: Record<string, string> = { ...setupInput };
+
+  delete withoutSupportAddress.supportAddress;
+
+  await completeSetup(withoutSupportAddress, {
+    createAdminAccount: async ({ email }) => ({
+      userId: await insertUser(email),
+    }),
+    database,
+    env: fixed,
+  });
+
+  const stored = await readStoredSettings(database);
+
+  // Nothing is saved in its place, and the deployment's address is in use.
+  assert.equal(stored?.supportAddress, null);
+  assert.equal(
+    resolveSettings(stored, fixed).supportAddress,
+    "Acme Help <desk@acme.com>",
+  );
+});
+
+test("someone who takes charge of an older install gives it a support address, unless it has one", async () => {
+  const claimEnv = { SETUP_TOKEN: "a-secret-of-the-owner" };
+  const claim = {
+    organizationName: "Second Wind Partners",
+    setupToken: claimEnv.SETUP_TOKEN,
+  };
+  const userId = await insertUser("early@customer.example");
+  const sessionUser = {
+    email: "early@customer.example",
+    emailVerified: true,
+    id: userId,
+  };
+  const createAdminAccount = async () => {
+    throw new Error("nobody is created when an install is claimed");
+  };
+  const options = { createAdminAccount, database, env: claimEnv, sessionUser };
+
+  await assert.rejects(completeSetup(claim, options), (error: unknown) => {
+    assert.ok(error instanceof SetupError);
+    assert.equal(error.statusCode, 400);
+    assert.deepEqual(Object.keys(error.fieldErrors), ["supportAddress"]);
+
+    return true;
+  });
+  // Still nobody in charge, and nothing saved.
+  assert.deepEqual(await readSetupState(database), { status: "unclaimed" });
+  assert.equal(await readStoredSettings(database), null);
+
+  await completeSetup(
+    { ...claim, supportAddress: "desk@customer.example" },
+    options,
+  );
+
+  assert.deepEqual(await readSetupState(database), { status: "complete" });
+  assert.equal(
+    (await readStoredSettings(database))?.supportAddress,
+    "desk@customer.example",
+  );
+
+  // The same install with nobody in charge again: the address it was
+  // given is kept, and is not asked for a second time.
+  await database.query(`update public."user" set role = 'user'`);
+  invalidateSettingsCache();
+  await completeSetup(claim, options);
+
+  assert.deepEqual(await readSetupState(database), { status: "complete" });
+  assert.equal(
+    (await readStoredSettings(database))?.supportAddress,
+    "desk@customer.example",
+  );
 });
 
 test("while the administrator's account is being created, nobody else can sign up", async () => {

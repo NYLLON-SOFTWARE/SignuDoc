@@ -19,7 +19,7 @@ The button puts your own copy on [Vercel](https://vercel.com) with a Postgres da
    - a private file store, [Vercel Blob](https://vercel.com/docs/vercel-blob), for the documents,
    - [Resend](https://resend.com) for sending email.
 4. **Click Deploy.** The build creates the database tables by itself.
-5. **Open your new site.** It takes you to a setup page, where you name your organization and create the first account. That account is the administrator.
+5. **Open your new site.** It takes you to a setup page, where you name your organization, give the email address people should write to for help, and create the first account. That account is the administrator.
 6. **Set up the address you send from.** Under Settings, Organization, enter an address at your own domain in "Send email from" and save (the setup page offers the same field). The site lists the DNS records for that domain and checks them for you. Add them where your domain is managed. If your Resend key is not allowed to manage domains, the page sends you to Resend's dashboard for this step instead.
 
 ![The setup page of a new install](docs/images/setup.png)
@@ -99,7 +99,7 @@ SignuDoc is not a law firm and does not give legal advice. Whoever runs an insta
 
 ### Your responsibilities when you self-host
 
-Your install carries your organization's name, not SignuDoc's. In Settings, link your own terms and privacy policy (without a privacy link, signers see a notice built from your settings at `/signer-privacy`; check it), set a support address, and choose how long finished documents are kept. Under GDPR your organization is the controller; Settings, Organization has the tools to answer a signer who asks for their data or for its erasure.
+Your install carries your organization's name, not SignuDoc's. In Settings, link your own terms and privacy policy (without a privacy link, signers see a notice built from your settings at `/signer-privacy`; check it), keep the support address you gave at setup pointed at a mailbox someone reads, and choose how long finished documents are kept. Under GDPR your organization is the controller; Settings, Organization has the tools to answer a signer who asks for their data or for its erasure.
 
 ## Signed PDFs and the seal
 
@@ -192,13 +192,15 @@ Open [http://localhost:3000](http://localhost:3000).
 
 ### 5. Set the site up
 
-The first time you open a new install it takes you to `/setup`. There you name your organization and create the first account, which becomes the administrator. After that the setup page is gone for good.
+The first time you open a new install it takes you to `/setup`. There you name your organization, give its support address, and create the first account, which becomes the administrator. After that the setup page is gone for good.
+
+- **Support address.** Setup does not finish without one. It is the address signers and people with an account are told to write to, and where replies to the site's emails go. It is saved in your install's own settings and nowhere else; there is no SignuDoc address that it falls back to. The administrator can change it under Settings, Organization, but not remove it.
 
 - **Who can sign up.** The install starts by letting people with an email address at the administrator's own domain create accounts (or nobody else, if the administrator used a public mailbox such as Gmail). The administrator can change this under Settings, Organization: people at listed domains, nobody, or anyone. People who are only sent a document to sign never need an account.
 - **More administrators.** Settings, Organization lists everyone with an account under People, where an administrator can make someone else an administrator or take that away. There is always at least one. When an account is closed, its finished documents and their audit trails move to the longest-standing administrator, because they are the organization's records. If that person later stops being an administrator, those documents move on to one who stays, and the documents they sent themselves stay with them.
 - **Email.** Settings, Organization also shows whether email is working. While no sender address is set, mail goes out from Resend's test address, which only reaches the owner of the Resend account. Enter a sender address at your domain and the page shows the DNS records to add and checks them for you. Mail from that address is not delivered until its domain is verified.
 - **`SETUP_TOKEN`.** A new install can be claimed by whoever opens it first. If its URL will be public before you get to it, set `SETUP_TOKEN` to a secret of your own and the setup page will ask for it.
-- **An install from before this page existed** has accounts but no administrator. Set `SETUP_TOKEN`, sign in with the account that should be in charge, and open `/setup`. Sign-up stays open, as it was, until that administrator changes it.
+- **An install from before this page existed** has accounts but no administrator. Set `SETUP_TOKEN`, sign in with the account that should be in charge, and open `/setup`. It asks for a support address if the install has none. Sign-up stays open, as it was, until that administrator changes it.
 
 ### Hosted mode
 
@@ -233,8 +235,8 @@ The schema lives in `db/migrations` as plain SQL files. `npm run db:migrate` app
 
 SignuDoc sends transactional email through Resend.
 
-- The address email is sent from, and the support address replies go to, are set by the administrator under Settings, Organization. The sender address must be at a domain verified with Resend; the same page adds the domain to Resend, lists the DNS records and checks them. With a Resend API key that is only allowed to send, it points you at Resend's dashboard for that step instead.
-- `RESEND_FROM_EMAIL` and `SUPPORT_EMAIL` are optional. When set they take the place of the addresses saved in Settings, which then cannot be changed there.
+- The support address, where replies go, is asked for when the site is set up. It and the address email is sent from can be changed by the administrator under Settings, Organization. The sender address must be at a domain verified with Resend; the same page adds the domain to Resend, lists the DNS records and checks them. With a Resend API key that is only allowed to send, it points you at Resend's dashboard for that step instead.
+- `RESEND_FROM_EMAIL` and `SUPPORT_EMAIL` are optional. When set they take the place of the addresses saved in Settings, which then cannot be changed there, and with `SUPPORT_EMAIL` set the setup page does not ask for a support address.
 - Until a sender address is set, mail goes out from `onboarding@resend.dev`, which Resend only delivers to the owner of the Resend account.
 - In hosted mode the support address is also the contact shown on the Terms, Privacy, and Accessibility pages.
 - For local development, `EMAIL_DRIVER=capture` writes each email to `.data/outbox` as a JSON file instead of sending it. Open the newest file to find a verification or signing link. This driver refuses to run in production.
@@ -308,7 +310,7 @@ Away from Vercel, a few things Vercel does for you are yours to set:
 Self-hosted operators are responsible for:
 
 - linking to their own terms and privacy policy under Settings, Organization;
-- setting the correct support address and verifying a sending domain for email;
+- keeping the support address pointed at a mailbox someone reads, and verifying a sending domain for email;
 - configuring retention, consent, and compliance requirements for their own deployment; and
 - scheduling the [daily cleanup](#daily-cleanup) if they are not on Vercel, where it is scheduled for them.
 
@@ -364,3 +366,5 @@ This repository also redistributes third-party assets, including bundled fonts a
 Issues and pull requests are welcome.
 
 If you plan to contribute, keep the project style simple: small components, explicit server-side logic, and schema-validated inputs.
+
+The project has no email address of its own. Report a security problem privately through GitHub, as [SECURITY.md](./SECURITY.md) describes, and a conduct problem as the [Code of Conduct](./CODE_OF_CONDUCT.md) describes. For help with one particular site that runs SignuDoc, write to the organization that runs it.

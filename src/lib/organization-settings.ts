@@ -147,7 +147,7 @@ const FIELD_MESSAGES: Record<OrganizationSettingsField, string> = {
   retentionDays: "Enter a number of days, 30 or more, or leave this empty",
   senderAddress: "Enter a valid email address, or leave this empty",
   signupMode: "Choose who can create an account",
-  supportAddress: "Enter a valid email address, or leave this empty",
+  supportAddress: "Enter an email address people can write to for help",
   termsUrl: "Enter a full web address starting with https://",
 };
 
@@ -227,6 +227,13 @@ export async function updateOrganizationSettings(
     fieldErrors.allowedEmailDomains = FIELD_MESSAGES.allowedEmailDomains;
   }
 
+  // Setup does not finish without a support address, and it cannot be
+  // taken away afterwards: signers are told to write to it. An install
+  // whose address comes from SUPPORT_EMAIL has one whatever is stored.
+  if (!current.supportAddressFromEnv && input.supportAddress === null) {
+    fieldErrors.supportAddress = FIELD_MESSAGES.supportAddress;
+  }
+
   if (Object.keys(fieldErrors).length > 0) {
     throw new OrganizationSettingsError(fieldErrors);
   }
@@ -247,9 +254,9 @@ export async function updateOrganizationSettings(
       ...(current.senderAddressFromEnv
         ? {}
         : { senderAddress: input.senderAddress?.toLowerCase() ?? null }),
-      ...(current.supportAddressFromEnv
+      ...(current.supportAddressFromEnv || input.supportAddress === null
         ? {}
-        : { supportAddress: input.supportAddress?.toLowerCase() ?? null }),
+        : { supportAddress: input.supportAddress.toLowerCase() }),
     },
     database,
   );

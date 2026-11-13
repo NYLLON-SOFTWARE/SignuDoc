@@ -24,6 +24,7 @@ test("a database without this version's tables says so", () => {
 
 test("the first visitor to a fresh install creates the administrator", () => {
   assert.deepEqual(resolveSetupView({ status: "fresh" }, { env: {} }), {
+    asksForSupportAddress: true,
     requiresToken: false,
     senderAddressFromEnv: false,
     view: "create",
@@ -41,7 +42,12 @@ test("a fresh install with SETUP_TOKEN asks for it", () => {
         },
       },
     ),
-    { requiresToken: true, senderAddressFromEnv: true, view: "create" },
+    {
+      asksForSupportAddress: true,
+      requiresToken: true,
+      senderAddressFromEnv: true,
+      view: "create",
+    },
   );
 });
 
@@ -51,13 +57,47 @@ test("an install with accounts but no administrator is claimed by someone signed
       { status: "unclaimed" },
       { env: { SETUP_TOKEN: "a-secret-of-the-owner" }, sessionUser: signedIn },
     ),
-    { signedInEmail: "jane@acme.com", tokenConfigured: true, view: "claim" },
+    {
+      asksForSupportAddress: true,
+      signedInEmail: "jane@acme.com",
+      tokenConfigured: true,
+      view: "claim",
+    },
   );
   assert.deepEqual(resolveSetupView({ status: "unclaimed" }, { env: {} }), {
+    asksForSupportAddress: true,
     signedInEmail: null,
     tokenConfigured: false,
     view: "claim",
   });
+});
+
+test("setup asks for a support address unless the install or the deployment has one", () => {
+  const asks = (
+    status: "fresh" | "unclaimed",
+    options: Parameters<typeof resolveSetupView>[1],
+  ) => {
+    const view = resolveSetupView({ status }, options);
+
+    assert.ok(view.view === "create" || view.view === "claim");
+
+    return view.asksForSupportAddress;
+  };
+
+  for (const status of ["fresh", "unclaimed"] as const) {
+    assert.equal(asks(status, { env: {} }), true);
+    // Fixed for the deployment: there is nothing to ask.
+    assert.equal(
+      asks(status, { env: { SUPPORT_EMAIL: "desk@acme.com" } }),
+      false,
+    );
+    // An install that was given one before keeps it.
+    assert.equal(
+      asks(status, { env: {}, storedSupportAddress: "help@acme.com" }),
+      false,
+    );
+    assert.equal(asks(status, { env: {}, storedSupportAddress: null }), true);
+  }
 });
 
 test("setup refuses input it cannot use before touching the database", async () => {
@@ -69,7 +109,11 @@ test("setup refuses input it cannot use before touching the database", async () 
 
   await assert.rejects(
     completeSetup(
-      { organizationName: "   ", senderAddress: "not an address" },
+      {
+        organizationName: "   ",
+        senderAddress: "not an address",
+        supportAddress: "nor is this",
+      },
       { createAdminAccount, database, env: {} },
     ),
     (error: unknown) => {
@@ -78,6 +122,7 @@ test("setup refuses input it cannot use before touching the database", async () 
       assert.deepEqual(error.fieldErrors, {
         organizationName: "Enter the name of your organization",
         senderAddress: "Enter a valid email address, or leave this empty",
+        supportAddress: "Enter an email address people can write to for help",
       });
 
       return true;

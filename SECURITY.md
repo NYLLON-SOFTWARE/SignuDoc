@@ -2,15 +2,17 @@
 
 ## Reporting a vulnerability
 
-If you find a security vulnerability in SignuDoc, please report it privately. **Do not open a public GitHub issue.**
+If you find a security vulnerability in SignuDoc, please report it privately. **Do not put the details in a public GitHub issue, discussion or pull request.**
 
-Email your report to **support@signudoc.app** with:
+Send your report through GitHub's private vulnerability reporting: open the [Report a vulnerability](https://github.com/NYLLON-SOFTWARE/signudoc/security/advisories/new) form, which is also on this repository's security advisories page. The report stays between you and the repository's maintainers. Include:
 
 - A description of the vulnerability.
 - Steps to reproduce or a proof of concept.
 - The potential impact as you understand it.
 
-If GitHub private vulnerability reporting is enabled for this repository, you may use that as well.
+If that form is not available to you, open an issue that asks the maintainers for a private way to reach them, and leave every detail of the vulnerability out of it.
+
+The project has no email address for reports. Each organization that runs SignuDoc gives its own install a support address, and that address reaches the organization, not the people who maintain this code. A problem with one particular site, such as its settings or the documents it holds, belongs with the organization that runs it.
 
 We will acknowledge your report within 7 days and aim to provide a fix or mitigation plan within 30 days, depending on severity and complexity.
 

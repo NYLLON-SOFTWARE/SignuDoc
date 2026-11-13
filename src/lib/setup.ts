@@ -27,6 +27,12 @@ import { getEnv, isHostedMode, type EnvSource } from "./utils/env.ts";
 // that predates settings), nobody is created. A signed-in user becomes the
 // administrator, and SETUP_TOKEN is required: without it, any account
 // holder could promote themselves.
+//
+// Either way, setup does not finish without a support address, the one
+// signers and account holders are told to write to, unless SUPPORT_EMAIL
+// already sets it for the deployment. It is saved in this install's own
+// settings, and nothing stands in for it: any address written into the
+// code would belong to somebody else.
 
 // Held for the length of the setup transaction, so two visitors cannot both
 // become the first administrator.
@@ -38,7 +44,8 @@ export type SetupFieldName =
   | "organizationName"
   | "password"
   | "senderAddress"
-  | "setupToken";
+  | "setupToken"
+  | "supportAddress";
 
 export class SetupError extends Error {
   readonly fieldErrors: Partial<Record<SetupFieldName, string>>;
@@ -63,12 +70,15 @@ export type SetupView =
   | {
       /** Nobody has an account: the visitor creates the administrator. */
       view: "create";
+      /** False when SUPPORT_EMAIL sets the address, or one is saved already. */
+      asksForSupportAddress: boolean;
       requiresToken: boolean;
       senderAddressFromEnv: boolean;
     }
   | {
       /** Accounts exist: a signed-in user becomes the administrator. */
       view: "claim";
+      asksForSupportAddress: boolean;
       signedInEmail: string | null;
       tokenConfigured: boolean;
     };
@@ -111,6 +121,9 @@ const baseSetupSchema = z.object({
   organizationName: organizationNameSchema,
   senderAddress: optionalEmailSchema,
   setupToken: z.string().max(512).optional(),
+  // Whether one is needed depends on what is saved already, which is only
+  // known once the database has been read.
+  supportAddress: optionalEmailSchema,
 });
 
 const createAccountSchema = z.object({
@@ -126,6 +139,7 @@ const FIELD_MESSAGES: Record<SetupFieldName, string> = {
   password: "Password must be at least 15 characters",
   senderAddress: "Enter a valid email address, or leave this empty",
   setupToken: "Enter the setup token",
+  supportAddress: "Enter an email address people can write to for help",
 };
 
 function toFieldErrors(error: z.ZodError) {
@@ -156,16 +170,36 @@ function tokensMatch(provided: string | undefined, expected: string): boolean {
   return timingSafeEqual(providedDigest, expectedDigest);
 }
 
+/**
+ * Whether setup still has to be given a support address: not when
+ * SUPPORT_EMAIL sets it for this deployment, and not when one is saved.
+ */
+function needsSupportAddress(
+  storedSupportAddress: string | null,
+  env: EnvSource,
+): boolean {
+  return (
+    getEnv(env).email.supportAddress === undefined && !storedSupportAddress
+  );
+}
+
 /** Whether setup can be claimed right now, and what the page should ask for. */
 export function resolveSetupView(
   state: SetupState,
   {
     env = process.env,
     sessionUser = null,
-  }: { env?: EnvSource; sessionUser?: SetupSessionUser | null } = {},
+    storedSupportAddress = null,
+  }: {
+    env?: EnvSource;
+    sessionUser?: SetupSessionUser | null;
+    /** The support address in the settings row, if there is one. */
+    storedSupportAddress?: string | null;
+  } = {},
 ): SetupView {
   const appEnv = getEnv(env);
   const tokenConfigured = appEnv.setup.token !== undefined;
+  const asksForSupportAddress = needsSupportAddress(storedSupportAddress, env);
 
   if (state.status === "complete") {
     return { view: "complete" };
@@ -177,6 +211,7 @@ export function resolveSetupView(
 
   if (state.status === "fresh") {
     return {
+      asksForSupportAddress,
       requiresToken: tokenConfigured,
       senderAddressFromEnv: appEnv.email.senderAddress !== undefined,
       view: "create",
@@ -184,6 +219,7 @@ export function resolveSetupView(
   }
 
   return {
+    asksForSupportAddress,
     signedInEmail: sessionUser?.email ?? null,
     tokenConfigured,
     view: "claim",
@@ -287,15 +323,27 @@ export async function completeSetup(
         settingsUpdate.senderAddress = base.senderAddress.toLowerCase();
       }
 
+      // The one given now, or else the one this install already has. It is
+      // never guessed: not the administrator's own address, and not one
+      // written into the code.
+      const supportAddress =
+        base.supportAddress?.toLowerCase() ?? stored?.supportAddress ?? null;
+      const supportAddressErrors: Partial<Record<SetupFieldName, string>> =
+        needsSupportAddress(supportAddress, env)
+          ? { supportAddress: FIELD_MESSAGES.supportAddress }
+          : {};
+
       if (state.status === "fresh") {
         const parsedAccount = createAccountSchema.safeParse(rawInput);
 
-        if (!parsedAccount.success) {
-          throw new SetupError(
-            "Check the highlighted fields.",
-            400,
-            toFieldErrors(parsedAccount.error),
-          );
+        // Refused here, before any account exists.
+        if (!parsedAccount.success || supportAddressErrors.supportAddress) {
+          throw new SetupError("Check the highlighted fields.", 400, {
+            ...(parsedAccount.success
+              ? {}
+              : toFieldErrors(parsedAccount.error)),
+            ...supportAddressErrors,
+          });
         }
 
         const account = parsedAccount.data;
@@ -345,7 +393,7 @@ export async function completeSetup(
             ...settingsUpdate,
             allowedEmailDomains: [...signupPolicy.allowedEmailDomains],
             signupMode: signupPolicy.signupMode,
-            supportAddress: stored?.supportAddress ?? email,
+            supportAddress,
           },
           tx,
         );
@@ -367,6 +415,14 @@ export async function completeSetup(
         );
       }
 
+      if (supportAddressErrors.supportAddress) {
+        throw new SetupError(
+          "Check the highlighted fields.",
+          400,
+          supportAddressErrors,
+        );
+      }
+
       const promoted = await tx.query(
         `update public."user" set role = 'admin', "updatedAt" = now() where id = $1`,
         [sessionUser.id],
@@ -385,7 +441,7 @@ export async function completeSetup(
           ...(stored
             ? {}
             : { allowedEmailDomains: [], signupMode: "open" as const }),
-          supportAddress: stored?.supportAddress ?? sessionUser.email,
+          supportAddress,
         },
         tx,
       );

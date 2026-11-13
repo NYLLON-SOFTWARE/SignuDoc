@@ -42,7 +42,7 @@ const storedRow = {
  * Stands in for the database: answers the read with the stored row and
  * keeps what the save was asked to write.
  */
-function fakeDatabase() {
+function fakeDatabase(row = storedRow) {
   const saved: { values: unknown[] | null } = { values: null };
   const database = {
     query: (text: string, values: unknown[] = []) => {
@@ -52,7 +52,7 @@ function fakeDatabase() {
         return Promise.resolve({ rowCount: 0, rows: [] });
       }
 
-      return Promise.resolve({ rowCount: 1, rows: [storedRow] });
+      return Promise.resolve({ rowCount: 1, rows: [row] });
     },
   } as unknown as DbExecutor;
 
@@ -101,6 +101,60 @@ test("a support address fixed by the environment is not judged or changed either
   );
 
   assert.equal(result.supportAddress, "help@acme.com");
+});
+
+test("the support address can be changed, but not taken away", async () => {
+  const current = resolveSettings(stored, {});
+
+  for (const supportAddress of ["", "   ", null, undefined, "not an address"]) {
+    const { database, saved } = fakeDatabase();
+
+    await assert.rejects(
+      updateOrganizationSettings(
+        { ...form, supportAddress },
+        current,
+        database,
+      ),
+      (error: unknown) => {
+        assert.ok(error instanceof OrganizationSettingsError);
+        assert.deepEqual(error.fieldErrors, {
+          supportAddress: "Enter an email address people can write to for help",
+        });
+
+        return true;
+      },
+    );
+    assert.equal(saved.values, null);
+  }
+
+  const { database } = fakeDatabase();
+  const result = await updateOrganizationSettings(
+    { ...form, supportAddress: "Desk@Acme.com" },
+    current,
+    database,
+  );
+
+  assert.equal(result.supportAddress, "desk@acme.com");
+});
+
+test("an install whose support address comes from SUPPORT_EMAIL needs none of its own", async () => {
+  const current = resolveSettings(
+    { ...stored, supportAddress: null },
+    { SUPPORT_EMAIL: "desk@acme.com" },
+  );
+  const { database, saved } = fakeDatabase({
+    ...storedRow,
+    support_address: null,
+  });
+  const result = await updateOrganizationSettings(
+    { ...form, organizationName: "Acme Corporation", supportAddress: "" },
+    current,
+    database,
+  );
+
+  assert.equal(result.organizationName, "Acme Corporation");
+  assert.equal(result.supportAddress, null);
+  assert.ok(saved.values);
 });
 
 test("an address the administrator can edit is still checked", async () => {
