@@ -1,10 +1,15 @@
 import assert from "node:assert/strict";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import { after, before, test } from "node:test";
 
+import { PDFDocument } from "pdf-lib";
 import type pg from "pg";
 
 import {
+  afterStatement,
   openTestDatabase,
   recordAuditEventWhileWaitedOn,
 } from "./db/test-database.ts";
@@ -18,8 +23,12 @@ import type {
   TransactionalEmailMessage,
 } from "./services/email.ts";
 import { issueSigningLink } from "./services/signing-links.ts";
-import type { StorageService } from "./services/storage.ts";
 import {
+  createStorageService,
+  type StorageService,
+} from "./services/storage.ts";
+import {
+  declineSigningForToken,
   recordSignerConsent,
   SigningAccessError,
   submitSigningForToken,
@@ -573,4 +582,216 @@ test("a deadline moved while a signer submits reaches the next signer", async ()
     ),
   );
   assert.equal((await verifyAuditChain(envelopeId, database)).ok, true);
+});
+
+// A PNG of one transparent pixel, standing in for a drawn signature.
+const DRAWN_SIGNATURE =
+  "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==";
+
+/** Resolves once another session is held up behind a lock. */
+async function waitForLockWaiter() {
+  for (let attempt = 0; attempt < 300; attempt += 1) {
+    const waiting = await database.query(
+      `
+        select 1
+        from pg_stat_activity
+        where datname = current_database() and wait_event_type = 'Lock'
+        limit 1
+      `,
+    );
+
+    if (waiting.rowCount) {
+      return;
+    }
+
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+}
+
+/** An envelope waiting on its one signer, with a real document behind it. */
+async function createSignableEnvelope() {
+  const now = unixNow();
+  const sent = await createSentEnvelope({ expiresAt: now + DAY });
+  const fieldId = randomUUID();
+  const storageDir = await mkdtemp(path.join(tmpdir(), "signudoc-deadline-"));
+  const storageService = createStorageService({
+    env: { STORAGE_DRIVER: "local", STORAGE_LOCAL_DIR: storageDir },
+  });
+  const sourcePdf = await PDFDocument.create();
+
+  sourcePdf.addPage([612, 792]);
+
+  const sourcePdfBytes = await sourcePdf.save();
+
+  await storageService.putObject({
+    body: sourcePdfBytes,
+    contentType: "application/pdf",
+    key: `test/${sent.envelopeId}.pdf`,
+  });
+  await database.query(
+    `
+      update envelopes
+      set source_pdf_hash = $1, source_pdf_size_bytes = $2
+      where id = $3
+    `,
+    [
+      createHash("sha256").update(sourcePdfBytes).digest("hex"),
+      sourcePdfBytes.length,
+      sent.envelopeId,
+    ],
+  );
+  await database.query(
+    `update signers set signing_token_expires_at = $1 where id = $2`,
+    [now + DAY, sent.signerId],
+  );
+  await database.query(
+    `
+      insert into envelope_pages (id, envelope_id, page_number, width_pt, height_pt)
+      values ($1, $2, 1, 612, 792)
+    `,
+    [randomUUID(), sent.envelopeId],
+  );
+  await database.query(
+    `
+      insert into fields (
+        id, envelope_id, signer_id, type, page, x, y, width, height
+      ) values ($1, $2, $3, 'signature', 1, 0.1, 0.1, 0.2, 0.1)
+    `,
+    [fieldId, sent.envelopeId, sent.signerId],
+  );
+  await consent(sent.token);
+
+  return { ...sent, fieldId, storageDir, storageService };
+}
+
+/**
+ * The same database, except that the sender moves the deadline right after
+ * the signer's row has been written with `signerStatus`, when the
+ * envelope's row has not been yet. Whoever uses it has to find the change
+ * waiting for them, not the two waiting for each other.
+ */
+function withDeadlineChangedAfterSigner(
+  signerStatus: "declined" | "signed",
+  { envelopeId, userId }: { envelopeId: string; userId: string },
+) {
+  const started: { change?: Promise<unknown> } = {};
+  const pool = afterStatement(
+    database,
+    (text) => !started.change && text.includes(`status = '${signerStatus}'`),
+    async () => {
+      started.change = changeEnvelopeDeadline(
+        userId,
+        envelopeId,
+        { expiresInDays: 7, senderEmail: "sam@example.test" },
+        { database },
+      );
+      await Promise.race([
+        started.change.then(
+          () => undefined,
+          () => undefined,
+        ),
+        waitForLockWaiter(),
+      ]);
+    },
+  );
+
+  return { pool, started };
+}
+
+/**
+ * The envelope is no longer out for signature, so there is no deadline left
+ * to move. Postgres cancelling the change as one half of a deadlock is not
+ * that answer.
+ */
+async function assertChangeRefused(
+  change: Promise<unknown> | undefined,
+  envelopeId: string,
+  status: string,
+) {
+  assert.ok(change, "the signer's row was never written");
+  await assert.rejects(
+    change,
+    (error: unknown) =>
+      error instanceof EnvelopeMutationError && error.statusCode === 409,
+  );
+
+  const envelope = await database.query<{ status: string }>(
+    `select status from envelopes where id = $1`,
+    [envelopeId],
+  );
+
+  assert.equal(envelope.rows[0]?.status, status);
+  assert.equal((await verifyAuditChain(envelopeId, database)).ok, true);
+}
+
+test("a change of deadline and the last signature do not lock each other out", async () => {
+  const envelope = await createSignableEnvelope();
+  const { pool, started } = withDeadlineChangedAfterSigner("signed", envelope);
+  const { service } = recordingEmailService();
+
+  try {
+    await submitSigningForToken(
+      envelope.token,
+      {
+        clientTimezoneOffsetMinutes: 0,
+        fields: [
+          {
+            fieldId: envelope.fieldId,
+            imageDataUrl: DRAWN_SIGNATURE,
+            inputMethod: "drawn",
+            type: "signature",
+          },
+        ],
+      },
+      {
+        database: pool,
+        emailService: service,
+        storageService: envelope.storageService,
+      },
+    );
+
+    await assertChangeRefused(started.change, envelope.envelopeId, "completed");
+  } finally {
+    await rm(envelope.storageDir, { force: true, recursive: true });
+  }
+});
+
+test("a change of deadline and a decline do not lock each other out", async () => {
+  const envelope = await createSignableEnvelope();
+  const { pool, started } = withDeadlineChangedAfterSigner(
+    "declined",
+    envelope,
+  );
+  // A decline reads its storage and email from the environment.
+  const settings = {
+    EMAIL_CAPTURE_DIR: path.join(envelope.storageDir, "outbox"),
+    EMAIL_DRIVER: "capture",
+    STORAGE_DRIVER: "local",
+    STORAGE_LOCAL_DIR: envelope.storageDir,
+  };
+  const settingsBefore = Object.keys(settings).map(
+    (name) => [name, process.env[name]] as const,
+  );
+
+  Object.assign(process.env, settings);
+
+  try {
+    await declineSigningForToken(
+      envelope.token,
+      { reason: "Not what we agreed." },
+      { database: pool },
+    );
+
+    await assertChangeRefused(started.change, envelope.envelopeId, "declined");
+  } finally {
+    for (const [name, value] of settingsBefore) {
+      if (value === undefined) {
+        delete process.env[name];
+      } else {
+        process.env[name] = value;
+      }
+    }
+
+    await rm(envelope.storageDir, { force: true, recursive: true });
+  }
 });

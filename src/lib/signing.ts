@@ -675,6 +675,40 @@ async function getSenderRow(
   );
 }
 
+/**
+ * Takes hold of an envelope that is out for signature before a signer's
+ * rows are changed, and refuses when it no longer is. A new deadline, a
+ * void, a reminder and the deletion of the sender's account all take the
+ * envelope's row first and its signers after. The last signature and a
+ * decline used to take the signer first and the envelope last, so one of
+ * them and one of those could wait for each other until Postgres
+ * cancelled one.
+ *
+ * The lock an UPDATE takes, not FOR UPDATE: the audit event stored in the
+ * same transaction needs a share of this row for its foreign key.
+ */
+async function lockSentEnvelope(
+  envelopeId: string,
+  tx: DbExecutor,
+): Promise<void> {
+  const locked = await tx.query(
+    `
+      SELECT id FROM envelopes
+      WHERE id = $1 AND status = 'sent'
+      FOR NO KEY UPDATE
+    `,
+    [envelopeId],
+  );
+
+  if (locked.rowCount !== 1) {
+    // Voided, declined or deleted since the page was opened.
+    throw new SigningMutationError(
+      "This signing link is no longer active.",
+      409,
+    );
+  }
+}
+
 async function recordViewedEventOnce(
   context: Pick<ResolvedSigningContext, "envelope" | "signer">,
   meta: SigningRequestMeta,
@@ -2160,6 +2194,8 @@ export async function submitSigningForToken(
 
     try {
       await withTransaction(async (tx) => {
+        await lockSentEnvelope(context.envelope.id, tx);
+
         for (const update of fieldUpdates.values()) {
           const result = await tx.query(
             `
@@ -2449,6 +2485,8 @@ export async function declineSigningForToken(
 
   try {
     await withTransaction(async (tx) => {
+      await lockSentEnvelope(context.envelope.id, tx);
+
       const declinedSignerResult = await tx.query(
         `
           UPDATE signers
