@@ -3,6 +3,7 @@ import { ZodError } from "zod";
 
 import { requireVerifiedSenderSession } from "@/lib/auth/route-session";
 import { getDb } from "@/lib/db/connection";
+import { createDownloadResponse } from "@/lib/download-response";
 import {
   DownloadAccessError,
   getSenderEnvelopeDownload,
@@ -10,10 +11,6 @@ import {
 import { downloadRequestSchema } from "@/lib/schemas/envelope";
 import { logRouteError } from "@/lib/security/logging";
 import { getClientIpAddress, getRequestPathname } from "@/lib/security/request";
-import { buildContentDisposition } from "@/lib/services/storage";
-import { createStorageService } from "@/lib/services/storage";
-
-const PRESIGNED_DOWNLOAD_TTL_SECONDS = 5 * 60;
 
 type EnvelopeDownloadRouteContext = {
   params: Promise<{
@@ -53,36 +50,7 @@ export async function GET(
       },
     );
 
-    if (!("body" in download)) {
-      const presignedDownload =
-        await createStorageService().createPresignedDownloadUrl({
-          expiresInSeconds: PRESIGNED_DOWNLOAD_TTL_SECONDS,
-          fileName: download.fileName,
-          key: download.key,
-        });
-
-      return NextResponse.redirect(
-        new URL(presignedDownload.url, request.url),
-        {
-          headers: {
-            "cache-control": "private, no-store",
-          },
-          status: 302,
-        },
-      );
-    }
-
-    const responseBody = download.body.slice().buffer as ArrayBuffer;
-
-    return new Response(responseBody, {
-      headers: {
-        "cache-control": "private, no-store",
-        "content-disposition": buildContentDisposition(download.fileName),
-        "content-length": String(download.contentLength),
-        "content-type": download.contentType,
-      },
-      status: 200,
-    });
+    return await createDownloadResponse(download);
   } catch (error) {
     if (error instanceof ZodError) {
       const issue = error.issues[0];

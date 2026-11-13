@@ -1,10 +1,20 @@
 "use client";
 
+import {
+  CheckIcon,
+  ClockIcon,
+  DownloadIcon,
+  MinusIcon,
+  XIcon,
+  type LucideIcon,
+} from "lucide-react";
 import Link from "next/link";
 import { useState } from "react";
 
+import { DocumentThumbnail } from "@/components/shared/document-thumbnail";
 import { ShellButton } from "@/components/shared/form-shell";
 import { StatusPanel } from "@/components/shared/status-panel";
+import { SaveTemplateDialog } from "@/components/templates/save-template-dialog";
 import {
   Dialog,
   DialogContent,
@@ -16,6 +26,12 @@ import type {
   EnvelopeDetailData,
   EnvelopeDetailTimelineItem,
 } from "@/lib/envelopes";
+import { formatReminderInterval } from "@/lib/services/reminders";
+import {
+  DEFAULT_ENVELOPE_DEADLINE_DAYS,
+  ENVELOPE_DEADLINE_DAY_OPTIONS,
+  ENVELOPE_REMINDER_DAY_OPTIONS,
+} from "@/lib/types/domain";
 import { getSignerPalette } from "./signer-palette";
 
 type EnvelopeDetailShellProps = {
@@ -51,14 +67,20 @@ type EnvelopeDetailRecord = {
   title: string;
 };
 
-type ModalState = "delete-draft" | "void-envelope" | null;
+type ModalState =
+  | "change-deadline"
+  | "change-reminders"
+  | "delete-draft"
+  | "save-template"
+  | "void-envelope"
+  | null;
 
-const statusBadgeClasses: Record<EnvelopeStatus, string> = {
-  completed: "bg-[rgba(5,150,105,0.12)] text-chart-4",
-  declined: "bg-[rgba(255,0,51,0.1)] text-(--accent)",
-  draft: "bg-[rgba(17,17,17,0.06)] text-muted-foreground",
-  sent: "bg-[rgba(37,99,235,0.12)] text-chart-1",
-  voided: "bg-[rgba(17,17,17,0.08)] text-(--tertiary)",
+const statusPillClasses: Record<EnvelopeStatus, string> = {
+  completed: "pill-success",
+  declined: "pill-danger",
+  draft: "pill-neutral",
+  sent: "pill-accent",
+  voided: "pill-neutral",
 };
 
 const statusLabelMap: Record<EnvelopeStatus, string> = {
@@ -69,25 +91,32 @@ const statusLabelMap: Record<EnvelopeStatus, string> = {
   voided: "Voided",
 };
 
-const signerStatusBadgeClasses: Record<SignerStatus, string> = {
-  declined: "bg-[rgba(255,0,51,0.1)] text-(--accent)",
-  pending: "bg-[rgba(17,17,17,0.06)] text-muted-foreground",
-  signed: "bg-[rgba(5,150,105,0.12)] text-chart-4",
-  waiting: "bg-[rgba(37,99,235,0.12)] text-chart-1",
+const signerStatusPillClasses: Record<SignerStatus, string> = {
+  declined: "pill-danger",
+  pending: "pill-neutral",
+  signed: "pill-success",
+  waiting: "pill-accent",
 };
 
 const signerStatusLabelMap: Record<SignerStatus, string> = {
-  declined: "✗ Declined",
-  pending: "— Pending",
-  signed: "✓ Signed",
-  waiting: "◷ Waiting",
+  declined: "Declined",
+  pending: "Pending",
+  signed: "Signed",
+  waiting: "Waiting",
+};
+
+const signerStatusIcons: Record<SignerStatus, LucideIcon> = {
+  declined: XIcon,
+  pending: MinusIcon,
+  signed: CheckIcon,
+  waiting: ClockIcon,
 };
 
 const timelineToneClasses: Record<TimelineTone, string> = {
   accent: "bg-(--accent)",
-  danger: "bg-[rgba(255,0,51,0.7)]",
-  neutral: "bg-(--border)",
-  success: "bg-(--signer-4)",
+  danger: "bg-(--danger)",
+  neutral: "bg-(--border-strong)",
+  success: "bg-(--success)",
 };
 
 export function EnvelopeDetailShell({
@@ -97,9 +126,14 @@ export function EnvelopeDetailShell({
 }: EnvelopeDetailShellProps) {
   const [activeModal, setActiveModal] = useState<ModalState>(null);
   const [actionError, setActionError] = useState<string | null>(null);
+  const [isChangingDeadline, setIsChangingDeadline] = useState(false);
+  const [isChangingReminders, setIsChangingReminders] = useState(false);
   const [isDeletingDraft, setIsDeletingDraft] = useState(false);
   const [isSendingReminder, setIsSendingReminder] = useState(false);
   const [isVoidingEnvelope, setIsVoidingEnvelope] = useState(false);
+  const [savedTemplateName, setSavedTemplateName] = useState<string | null>(
+    null,
+  );
 
   function handleRetry() {
     window.location.reload();
@@ -154,6 +188,8 @@ export function EnvelopeDetailShell({
     timeline: record.timeline,
     title: record.title,
   };
+  const deadline = activeRecord.status === "sent" ? record.deadline : null;
+  const isExpired = Boolean(deadline?.expired);
   const manualReminderState = record.manualReminder ?? null;
   const reminderLimited =
     activeRecord.status === "sent" &&
@@ -163,12 +199,26 @@ export function EnvelopeDetailShell({
     activeRecord.status === "sent" && manualReminderState?.nextAvailableAtLabel
       ? `You can send another reminder after ${manualReminderState.nextAvailableAtLabel}.`
       : null;
+  const deadlineText = !deadline
+    ? null
+    : isExpired
+      ? `Expired ${deadline.expiresAtLabel}. Nobody can sign until you set a new deadline.`
+      : deadline.expiresAtLabel
+        ? `Expires ${deadline.expiresAtLabel}.`
+        : "No deadline. Each signing link lasts seven days.";
+  const reminderIntervalDays = record.reminderIntervalDays ?? null;
+  const remindersText =
+    reminderIntervalDays === null
+      ? "Automatic reminders are off."
+      : `Automatic reminders: ${formatReminderInterval(reminderIntervalDays).toLowerCase()}.`;
   const activeSigner =
     activeRecord.status === "sent"
       ? activeRecord.signers.find((signer) => signer.status === "waiting")
       : null;
 
   function handleDownload(fileType: DownloadFileType) {
+    // This starts a file download from an API route, not a page navigation.
+    // eslint-disable-next-line @next/next/no-location-assign-relative-destination
     window.location.assign(
       `/api/envelopes/${encodeURIComponent(envelopeId)}/download?type=${fileType}`,
     );
@@ -203,6 +253,60 @@ export function EnvelopeDetailShell({
       setActionError(payload?.error ?? "Unable to send a reminder right now.");
     } finally {
       setIsSendingReminder(false);
+    }
+  }
+
+  async function handleConfirmChangeDeadline(expiresInDays: number) {
+    setActionError(null);
+    setIsChangingDeadline(true);
+
+    try {
+      const response = await fetch(`/api/envelopes/${envelopeId}/deadline`, {
+        body: JSON.stringify({ expiresInDays }),
+        headers: { "content-type": "application/json" },
+        method: "POST",
+      });
+      const payload = (await response.json().catch(() => null)) as {
+        error?: string;
+      } | null;
+
+      if (response.ok || response.status === 404 || response.status === 409) {
+        window.location.reload();
+        return;
+      }
+
+      setActionError(payload?.error ?? "Unable to change the deadline.");
+    } catch {
+      setActionError("Unable to change the deadline.");
+    } finally {
+      setIsChangingDeadline(false);
+    }
+  }
+
+  async function handleConfirmChangeReminders(intervalDays: number | null) {
+    setActionError(null);
+    setIsChangingReminders(true);
+
+    try {
+      const response = await fetch(`/api/envelopes/${envelopeId}/reminders`, {
+        body: JSON.stringify({ reminderIntervalDays: intervalDays }),
+        headers: { "content-type": "application/json" },
+        method: "POST",
+      });
+      const payload = (await response.json().catch(() => null)) as {
+        error?: string;
+      } | null;
+
+      if (response.ok || response.status === 404 || response.status === 409) {
+        window.location.reload();
+        return;
+      }
+
+      setActionError(payload?.error ?? "Unable to change the reminders.");
+    } catch {
+      setActionError("Unable to change the reminders.");
+    } finally {
+      setIsChangingReminders(false);
     }
   }
 
@@ -263,74 +367,236 @@ export function EnvelopeDetailShell({
   }
 
   return (
-    <div className="space-y-8">
-      <section className="editorial-panel p-6 sm:p-8" data-animate="enter">
+    <div className="space-y-5">
+      <section className="panel p-5 sm:p-8" data-animate="enter">
         <Link
-          className="inline-flex items-center text-sm font-semibold text-muted-foreground transition hover:text-(--fg)"
+          className="inline-flex items-center text-sm font-semibold text-(--secondary) transition hover:text-(--accent-ink)"
           href="/dashboard"
         >
           ← Documents
         </Link>
 
-        <div className="mt-5 flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
-          <div className="space-y-2">
-            <h1
-              className={`text-[28px] font-semibold tracking-[-0.04em] ${
-                activeRecord.status === "voided"
-                  ? "text-muted-foreground"
-                  : "text-(--fg)"
-              }`}
-            >
-              {activeRecord.title}
-            </h1>
-            <p className="text-sm text-muted-foreground">
-              Created {activeRecord.createdAtLabel}
-            </p>
+        <div className="mt-5 flex flex-col gap-6 lg:flex-row lg:items-center lg:justify-between">
+          <div className="flex min-w-0 items-center gap-5">
+            <span className="hidden h-28 shrink-0 items-center justify-center rounded-2xl bg-(--surface) px-4 py-3 sm:flex">
+              <DocumentThumbnail
+                envelopeId={envelopeId}
+                title={activeRecord.title}
+              />
+            </span>
+            <div className="min-w-0 space-y-2.5">
+              <h1
+                className={`text-[clamp(1.5rem,3vw,1.875rem)] font-extrabold leading-tight tracking-[-0.03em] ${
+                  activeRecord.status === "voided"
+                    ? "text-(--tertiary)"
+                    : "text-(--fg)"
+                }`}
+              >
+                {activeRecord.title}
+              </h1>
+              <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+                <span
+                  className={`pill ${
+                    isExpired
+                      ? "pill-danger"
+                      : statusPillClasses[activeRecord.status]
+                  }`}
+                >
+                  {isExpired ? "Expired" : statusLabelMap[activeRecord.status]}
+                </span>
+                <p className="text-sm text-(--secondary)">
+                  Created {activeRecord.createdAtLabel}
+                </p>
+              </div>
+            </div>
           </div>
-          <span
-            className={`inline-flex w-fit rounded-full px-4 py-2 text-sm font-semibold ${statusBadgeClasses[activeRecord.status]}`}
-          >
-            {statusLabelMap[activeRecord.status]}
-          </span>
+
+          <div className="flex shrink-0 flex-col gap-3 sm:flex-row sm:flex-wrap lg:justify-end">
+            {activeRecord.status === "draft" ? (
+              <>
+                <ShellButton
+                  onClick={() => setActiveModal("delete-draft")}
+                  variant="secondary"
+                >
+                  Delete draft
+                </ShellButton>
+                <ShellButton href={`/envelopes/${envelopeId}/prepare`}>
+                  Continue editing
+                </ShellButton>
+              </>
+            ) : null}
+
+            {activeRecord.status === "sent" ? (
+              <>
+                <ShellButton
+                  onClick={() => setActiveModal("void-envelope")}
+                  variant="secondary"
+                >
+                  Void envelope
+                </ShellButton>
+                <ShellButton
+                  disabled={!activeSigner || reminderLimited}
+                  loading={isSendingReminder}
+                  onClick={handleSendReminder}
+                >
+                  Send reminder
+                </ShellButton>
+              </>
+            ) : null}
+
+            {activeRecord.status === "completed" ? (
+              <>
+                <ShellButton
+                  onClick={() => handleDownload("evidence")}
+                  variant="secondary"
+                >
+                  Download certificate
+                </ShellButton>
+                <ShellButton onClick={() => handleDownload("signed")}>
+                  <DownloadIcon
+                    aria-hidden="true"
+                    className="size-[1.125rem]"
+                    strokeWidth={2.2}
+                  />
+                  Download signed PDF
+                </ShellButton>
+              </>
+            ) : null}
+
+            {activeRecord.status === "declined" ||
+            activeRecord.status === "voided" ? (
+              <ShellButton
+                onClick={() => handleDownload("evidence")}
+                variant="secondary"
+              >
+                Download certificate
+              </ShellButton>
+            ) : null}
+          </div>
         </div>
 
-        {actionError ? (
+        {reminderHelperText ? (
+          <p className="mt-4 text-sm leading-6 text-(--secondary) lg:text-right">
+            {reminderHelperText}
+          </p>
+        ) : null}
+
+        {deadlineText ? (
           <div
-            className="mt-5 border border-[rgba(180,35,53,0.2)] bg-[rgba(180,35,53,0.05)] px-4 py-3 text-sm font-medium text-(--fg)"
-            role="alert"
+            className={`mt-5 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between ${
+              isExpired ? "notice notice-danger" : "well px-5 py-3.5"
+            }`}
           >
+            <p
+              className={
+                isExpired ? undefined : "text-sm leading-6 text-(--secondary)"
+              }
+            >
+              {deadlineText}
+            </p>
+            <button
+              className="btn-quiet shrink-0"
+              onClick={() => {
+                setActionError(null);
+                setActiveModal("change-deadline");
+              }}
+              type="button"
+            >
+              {isExpired ? "Set a new deadline" : "Change deadline"}
+            </button>
+          </div>
+        ) : null}
+
+        {deadline ? (
+          <div className="well mt-3 flex flex-col gap-3 px-5 py-3.5 sm:flex-row sm:items-center sm:justify-between">
+            <p className="text-sm leading-6 text-(--secondary)">
+              {remindersText}
+            </p>
+            <button
+              className="btn-quiet shrink-0"
+              onClick={() => {
+                setActionError(null);
+                setActiveModal("change-reminders");
+              }}
+              type="button"
+            >
+              Change reminders
+            </button>
+          </div>
+        ) : null}
+
+        {savedTemplateName ? (
+          <div
+            className={`notice notice-success flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between ${
+              deadlineText || deadline ? "mt-3" : "mt-5"
+            }`}
+            role="status"
+          >
+            <p>Saved as the template &ldquo;{savedTemplateName}&rdquo;.</p>
+            <Link
+              className="shrink-0 underline underline-offset-4"
+              href="/templates"
+            >
+              View templates
+            </Link>
+          </div>
+        ) : activeRecord.signers.length > 0 ? (
+          <div
+            className={`well flex flex-col gap-3 px-5 py-3.5 sm:flex-row sm:items-center sm:justify-between ${
+              deadlineText || deadline ? "mt-3" : "mt-5"
+            }`}
+          >
+            <p className="text-sm leading-6 text-(--secondary)">
+              Send this kind of document often? Keep its fields and signing
+              order as a template.
+            </p>
+            <button
+              className="btn-quiet shrink-0"
+              onClick={() => {
+                setActionError(null);
+                setActiveModal("save-template");
+              }}
+              type="button"
+            >
+              Save as template
+            </button>
+          </div>
+        ) : null}
+
+        {actionError ? (
+          <div className="notice notice-danger mt-5" role="alert">
             {actionError}
           </div>
         ) : null}
       </section>
 
-      <section className="grid gap-6 lg:grid-cols-[minmax(0,0.92fr)_minmax(0,1.08fr)]">
-        <article className="editorial-panel p-6 sm:p-8">
+      <section
+        className="grid gap-5 lg:grid-cols-[minmax(0,1.08fr)_minmax(0,0.92fr)]"
+        data-animate="enter"
+        data-animate-delay="1"
+      >
+        <article className="panel p-5 sm:p-7">
           <div className="flex items-center justify-between gap-3">
-            <h2 className="text-lg font-semibold tracking-[-0.03em] text-(--fg)">
-              Signers
-            </h2>
-            <span className="text-xs font-semibold uppercase tracking-[0.24em] text-(--tertiary)">
+            <h2 className="text-lg font-extrabold text-(--fg)">Signers</h2>
+            <span className="pill pill-neutral">
               {activeRecord.signers.length} total
             </span>
           </div>
 
-          <ol className="mt-5 space-y-4">
+          <ol className="mt-4 space-y-3">
             {activeRecord.signers.map((signer, index) => {
               const palette =
                 signer.color && signer.tint
                   ? { color: signer.color, tint: signer.tint }
                   : getSignerPalette(index);
+              const StatusIcon = signerStatusIcons[signer.status];
 
               return (
-                <li
-                  className="border border-(--border) bg-(--surface) p-4"
-                  key={signer.id}
-                >
-                  <div className="flex items-start gap-4">
+                <li className="well p-4" key={signer.id}>
+                  <div className="flex items-start gap-3.5">
                     <span
                       aria-hidden="true"
-                      className="inline-flex size-11 shrink-0 items-center justify-center rounded-full text-sm font-semibold"
+                      className="inline-flex size-10 shrink-0 items-center justify-center rounded-full text-sm font-bold"
                       style={{
                         backgroundColor: palette.tint,
                         color: palette.color,
@@ -340,20 +606,25 @@ export function EnvelopeDetailShell({
                     </span>
 
                     <div className="min-w-0 flex-1">
-                      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                      <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
                         <div className="min-w-0">
-                          <p className="truncate text-base font-semibold text-(--fg)">
+                          <p className="truncate text-[0.9375rem] font-bold text-(--fg)">
                             {signer.name}
                           </p>
-                          <p className="truncate text-sm text-muted-foreground">
+                          <p className="truncate text-sm text-(--secondary)">
                             {signer.email}
                           </p>
                         </div>
 
-                        <div className="space-y-2 sm:text-right">
+                        <div className="flex items-center gap-2 sm:flex-col sm:items-end sm:gap-1.5">
                           <span
-                            className={`inline-flex rounded-none px-3 py-1 [font-family:var(--font-mono)] text-[0.72rem] font-semibold uppercase tracking-[0.18em] ${signerStatusBadgeClasses[signer.status]}`}
+                            className={`pill ${signerStatusPillClasses[signer.status]}`}
                           >
+                            <StatusIcon
+                              aria-hidden="true"
+                              className="size-3.5"
+                              strokeWidth={2.6}
+                            />
                             {signerStatusLabelMap[signer.status]}
                           </span>
                           {signer.statusDateLabel ? (
@@ -364,7 +635,7 @@ export function EnvelopeDetailShell({
                         </div>
                       </div>
 
-                      <p className="mt-3 text-sm leading-6 text-muted-foreground">
+                      <p className="mt-2 text-sm leading-6 text-(--secondary)">
                         {signer.metaLabel}
                       </p>
                     </div>
@@ -373,35 +644,58 @@ export function EnvelopeDetailShell({
               );
             })}
           </ol>
+
+          {record.copyRecipients && record.copyRecipients.length > 0 ? (
+            <div className="mt-6">
+              <h3 className="text-[0.9375rem] font-extrabold text-(--fg)">
+                Receives a copy
+              </h3>
+              <p className="mt-1 text-sm leading-6 text-(--secondary)">
+                {activeRecord.status === "completed"
+                  ? "Sent the finished document and its certificate."
+                  : "Gets the finished document once everyone has signed."}
+              </p>
+              <ul className="mt-3 space-y-2">
+                {record.copyRecipients.map((recipient) => (
+                  <li className="well px-4 py-3" key={recipient.id}>
+                    <p className="truncate text-[0.9375rem] font-bold text-(--fg)">
+                      {recipient.name}
+                    </p>
+                    <p className="truncate text-sm text-(--secondary)">
+                      {recipient.email}
+                    </p>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          ) : null}
         </article>
 
-        <article className="editorial-panel p-6 sm:p-8">
+        <article className="panel p-5 sm:p-7">
           <div className="flex items-center justify-between gap-3">
-            <h2 className="text-lg font-semibold tracking-[-0.03em] text-(--fg)">
-              Timeline
-            </h2>
-            <span className="text-xs font-semibold uppercase tracking-[0.24em] text-(--tertiary)">
+            <h2 className="text-lg font-extrabold text-(--fg)">Timeline</h2>
+            <span className="pill pill-neutral">
               {activeRecord.timeline.length} events
             </span>
           </div>
 
           <ol className="mt-5 space-y-5">
             {activeRecord.timeline.map((event, index) => (
-              <li className="relative pl-6" key={event.id}>
+              <li className="relative pl-7" key={event.id}>
                 <span
                   aria-hidden="true"
-                  className={`absolute left-0 top-2.5 size-2.5 rounded-full ${timelineToneClasses[event.tone]}`}
+                  className={`absolute left-0 top-1.5 size-3 rounded-full ring-4 ring-white ${timelineToneClasses[event.tone]}`}
                 />
                 {index < activeRecord.timeline.length - 1 ? (
                   <span
                     aria-hidden="true"
-                    className="absolute left-[4.5px] top-5 h-[calc(100%+0.875rem)] w-px bg-(--border)"
+                    className="absolute left-[5.5px] top-5 h-[calc(100%+0.5rem)] w-px bg-(--border)"
                   />
                 ) : null}
-                <p className="text-sm font-semibold text-(--fg)">
+                <p className="text-[0.8125rem] font-semibold text-(--tertiary)">
                   {event.timestamp}
                 </p>
-                <p className="mt-1 text-sm leading-6 text-muted-foreground">
+                <p className="mt-0.5 text-sm leading-6 text-(--fg)">
                   {event.description}
                 </p>
               </li>
@@ -410,72 +704,40 @@ export function EnvelopeDetailShell({
         </article>
       </section>
 
-      <section className="editorial-panel p-6 sm:p-8">
-        <h2 className="text-lg font-semibold tracking-[-0.03em] text-(--fg)">
-          Actions
-        </h2>
+      {activeModal === "change-deadline" ? (
+        <DeadlineDialog
+          errorMessage={actionError}
+          expired={isExpired}
+          onCancel={() => setActiveModal(null)}
+          onConfirm={handleConfirmChangeDeadline}
+          processing={isChangingDeadline}
+        />
+      ) : null}
 
-        <div className="mt-5 flex flex-wrap gap-3">
-          {activeRecord.status === "draft" ? (
-            <>
-              <ShellButton href={`/envelopes/${envelopeId}/prepare`}>
-                Continue editing
-              </ShellButton>
-              <ShellButton
-                onClick={() => setActiveModal("delete-draft")}
-                variant="secondary"
-              >
-                Delete draft
-              </ShellButton>
-            </>
-          ) : null}
+      {activeModal === "change-reminders" ? (
+        <RemindersDialog
+          errorMessage={actionError}
+          initialIntervalDays={reminderIntervalDays}
+          onCancel={() => setActiveModal(null)}
+          onConfirm={handleConfirmChangeReminders}
+          processing={isChangingReminders}
+        />
+      ) : null}
 
-          {activeRecord.status === "sent" ? (
-            <>
-              <ShellButton
-                disabled={!activeSigner || reminderLimited}
-                loading={isSendingReminder}
-                onClick={handleSendReminder}
-              >
-                Send reminder
-              </ShellButton>
-              <ShellButton
-                onClick={() => setActiveModal("void-envelope")}
-                variant="secondary"
-              >
-                Void envelope
-              </ShellButton>
-            </>
-          ) : null}
-
-          {activeRecord.status === "completed" ? (
-            <>
-              <ShellButton onClick={() => handleDownload("signed")}>
-                Download signed PDF
-              </ShellButton>
-              <ShellButton
-                onClick={() => handleDownload("evidence")}
-                variant="secondary"
-              >
-                Download certificate
-              </ShellButton>
-            </>
-          ) : null}
-
-          {activeRecord.status === "declined" ||
-          activeRecord.status === "voided" ? (
-            <ShellButton onClick={() => handleDownload("evidence")}>
-              Download certificate
-            </ShellButton>
-          ) : null}
-        </div>
-
-        {reminderHelperText ? (
-          <p className="mt-4 text-sm leading-6 text-muted-foreground">
-            {reminderHelperText}
-          </p>
-        ) : null}
-      </section>
+      {activeModal === "save-template" ? (
+        <SaveTemplateDialog
+          envelopeId={envelopeId}
+          initialName={activeRecord.title}
+          onCancel={() => setActiveModal(null)}
+          onSaved={(templateName) => {
+            setActiveModal(null);
+            setSavedTemplateName(templateName);
+          }}
+          signers={[...activeRecord.signers]
+            .sort((left, right) => left.order - right.order)
+            .map((signer) => ({ id: signer.id, name: signer.name }))}
+        />
+      ) : null}
 
       {activeModal === "delete-draft" ? (
         <ConfirmationDialog
@@ -511,6 +773,196 @@ export function EnvelopeDetailShell({
   );
 }
 
+type DeadlineDialogProps = {
+  errorMessage?: string | null;
+  expired: boolean;
+  onCancel: () => void;
+  onConfirm: (expiresInDays: number) => void | Promise<void>;
+  processing?: boolean;
+};
+
+function DeadlineDialog({
+  errorMessage,
+  expired,
+  onCancel,
+  onConfirm,
+  processing = false,
+}: DeadlineDialogProps) {
+  const [days, setDays] = useState<number>(DEFAULT_ENVELOPE_DEADLINE_DAYS);
+
+  return (
+    <Dialog
+      open
+      onOpenChange={(open) => {
+        if (!open && !processing) {
+          onCancel();
+        }
+      }}
+    >
+      <DialogContent className="max-w-md sm:p-8" showCloseButton={false}>
+        <div className="space-y-4">
+          <DialogHeader className="space-y-3">
+            <DialogTitle>
+              {expired ? "Set a new deadline" : "Change the deadline"}
+            </DialogTitle>
+            <DialogDescription asChild>
+              <div className="space-y-2 text-sm leading-6 text-(--secondary)">
+                <p>
+                  The new deadline counts from now.{" "}
+                  {expired
+                    ? "The signing link that was already sent will work again."
+                    : "The signing link that was already sent keeps working until then."}
+                </p>
+              </div>
+            </DialogDescription>
+          </DialogHeader>
+
+          <label className="grid gap-1.5">
+            <span className="text-[0.8125rem] font-semibold text-(--secondary)">
+              Signing deadline
+            </span>
+            <select
+              autoFocus
+              className="field-input"
+              disabled={processing}
+              onChange={(event) => setDays(Number(event.target.value))}
+              value={days}
+            >
+              {ENVELOPE_DEADLINE_DAY_OPTIONS.map((option) => (
+                <option key={option} value={option}>
+                  {option} days from now
+                </option>
+              ))}
+            </select>
+          </label>
+
+          {errorMessage ? (
+            <div className="notice notice-danger" role="alert">
+              <p>{errorMessage}</p>
+            </div>
+          ) : null}
+
+          <div className="flex flex-col-reverse gap-3 pt-2 sm:flex-row sm:justify-end">
+            <ShellButton
+              disabled={processing}
+              onClick={onCancel}
+              variant="secondary"
+            >
+              Cancel
+            </ShellButton>
+            <ShellButton loading={processing} onClick={() => onConfirm(days)}>
+              {processing ? "Saving..." : "Save deadline"}
+            </ShellButton>
+          </div>
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+type RemindersDialogProps = {
+  errorMessage?: string | null;
+  initialIntervalDays: number | null;
+  onCancel: () => void;
+  onConfirm: (intervalDays: number | null) => void | Promise<void>;
+  processing?: boolean;
+};
+
+function RemindersDialog({
+  errorMessage,
+  initialIntervalDays,
+  onCancel,
+  onConfirm,
+  processing = false,
+}: RemindersDialogProps) {
+  const [intervalDays, setIntervalDays] = useState<number | null>(
+    initialIntervalDays,
+  );
+  // An interval set some other way than these choices is still offered.
+  const options = [
+    ...new Set([
+      ...ENVELOPE_REMINDER_DAY_OPTIONS,
+      ...(initialIntervalDays === null ? [] : [initialIntervalDays]),
+    ]),
+  ].sort((left, right) => left - right);
+
+  return (
+    <Dialog
+      open
+      onOpenChange={(open) => {
+        if (!open && !processing) {
+          onCancel();
+        }
+      }}
+    >
+      <DialogContent className="max-w-md sm:p-8" showCloseButton={false}>
+        <div className="space-y-4">
+          <DialogHeader className="space-y-3">
+            <DialogTitle>Automatic reminders</DialogTitle>
+            <DialogDescription asChild>
+              <div className="space-y-2 text-sm leading-6 text-(--secondary)">
+                <p>
+                  A reminder goes to the signer whose turn it is when they have
+                  not heard from you for this long. Reminders stop once everyone
+                  has signed or the deadline passes.
+                </p>
+              </div>
+            </DialogDescription>
+          </DialogHeader>
+
+          <label className="grid gap-1.5">
+            <span className="text-[0.8125rem] font-semibold text-(--secondary)">
+              Send a reminder
+            </span>
+            <select
+              autoFocus
+              className="field-input"
+              disabled={processing}
+              onChange={(event) =>
+                setIntervalDays(
+                  event.target.value === "off"
+                    ? null
+                    : Number(event.target.value),
+                )
+              }
+              value={intervalDays ?? "off"}
+            >
+              <option value="off">{formatReminderInterval(null)}</option>
+              {options.map((option) => (
+                <option key={option} value={option}>
+                  {formatReminderInterval(option)}
+                </option>
+              ))}
+            </select>
+          </label>
+
+          {errorMessage ? (
+            <div className="notice notice-danger" role="alert">
+              <p>{errorMessage}</p>
+            </div>
+          ) : null}
+
+          <div className="flex flex-col-reverse gap-3 pt-2 sm:flex-row sm:justify-end">
+            <ShellButton
+              disabled={processing}
+              onClick={onCancel}
+              variant="secondary"
+            >
+              Cancel
+            </ShellButton>
+            <ShellButton
+              loading={processing}
+              onClick={() => onConfirm(intervalDays)}
+            >
+              {processing ? "Saving..." : "Save reminders"}
+            </ShellButton>
+          </div>
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 type ConfirmationDialogProps = {
   confirmLabel: string;
   description: readonly string[];
@@ -539,17 +991,12 @@ function ConfirmationDialog({
         }
       }}
     >
-      <DialogContent
-        className="max-w-md rounded-none border-(--border) sm:p-8"
-        showCloseButton={false}
-      >
+      <DialogContent className="max-w-md sm:p-8" showCloseButton={false}>
         <div className="space-y-4">
           <DialogHeader className="space-y-3">
-            <DialogTitle className="text-xl tracking-[-0.03em]">
-              {title}
-            </DialogTitle>
+            <DialogTitle>{title}</DialogTitle>
             <DialogDescription asChild>
-              <div className="space-y-3 text-sm leading-6 text-muted-foreground">
+              <div className="space-y-2 text-sm leading-6 text-(--secondary)">
                 {description.map((line) => (
                   <p key={line}>{line}</p>
                 ))}
@@ -558,17 +1005,12 @@ function ConfirmationDialog({
           </DialogHeader>
 
           {errorMessage ? (
-            <div
-              className="border border-[rgba(180,35,53,0.18)] bg-[rgba(180,35,53,0.04)] px-4 py-3"
-              role="alert"
-            >
-              <p className="text-sm font-semibold text-(--accent)">
-                {errorMessage}
-              </p>
+            <div className="notice notice-danger" role="alert">
+              <p>{errorMessage}</p>
             </div>
           ) : null}
 
-          <div className="flex flex-wrap justify-end gap-3 pt-2">
+          <div className="flex flex-col-reverse gap-3 pt-2 sm:flex-row sm:justify-end">
             <ShellButton
               disabled={processing}
               onClick={onCancel}
@@ -576,7 +1018,11 @@ function ConfirmationDialog({
             >
               Cancel
             </ShellButton>
-            <ShellButton loading={processing} onClick={onConfirm}>
+            <ShellButton
+              loading={processing}
+              onClick={onConfirm}
+              variant="danger"
+            >
               {processing ? `${confirmLabel}...` : confirmLabel}
             </ShellButton>
           </div>

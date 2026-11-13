@@ -21,9 +21,13 @@ export const signingUnavailableStateSchema = z.enum([
 ]);
 
 const signingFieldBaseSchema = z.object({
+  /** The group a radio button belongs to. */
+  groupId: z.string().trim().min(1).optional(),
   height: normalizedSizeSchema,
   id: idSchema,
   label: optionalTrimmedString(120),
+  /** The choices of a dropdown. */
+  options: z.array(z.string().trim().min(1)).optional(),
   page: z.number().int().positive(),
   required: z.boolean(),
   signerId: idSchema,
@@ -46,8 +50,22 @@ export const signingVisibleFieldSchema = signingFieldBaseSchema.extend({
   value: optionalTrimmedString(5000).nullable().optional(),
 });
 
+export const signingDisclosureSchema = z.object({
+  sections: z.array(
+    z.object({
+      heading: z.string().trim().min(1),
+      text: z.string().trim().min(1),
+    }),
+  ),
+  statement: z.string().trim().min(1),
+  version: z.string().trim().min(1),
+});
+
 export const signingPayloadSchema = z.object({
+  consentUrl: z.string().trim().min(1),
+  consentedAt: unixTimestampSchema.nullable(),
   currentSignerFields: z.array(signingCurrentFieldSchema),
+  disclosure: signingDisclosureSchema,
   declineUrl: z.string().trim().min(1),
   documentUrl: z.string().trim().min(1),
   envelopeId: idSchema,
@@ -91,6 +109,25 @@ export const signingRouteResponseSchema = z.union([
 export type SigningCurrentField = z.infer<typeof signingCurrentFieldSchema>;
 export type SigningVisibleField = z.infer<typeof signingVisibleFieldSchema>;
 export type SigningPayload = z.infer<typeof signingPayloadSchema>;
+export type SigningDisclosure = z.infer<typeof signingDisclosureSchema>;
+
+export const signerCheckRequestSchema = z.object({
+  code: z.string().trim().min(1).max(64),
+  method: z.enum(["access_code", "email_code"]),
+});
+
+export const signerConsentRequestSchema = z.object({
+  disclosureVersion: z.string().trim().min(1).max(40),
+});
+
+export type SigningVerificationState = {
+  emailCodeSentAt: number | null;
+  envelopeTitle: string;
+  maskedEmail: string;
+  pending: Array<"access_code" | "email_code">;
+  required: Array<"access_code" | "email_code">;
+  senderName: string;
+};
 export type SigningDeclineResponse = z.infer<
   typeof signingDeclineResponseSchema
 >;

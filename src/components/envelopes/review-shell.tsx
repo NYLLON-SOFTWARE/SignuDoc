@@ -1,8 +1,8 @@
 "use client";
 
-import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 
+import { DocumentThumbnail } from "@/components/shared/document-thumbnail";
 import { ShellButton } from "@/components/shared/form-shell";
 import { PageHeader } from "@/components/shared/page-header";
 import { StatusPanel } from "@/components/shared/status-panel";
@@ -16,6 +16,14 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import type { ReviewEnvelopeData } from "@/lib/envelopes";
+import { PERMITTED_USE_PATH } from "@/lib/permitted-uses";
+import { formatReminderInterval } from "@/lib/services/reminders";
+import {
+  DEFAULT_ENVELOPE_DEADLINE_DAYS,
+  DEFAULT_ENVELOPE_REMINDER_DAYS,
+  ENVELOPE_DEADLINE_DAY_OPTIONS,
+  ENVELOPE_REMINDER_DAY_OPTIONS,
+} from "@/lib/types/domain";
 import { getSignerPalette } from "./signer-palette";
 
 const envelopeSteps = ["Upload", "Signers", "Place fields", "Review"];
@@ -29,6 +37,7 @@ type ReviewShellProps = {
 };
 
 type ReviewRecordView = {
+  copyRecipients: readonly { email: string; id: string; name: string }[];
   filename: string;
   pageCount: number;
   signers: readonly ReviewSigner[];
@@ -37,6 +46,9 @@ type ReviewRecordView = {
 };
 
 type ReviewFieldSummaryLabel =
+  | "Dropdown"
+  | "Number"
+  | "Radio group"
   | "Checkbox"
   | "Date"
   | "Initials"
@@ -64,6 +76,12 @@ export function ReviewShell({
   initialState,
   record,
 }: ReviewShellProps) {
+  const [deadlineDays, setDeadlineDays] = useState<number>(
+    DEFAULT_ENVELOPE_DEADLINE_DAYS,
+  );
+  const [reminderDays, setReminderDays] = useState<number | null>(
+    DEFAULT_ENVELOPE_REMINDER_DAYS,
+  );
   const [isConfirmationOpen, setIsConfirmationOpen] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
   const [sendPhase, setSendPhase] = useState<SendPhase>("idle");
@@ -110,7 +128,9 @@ export function ReviewShell({
     try {
       const response = await fetch(`/api/envelopes/${envelopeId}/send`, {
         body: JSON.stringify({
+          expiresInDays: deadlineDays,
           permittedUseConfirmed: true,
+          reminderIntervalDays: reminderDays,
         }),
         headers: {
           "content-type": "application/json",
@@ -147,7 +167,7 @@ export function ReviewShell({
 
   if (initialState === "error") {
     return (
-      <div className="space-y-6">
+      <div className="space-y-5">
         <PageHeader
           description="Step 4 of 4 - Review and send"
           title="New envelope"
@@ -172,7 +192,7 @@ export function ReviewShell({
 
   if (!record || record.isEmpty) {
     return (
-      <div className="space-y-6">
+      <div className="space-y-5">
         <PageHeader
           description="Step 4 of 4 - Review and send"
           title="New envelope"
@@ -192,6 +212,7 @@ export function ReviewShell({
   }
 
   const activeRecord: ReviewRecordView = {
+    copyRecipients: record.copyRecipients ?? [],
     filename: record.filename,
     pageCount: record.pageCount,
     signers: record.signers.map((signer) => ({ ...signer })),
@@ -203,60 +224,60 @@ export function ReviewShell({
   const firstSigner = activeRecord.signers[0];
 
   return (
-    <div className="space-y-8">
+    <div className="space-y-5">
       <PageHeader
         description="Step 4 of 4 - Review and send"
-        eyebrow="Envelope workflow"
         title="New envelope"
       />
 
       <StepIndicator current={4} steps={envelopeSteps} />
 
       {notice ? (
-        <section
-          className="border border-[rgba(5,150,105,0.18)] bg-[rgba(5,150,105,0.05)] px-5 py-4"
-          role="status"
-        >
-          <p className="text-sm font-semibold text-chart-4">{notice}</p>
-          <p className="mt-1 text-sm leading-6 text-muted-foreground">
+        <section className="notice notice-success" role="status">
+          <p>{notice}</p>
+          <p className="mt-0.5 font-medium text-(--secondary)">
             Opening the envelope detail view...
           </p>
         </section>
       ) : null}
 
       <section
-        className="editorial-panel p-6 sm:p-8"
+        className="panel p-5 sm:p-8"
         data-animate="enter"
         data-animate-delay="2"
       >
-        <div className="grid gap-6 xl:grid-cols-[minmax(0,0.42fr)_minmax(0,0.58fr)]">
-          <article className="border border-(--border) bg-(--surface) p-5 sm:p-6">
-            <div className="space-y-3">
-              <p className="section-eyebrow">Document</p>
-              <div className="space-y-2">
-                <h2 className="text-[24px] font-semibold tracking-[-0.04em] text-(--fg)">
-                  {activeRecord.title}
-                </h2>
-                <p className="text-sm leading-6 text-muted-foreground">
-                  {activeRecord.filename} - {activeRecord.pageCount} pages -{" "}
-                  {activeRecord.sizeLabel}
-                </p>
-              </div>
+        <div className="grid gap-5 lg:grid-cols-[minmax(0,0.4fr)_minmax(0,0.6fr)]">
+          <article className="well flex flex-col gap-5 p-5 sm:p-6">
+            <p className="section-eyebrow">Document</p>
+            <div className="flex h-56 items-center justify-center">
+              <DocumentThumbnail
+                envelopeId={envelopeId}
+                title={activeRecord.title}
+              />
+            </div>
+            <div className="space-y-1.5">
+              <h2 className="text-[1.375rem] font-extrabold leading-tight text-(--fg)">
+                {activeRecord.title}
+              </h2>
+              <p className="text-sm leading-6 text-(--secondary)">
+                {activeRecord.filename} - {activeRecord.pageCount} pages -{" "}
+                {activeRecord.sizeLabel}
+              </p>
             </div>
           </article>
 
-          <article className="border border-(--border) bg-white p-5 sm:p-6">
-            <div className="flex items-center justify-between gap-3">
-              <h2 className="text-lg font-semibold tracking-[-0.03em] text-(--fg)">
+          <article className="min-w-0">
+            <div className="flex items-center justify-between gap-3 px-1">
+              <h2 className="text-lg font-extrabold text-(--fg)">
                 Signing order
               </h2>
-              <span className="text-xs font-semibold uppercase tracking-[0.24em] text-(--tertiary)">
+              <span className="pill pill-neutral">
                 {activeRecord.signers.length}{" "}
                 {activeRecord.signers.length === 1 ? "signer" : "signers"}
               </span>
             </div>
 
-            <ol className="mt-5 space-y-4">
+            <ol className="mt-4 space-y-3">
               {activeRecord.signers.map((signer, index) => {
                 const palette =
                   signer.color && signer.tint
@@ -264,13 +285,10 @@ export function ReviewShell({
                     : getSignerPalette(index);
 
                 return (
-                  <li
-                    className="border border-(--border) bg-(--surface) p-4"
-                    key={signer.id}
-                  >
-                    <div className="flex items-start gap-4">
+                  <li className="well p-4" key={signer.id}>
+                    <div className="flex items-start gap-3.5">
                       <span
-                        className="inline-flex size-11 shrink-0 items-center justify-center rounded-full text-sm font-semibold"
+                        className="inline-flex size-10 shrink-0 items-center justify-center rounded-full text-sm font-bold"
                         style={{
                           backgroundColor: palette.tint,
                           color: palette.color,
@@ -282,15 +300,15 @@ export function ReviewShell({
                       <div className="min-w-0 flex-1">
                         <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
                           <div className="min-w-0">
-                            <p className="truncate text-base font-semibold text-(--fg)">
+                            <p className="truncate text-[0.9375rem] font-bold text-(--fg)">
                               {signer.name}
                             </p>
-                            <p className="truncate text-sm text-muted-foreground">
+                            <p className="truncate text-sm text-(--secondary)">
                               {signer.email}
                             </p>
                           </div>
                           <span
-                            className="inline-flex w-fit items-center gap-2 rounded-full px-3 py-1 text-xs font-semibold uppercase tracking-[0.18em]"
+                            className="pill w-fit"
                             style={{
                               backgroundColor: palette.tint,
                               color: palette.color,
@@ -306,10 +324,10 @@ export function ReviewShell({
                         </div>
 
                         <p
-                          className={`mt-3 text-sm leading-6 ${
+                          className={`mt-2 text-sm leading-6 ${
                             signer.fieldSummaries.includes("Signature")
-                              ? "text-muted-foreground"
-                              : "font-semibold text-(--accent)"
+                              ? "text-(--tertiary)"
+                              : "font-semibold text-(--danger)"
                           }`}
                         >
                           {formatSignerFieldSummary(signer.fieldSummaries)}
@@ -320,25 +338,86 @@ export function ReviewShell({
                 );
               })}
             </ol>
+
+            {activeRecord.copyRecipients.length > 0 ? (
+              <div className="well mt-3 p-4">
+                <p className="text-[0.9375rem] font-bold text-(--fg)">
+                  Copies when everyone has signed
+                </p>
+                <ul className="mt-2 space-y-1 text-sm leading-6 text-(--secondary)">
+                  {activeRecord.copyRecipients.map((recipient) => (
+                    <li className="truncate" key={recipient.id}>
+                      {recipient.name} · {recipient.email}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            ) : null}
+
+            <p className="notice notice-accent mt-4 font-medium">
+              After you send, Signer 1 will receive an email with a link to
+              sign. Each signer is notified in order after the previous signer
+              completes.
+            </p>
+
+            <div className="well mt-4 p-4">
+              <div className="grid gap-4 sm:grid-cols-2">
+                <label className="grid gap-1.5">
+                  <span className="text-[0.8125rem] font-semibold text-(--secondary)">
+                    Signing deadline
+                  </span>
+                  <select
+                    className="field-input"
+                    disabled={sendPhase === "sending" || Boolean(notice)}
+                    onChange={(event) =>
+                      setDeadlineDays(Number(event.target.value))
+                    }
+                    value={deadlineDays}
+                  >
+                    {ENVELOPE_DEADLINE_DAY_OPTIONS.map((days) => (
+                      <option key={days} value={days}>
+                        {days} days
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label className="grid gap-1.5">
+                  <span className="text-[0.8125rem] font-semibold text-(--secondary)">
+                    Automatic reminders
+                  </span>
+                  <select
+                    className="field-input"
+                    disabled={sendPhase === "sending" || Boolean(notice)}
+                    onChange={(event) =>
+                      setReminderDays(
+                        event.target.value === "off"
+                          ? null
+                          : Number(event.target.value),
+                      )
+                    }
+                    value={reminderDays ?? "off"}
+                  >
+                    <option value="off">{formatReminderInterval(null)}</option>
+                    {ENVELOPE_REMINDER_DAY_OPTIONS.map((days) => (
+                      <option key={days} value={days}>
+                        {formatReminderInterval(days)}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              </div>
+              <p className="mt-3 text-sm leading-6 text-(--secondary)">
+                Signing links stop working at the deadline. Reminders go to the
+                signer whose turn it is until they sign. You can change both
+                later from the envelope.
+              </p>
+            </div>
           </article>
         </div>
 
-        <div className="mt-6 border border-(--border) bg-white px-5 py-5 sm:px-6">
-          <p className="text-sm leading-7 text-muted-foreground">
-            After you send, Signer 1 will receive an email with a link to sign.
-            Each signer is notified in order after the previous signer
-            completes.
-          </p>
-        </div>
-
         {disabledReason ? (
-          <div
-            className="mt-6 border border-[rgba(180,35,53,0.18)] bg-[rgba(180,35,53,0.04)] px-5 py-4"
-            role="alert"
-          >
-            <p className="text-sm font-semibold text-(--accent)">
-              {disabledReason}
-            </p>
+          <div className="notice notice-danger mt-5" role="alert">
+            <p>{disabledReason}</p>
           </div>
         ) : null}
 
@@ -357,6 +436,7 @@ export function ReviewShell({
 
       {isConfirmationOpen ? (
         <SendConfirmationDialog
+          deadlineDays={deadlineDays}
           errorMessage={sendPhase === "error" ? sendError : null}
           firstSignerName={firstSigner?.name ?? "Signer 1"}
           isSending={sendPhase === "sending"}
@@ -371,6 +451,7 @@ export function ReviewShell({
 }
 
 type SendConfirmationDialogProps = {
+  deadlineDays: number;
   errorMessage: string | null;
   firstSignerName: string;
   isSending: boolean;
@@ -381,6 +462,7 @@ type SendConfirmationDialogProps = {
 };
 
 function SendConfirmationDialog({
+  deadlineDays,
   errorMessage,
   firstSignerName,
   isSending,
@@ -400,29 +482,25 @@ function SendConfirmationDialog({
         }
       }}
     >
-      <DialogContent
-        className="max-w-md rounded-none border-(--border) sm:p-8"
-        showCloseButton={false}
-      >
+      <DialogContent className="max-w-md sm:p-8" showCloseButton={false}>
         <div className="space-y-4">
           <DialogHeader className="space-y-3">
-            <DialogTitle className="text-xl tracking-[-0.03em]">
-              Send this envelope?
-            </DialogTitle>
+            <DialogTitle>Send this envelope?</DialogTitle>
             <DialogDescription asChild>
-              <div className="space-y-3 text-sm leading-6 text-muted-foreground">
+              <div className="space-y-3 text-sm leading-6 text-(--secondary)">
                 <p>
                   &quot;{title}&quot; will be sent to {signerCount}{" "}
                   {signerCount === 1 ? "signer" : "signers"}.{" "}
                   {signerCount === 1
                     ? `${firstSignerName} will be notified immediately.`
-                    : `The first signer (${firstSignerName}) will be notified immediately.`}
+                    : `The first signer (${firstSignerName}) will be notified immediately.`}{" "}
+                  The request expires in {deadlineDays} days.
                 </p>
               </div>
             </DialogDescription>
           </DialogHeader>
 
-          <label className="block border border-(--border) bg-(--surface) px-4 py-4">
+          <label className="well block px-4 py-4">
             <span className="flex items-start gap-3">
               <Checkbox
                 autoFocus
@@ -433,41 +511,30 @@ function SendConfirmationDialog({
                   setIsPermittedUseConfirmed(checked === true)
                 }
               />
-              <span className="text-sm leading-6 text-muted-foreground">
+              <span className="text-sm leading-6 text-(--secondary)">
                 By sending, you confirm this document is an ordinary business
                 agreement and not a will, court order, legally required consumer
-                disclosure, or other excluded document type described in the{" "}
-                <Link
-                  className="font-semibold text-(--fg)"
-                  href="/terms"
+                disclosure, or other{" "}
+                <a
+                  className="font-semibold text-(--accent-ink) underline decoration-[rgb(var(--accent-rgb)/0.35)] underline-offset-4"
+                  href={PERMITTED_USE_PATH}
                   rel="noreferrer"
-                  style={{
-                    textDecorationColor: "rgba(17,17,17,0.35)",
-                    textDecorationLine: "underline",
-                    textDecorationThickness: "1px",
-                    textUnderlineOffset: "4px",
-                  }}
                   target="_blank"
                 >
-                  Terms of Service
-                </Link>
+                  document that cannot be signed electronically
+                </a>
                 .
               </span>
             </span>
           </label>
 
           {errorMessage ? (
-            <div
-              className="border border-[rgba(180,35,53,0.18)] bg-[rgba(180,35,53,0.04)] px-4 py-3"
-              role="alert"
-            >
-              <p className="text-sm font-semibold text-(--accent)">
-                {errorMessage}
-              </p>
+            <div className="notice notice-danger" role="alert">
+              <p>{errorMessage}</p>
             </div>
           ) : null}
 
-          <div className="flex flex-wrap justify-end gap-3 pt-2">
+          <div className="flex flex-col-reverse gap-3 pt-2 sm:flex-row sm:justify-end">
             <ShellButton
               disabled={isSending}
               onClick={onCancel}

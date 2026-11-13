@@ -14,21 +14,24 @@ export function SigningDoneShell({ envelopeTitle }: SigningDoneShellProps) {
       : fallbackEnvelopeTitle;
 
   return (
-    <div className="flex min-h-screen flex-col bg-white">
-      <header className="border-b border-(--border) bg-white">
-        <div className="mx-auto flex max-w-[1360px] items-center px-4 py-5 sm:px-6 lg:px-8">
+    <div className="flex min-h-screen flex-col">
+      <header>
+        <div className="page-width flex items-center py-4">
           <Brand href="/" />
         </div>
       </header>
 
-      <main className="mx-auto flex w-full max-w-[1360px] flex-1 items-center justify-center px-4 py-12 sm:px-6 lg:px-8">
-        <section className="editorial-panel w-full max-w-[820px] px-6 py-12 text-center sm:px-10 sm:py-16">
+      <main className="page-width flex flex-1 items-center justify-center py-10">
+        <section
+          className="panel w-full max-w-[640px] px-6 py-12 text-center sm:px-12 sm:py-16"
+          data-animate="enter"
+        >
           <div
             aria-hidden="true"
-            className="mx-auto inline-flex size-20 items-center justify-center border border-[rgba(5,150,105,0.18)] bg-[rgba(5,150,105,0.1)]"
+            className="mx-auto inline-flex size-[4.5rem] items-center justify-center rounded-full bg-(--success-soft)"
           >
             <svg
-              className="size-9 text-chart-4"
+              className="size-9 text-(--success)"
               fill="none"
               viewBox="0 0 36 36"
               xmlns="http://www.w3.org/2000/svg"
@@ -43,21 +46,21 @@ export function SigningDoneShell({ envelopeTitle }: SigningDoneShellProps) {
             </svg>
           </div>
 
-          <h1 className="mt-8 text-[32px] font-extrabold tracking-[-0.05em] text-(--fg) sm:text-[38px]">
+          <h1 className="mt-7 text-[clamp(1.875rem,4.5vw,2.375rem)] font-extrabold tracking-[-0.035em] text-(--fg)">
             You&apos;re all done.
           </h1>
-          <p className="mx-auto mt-5 max-w-[560px] text-base leading-7 text-muted-foreground sm:text-[15px]">
+          <p className="mx-auto mt-4 max-w-[480px] text-base leading-7 text-(--secondary)">
             Your signature has been recorded for{" "}
-            <span className="font-semibold text-(--fg)">
+            <span className="font-bold text-(--fg)">
               &quot;{resolvedEnvelopeTitle}&quot;
             </span>
             .
           </p>
-          <p className="mx-auto mt-4 max-w-[560px] text-base leading-7 text-muted-foreground sm:text-[15px]">
+          <p className="mx-auto mt-3 max-w-[480px] text-base leading-7 text-(--secondary)">
             You&apos;ll receive an email with the signed document once all
             parties have signed.
           </p>
-          <p className="mt-8 text-sm font-semibold uppercase tracking-[0.2em] text-(--tertiary)">
+          <p className="mt-8 inline-flex rounded-full bg-(--surface) px-4 py-2 text-sm font-semibold text-(--secondary)">
             You can close this tab.
           </p>
         </section>

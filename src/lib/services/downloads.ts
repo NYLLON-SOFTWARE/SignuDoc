@@ -3,10 +3,8 @@ import {
   type DownloadFileType,
 } from "../types/domain.ts";
 import { getEnv, type EnvSource } from "../utils/env.ts";
-import { assertServiceConfig } from "./service-config.ts";
+import { requireConfigValue } from "./service-config.ts";
 import { issueOpaqueToken } from "./opaque-tokens.ts";
-
-const DOWNLOAD_ENV_KEYS = ["APP_URL"] as const;
 
 export type IssuedDownloadLink = {
   exp: number;
@@ -29,12 +27,8 @@ type DownloadTokenConfig = {
 function getDownloadTokenConfig({
   env = process.env,
 }: DownloadTokenOptions = {}): DownloadTokenConfig {
-  assertServiceConfig("downloads", DOWNLOAD_ENV_KEYS, env);
-
-  const appEnv = getEnv(env);
-
   return {
-    appUrl: appEnv.appUrl!,
+    appUrl: requireConfigValue("downloads", "APP_URL", getEnv(env).appUrl),
     defaultTtlSeconds: RECIPIENT_DOWNLOAD_LINK_TTL_SECONDS,
   };
 }

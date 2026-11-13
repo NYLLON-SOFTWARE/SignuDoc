@@ -1,10 +1,24 @@
 import { NextResponse } from "next/server";
 
 import { getDb } from "@/lib/db/connection";
-import { SigningAccessError, getSigningPayloadForToken } from "@/lib/signing";
+import {
+  verificationRequiredResponse,
+  verifiedMethodsForRequest,
+} from "@/lib/signing-route";
+import {
+  SigningAccessError,
+  SigningVerificationRequiredError,
+  getSigningPayloadForToken,
+} from "@/lib/signing";
 import { logRouteError } from "@/lib/security/logging";
-import { applyRateLimit, buildRateLimitKey } from "@/lib/security/route-controls";
-import { getClientIpAddress, getRequestUserAgent } from "@/lib/security/request";
+import {
+  applyRateLimit,
+  buildRateLimitKey,
+} from "@/lib/security/route-controls";
+import {
+  getClientIpAddress,
+  getRequestUserAgent,
+} from "@/lib/security/request";
 
 type SigningRouteContext = {
   params: Promise<{
@@ -14,7 +28,7 @@ type SigningRouteContext = {
 
 export async function GET(request: Request, context: SigningRouteContext) {
   const { token } = await context.params;
-  const rateLimitResponse = applyRateLimit({
+  const rateLimitResponse = await applyRateLimit({
     category: "signing_token_read",
     key: buildRateLimitKey([
       "signing-read",
@@ -33,6 +47,7 @@ export async function GET(request: Request, context: SigningRouteContext) {
   try {
     const payload = await getSigningPayloadForToken(token, {
       database: getDb(),
+      verifiedMethods: verifiedMethodsForRequest(token, request),
       requestMeta: {
         ipAddress: getClientIpAddress(request.headers),
         userAgent: getRequestUserAgent(request.headers),
@@ -46,6 +61,10 @@ export async function GET(request: Request, context: SigningRouteContext) {
       status: 200,
     });
   } catch (error) {
+    if (error instanceof SigningVerificationRequiredError) {
+      return verificationRequiredResponse(error);
+    }
+
     if (error instanceof SigningAccessError) {
       return NextResponse.json(
         {

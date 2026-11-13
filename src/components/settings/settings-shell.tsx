@@ -2,6 +2,7 @@
 
 import { useState, type ChangeEvent, type FormEvent } from "react";
 
+import { useBranding } from "@/components/layout/branding-provider";
 import { FieldShell, ShellButton } from "@/components/shared/form-shell";
 import { PageHeader } from "@/components/shared/page-header";
 import {
@@ -160,6 +161,7 @@ function isNoOpEmailChangeMessage(message: string) {
 export function SettingsShell({
   initialProfile = defaultProfileValues,
 }: SettingsShellProps) {
+  const closureCopy = useClosureCopy();
   const [profileValues, setProfileValues] = useState(initialProfile);
   const [savedProfileValues, setSavedProfileValues] = useState(initialProfile);
   const [profileErrors, setProfileErrors] = useState<ProfileErrors>({});
@@ -548,22 +550,17 @@ export function SettingsShell({
   }
 
   return (
-    <div className="space-y-8">
+    <div className="space-y-5">
       <PageHeader
         description="Manage your sender profile, password, and account lifecycle."
-        eyebrow="Account"
         title="Settings"
       />
 
       {feedback ? <SettingsFeedback feedback={feedback} /> : null}
 
-      <section
-        className="editorial-panel p-6 sm:p-8"
-        data-animate="enter"
-        data-animate-delay="1"
-      >
-        <div className="space-y-8">
-          <div className="space-y-5">
+      <section data-animate="enter" data-animate-delay="1">
+        <div className="space-y-5">
+          <div className="panel space-y-5 p-6 sm:p-8">
             <SectionHeading title="Profile" />
 
             <form className="space-y-5" onSubmit={handleProfileSubmit}>
@@ -588,7 +585,7 @@ export function SettingsShell({
                   value={profileValues.email}
                 />
               </div>
-              <p className="text-sm leading-6 text-muted-foreground">
+              <p className="text-sm leading-6 text-(--secondary)">
                 Email changes are verified through your current inbox first,
                 then the new inbox.
               </p>
@@ -603,7 +600,7 @@ export function SettingsShell({
             </form>
           </div>
 
-          <div className="border-t border-(--border) pt-8">
+          <div className="panel p-6 sm:p-8">
             <div className="space-y-5">
               <SectionHeading title="Password" />
 
@@ -659,17 +656,14 @@ export function SettingsShell({
             </div>
           </div>
 
-          <div className="border-t border-(--border) pt-8">
+          <div className="panel p-6 sm:p-8">
             <div className="space-y-5">
               <SectionHeading title="Danger zone" />
-              <p className="max-w-2xl text-sm leading-6 text-muted-foreground">
-                Before closing your account, download any documents you want to
-                keep. After closure, SignuDoc may provide a 30-day export window
-                and then delete stored document files and related envelope
-                records.
+              <p className="max-w-2xl text-sm leading-6 text-(--secondary)">
+                {closureCopy}
               </p>
               <ShellButton
-                className="w-fit"
+                className="w-fit border-[rgba(180,35,24,0.35)] text-(--danger) hover:border-(--danger) hover:bg-(--danger-soft) hover:text-(--danger)"
                 disabled={isBusy}
                 onClick={openClosureDialog}
                 variant="secondary"
@@ -697,7 +691,7 @@ export function SettingsShell({
 
 function SectionHeading({ title }: Readonly<{ title: string }>) {
   return (
-    <h2 className="text-xl font-bold tracking-[-0.03em] text-(--fg)">
+    <h2 className="text-xl font-extrabold tracking-[-0.02em] text-(--fg)">
       {title}
     </h2>
   );
@@ -708,17 +702,14 @@ function SettingsFeedback({
 }: Readonly<{
   feedback: Exclude<FeedbackMessage, null>;
 }>) {
-  const toneClasses =
-    feedback.tone === "success"
-      ? "border-[rgba(5,150,105,0.18)] bg-[rgba(5,150,105,0.05)] text-chart-4"
-      : "border-[rgba(180,35,53,0.18)] bg-[rgba(180,35,53,0.04)] text-(--accent)";
-
   return (
     <section
-      className={`border px-5 py-4 ${toneClasses}`}
+      className={`notice ${
+        feedback.tone === "success" ? "notice-success" : "notice-danger"
+      }`}
       role={feedback.tone === "error" ? "alert" : "status"}
     >
-      <p className="text-sm font-semibold">{feedback.message}</p>
+      <p>{feedback.message}</p>
     </section>
   );
 }
@@ -732,6 +723,14 @@ type AccountClosureDialogProps = {
   onConfirm: () => void;
 };
 
+function useClosureCopy(): string {
+  const { hosted, productName } = useBranding();
+
+  return hosted
+    ? `Before closing your account, download any documents you want to keep. After closure, ${productName} keeps a 30-day export window and then deletes your stored documents, templates and envelope records. Signers keep the copies they were emailed.`
+    : `Before closing your account, download any documents you want to keep. After 30 days your drafts, unfinished envelopes and templates are deleted. Finished documents and their audit trails stay with ${productName}: they move to an administrator, because they are the organization's records.`;
+}
+
 function AccountClosureDialog({
   confirmationValue,
   isReady,
@@ -740,6 +739,8 @@ function AccountClosureDialog({
   onChange,
   onConfirm,
 }: AccountClosureDialogProps) {
+  const closureCopy = useClosureCopy();
+
   return (
     <Dialog
       open
@@ -749,26 +750,18 @@ function AccountClosureDialog({
         }
       }}
     >
-      <DialogContent
-        className="max-w-lg rounded-none border-(--border) sm:p-8"
-        showCloseButton={false}
-      >
+      <DialogContent className="max-w-lg sm:p-8" showCloseButton={false}>
         <div className="space-y-5">
           <DialogHeader className="space-y-3">
-            <DialogTitle className="text-xl tracking-[-0.03em]">
-              Request account closure?
-            </DialogTitle>
-            <DialogDescription className="text-sm leading-6 text-muted-foreground">
-              Before closing your account, download any documents you want to
-              keep. After closure, SignuDoc may provide a 30-day export window
-              and then delete stored document files and related envelope
-              records.
+            <DialogTitle>Request account closure?</DialogTitle>
+            <DialogDescription className="text-sm leading-6 text-(--secondary)">
+              {closureCopy}
             </DialogDescription>
           </DialogHeader>
 
           <Field className="gap-2 text-sm">
             <FieldLabel
-              className="font-semibold text-(--fg)"
+              className="text-[0.8125rem] font-semibold text-(--secondary)"
               htmlFor="close-account-confirmation"
             >
               Type &quot;close my account&quot; to confirm:
@@ -795,6 +788,7 @@ function AccountClosureDialog({
               disabled={!isReady}
               loading={isSubmitting}
               onClick={onConfirm}
+              variant="danger"
             >
               {isSubmitting ? "Requesting..." : "Request closure"}
             </ShellButton>

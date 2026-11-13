@@ -3,6 +3,7 @@ import { NextResponse } from "next/server";
 import { requireVerifiedSenderSession } from "@/lib/auth/route-session";
 import { getDb } from "@/lib/db/connection";
 import { EnvelopeMutationError, sendDraftEnvelope } from "@/lib/envelopes";
+import { sendEnvelopeOptionsSchema } from "@/lib/schemas/envelope";
 import { logRouteError } from "@/lib/security/logging";
 import {
   applyRateLimit,
@@ -21,6 +22,8 @@ type EnvelopeSendRouteContext = {
 };
 
 type SendEnvelopeRequest = {
+  expiresInDays?: unknown;
+  reminderIntervalDays?: unknown;
   permittedUseConfirmed?: boolean;
 };
 
@@ -37,7 +40,7 @@ export async function POST(
   const session = sessionResult;
   const { id } = await context.params;
   const ipAddress = getClientIpAddress(request.headers);
-  const rateLimitResponse = applyRateLimit({
+  const rateLimitResponse = await applyRateLimit({
     category: "draft_envelope_send",
     key: buildRateLimitKey(["envelope-send", session.user.id]),
     limit: 10,
@@ -65,11 +68,28 @@ export async function POST(
     );
   }
 
+  const options = sendEnvelopeOptionsSchema.safeParse({
+    expiresInDays: body.expiresInDays ?? undefined,
+    reminderIntervalDays: body.reminderIntervalDays ?? undefined,
+  });
+
+  if (!options.success) {
+    return NextResponse.json(
+      {
+        error:
+          "Choose a deadline between 1 and 365 days from now, and reminders between 1 and 30 days apart.",
+      },
+      { status: 400 },
+    );
+  }
+
   try {
     const result = await sendDraftEnvelope(
       session.user.id,
       id,
       {
+        expiresInDays: options.data.expiresInDays,
+        reminderIntervalDays: options.data.reminderIntervalDays,
         ipAddress,
         senderEmail: session.user.email,
         senderName:

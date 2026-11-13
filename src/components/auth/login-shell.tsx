@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState, type ChangeEvent, type FormEvent } from "react";
 
+import { useBranding } from "@/components/layout/branding-provider";
 import { FieldShell, ShellButton } from "@/components/shared/form-shell";
 import { authClient } from "@/lib/auth/client";
 import { forgotPasswordSchema, loginSchema } from "@/lib/schemas/auth";
@@ -112,6 +113,7 @@ function LiveLoginShell({
   resetToken = null,
 }: LoginShellProps) {
   const router = useRouter();
+  const { signupAvailable } = useBranding();
   const [values, setValues] = useState<LoginFormValues>(
     createLoginFormValues(),
   );
@@ -338,20 +340,17 @@ function LiveLoginShell({
 
   return (
     <>
-      <section className="editorial-panel w-full max-w-[460px] p-8 sm:p-10">
+      <section className="panel w-full max-w-[460px] p-8 sm:p-10">
         <div className="space-y-7">
           <div className="space-y-2">
             <p className="section-eyebrow">Log in</p>
-            <h1 className="text-[clamp(2.2rem,5vw,3rem)] font-extrabold leading-[1.02] tracking-[-0.045em] text-black">
+            <h1 className="text-[clamp(1.875rem,4.5vw,2.375rem)] font-extrabold leading-[1.08] tracking-[-0.035em] text-(--fg)">
               Welcome back
             </h1>
           </div>
 
           {bannerMessage ? (
-            <p
-              className="rounded-[22px] border border-[rgba(180,35,53,0.16)] bg-[rgba(180,35,53,0.06)] px-4 py-3 text-sm font-medium text-(--accent)"
-              role="alert"
-            >
+            <p className="notice notice-danger" role="alert">
               {bannerMessage}
             </p>
           ) : null}
@@ -404,23 +403,25 @@ function LiveLoginShell({
             ) : null}
           </form>
 
-          <div className="flex flex-col gap-3 border-t border-(--border) pt-5 text-sm text-muted-foreground">
+          <div className="flex flex-col gap-3 border-t border-(--border) pt-5 text-sm text-(--secondary)">
             <button
-              className="w-fit p-0 text-left font-medium text-(--fg) transition hover:text-(--accent)"
+              className="w-fit p-0 text-left font-bold text-(--accent-ink) underline-offset-4 hover:underline"
               onClick={openForgotPasswordModal}
               type="button"
             >
               Forgot your password?
             </button>
-            <p>
-              Don&apos;t have an account?{" "}
-              <Link
-                className="font-semibold text-(--fg) transition hover:text-(--accent)"
-                href="/signup"
-              >
-                Sign up
-              </Link>
-            </p>
+            {signupAvailable ? (
+              <p>
+                Don&apos;t have an account?{" "}
+                <Link
+                  className="font-bold text-(--accent-ink) underline-offset-4 hover:underline"
+                  href="/signup"
+                >
+                  Sign up
+                </Link>
+              </p>
+            ) : null}
           </div>
         </div>
       </section>
@@ -472,10 +473,7 @@ function ForgotPasswordDialog({
         }
       }}
     >
-      <DialogContent
-        className="max-w-[560px] rounded-none border-(--border) sm:p-8"
-        showCloseButton={false}
-      >
+      <DialogContent className="max-w-[560px] sm:p-8" showCloseButton={false}>
         <div className="space-y-6">
           <DialogHeader className="space-y-3">
             <DialogTitle>Reset your password</DialogTitle>
@@ -486,19 +484,13 @@ function ForgotPasswordDialog({
           </DialogHeader>
 
           {bannerMessage ? (
-            <p
-              className="rounded-[22px] border border-[rgba(180,35,53,0.16)] bg-[rgba(180,35,53,0.06)] px-4 py-3 text-sm font-medium text-(--accent)"
-              role="alert"
-            >
+            <p className="notice notice-danger" role="alert">
               {bannerMessage}
             </p>
           ) : null}
 
           {successMessage ? (
-            <p
-              className="rounded-[22px] border border-[rgba(5,150,105,0.18)] bg-[rgba(5,150,105,0.08)] px-4 py-3 text-sm font-medium text-(--fg)"
-              role="status"
-            >
+            <p className="notice notice-success" role="status">
               {successMessage}
             </p>
           ) : null}
@@ -600,29 +592,23 @@ function ResetPasswordCard({ resetToken }: { resetToken: string }) {
   const formLocked = isSubmitting;
 
   return (
-    <section className="editorial-panel w-full max-w-[440px] p-8 sm:p-10">
+    <section className="panel w-full max-w-[440px] p-8 sm:p-10">
       <div className="space-y-8">
         <div className="space-y-2">
           <p className="section-eyebrow">Reset password</p>
-          <h1 className="text-[clamp(2.1rem,5vw,2.8rem)] font-extrabold leading-[1.02] tracking-[-0.045em] text-black">
+          <h1 className="text-[clamp(1.875rem,4.5vw,2.375rem)] font-extrabold leading-[1.08] tracking-[-0.035em] text-(--fg)">
             Create a new password
           </h1>
         </div>
 
         {error ? (
-          <p
-            className="rounded-[22px] border border-[rgba(255,0,51,0.16)] bg-[rgba(255,0,51,0.06)] px-4 py-3 text-sm font-medium text-(--accent)"
-            role="alert"
-          >
+          <p className="notice notice-danger" role="alert">
             {error}
           </p>
         ) : null}
 
         {successMessage ? (
-          <p
-            className="rounded-[22px] border border-[rgba(5,150,105,0.18)] bg-[rgba(5,150,105,0.08)] px-4 py-3 text-sm font-medium text-(--fg)"
-            role="status"
-          >
+          <p className="notice notice-success" role="status">
             {successMessage}
           </p>
         ) : null}

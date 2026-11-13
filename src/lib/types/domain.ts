@@ -1,8 +1,23 @@
 export const MAX_SIGNERS_PER_ENVELOPE = 10;
+/** People who get a copy of the finished document without signing. */
+export const MAX_COPY_RECIPIENTS_PER_ENVELOPE = 10;
 export const MAX_UPLOAD_SIZE_BYTES = 20 * 1024 * 1024;
 export const SIGNING_LINK_TTL_SECONDS = 7 * 24 * 60 * 60;
 export const RECIPIENT_DOWNLOAD_LINK_TTL_SECONDS = 7 * 24 * 60 * 60;
 export const MANUAL_NUDGE_COOLDOWN_SECONDS = 24 * 60 * 60;
+
+/** How long signers get, in days: what the send step offers, and its limits. */
+export const ENVELOPE_DEADLINE_DAY_OPTIONS = [3, 7, 14, 30, 60, 90] as const;
+export const DEFAULT_ENVELOPE_DEADLINE_DAYS = 30;
+export const MAX_ENVELOPE_DEADLINE_DAYS = 365;
+
+/**
+ * Automatic reminders: how many days apart the send step offers, the limit,
+ * and what a new envelope starts with (null is off).
+ */
+export const ENVELOPE_REMINDER_DAY_OPTIONS = [1, 2, 3, 7] as const;
+export const MAX_ENVELOPE_REMINDER_DAYS = 30;
+export const DEFAULT_ENVELOPE_REMINDER_DAYS: number | null = null;
 
 export const envelopeStatuses = [
   "draft",
@@ -25,6 +40,9 @@ export const fieldTypes = [
   "date",
   "text",
   "checkbox",
+  "number",
+  "dropdown",
+  "radio",
 ] as const;
 
 export const fieldInputMethods = ["typed", "drawn", "auto"] as const;
@@ -33,11 +51,18 @@ export const auditEventTypes = [
   "created",
   "sent",
   "viewed",
+  "consented",
+  "verified",
+  "verification_failed",
   "signed",
   "declined",
   "reminded_manual",
+  "email_sent",
   "completed",
   "voided",
+  "deadline_changed",
+  "expired",
+  "reminded_auto",
 ] as const;
 
 export const auditActorTypes = ["sender", "signer", "system"] as const;
@@ -49,12 +74,18 @@ export const emailTemplateKinds = [
   "contact_form",
   "email_verification",
   "signing_invitation",
+  "signing_code",
   "change_email_confirmation",
   "manual_nudge",
+  "automatic_reminder",
   "completion_notification",
+  "download_links",
   "decline_notification",
   "void_notification",
   "password_reset",
+  "retention_notice",
+  "expiry_notice",
+  "test_email",
 ] as const;
 
 export type EnvelopeStatus = (typeof envelopeStatuses)[number];

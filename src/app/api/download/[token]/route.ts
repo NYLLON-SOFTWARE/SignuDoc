@@ -1,8 +1,10 @@
 import { NextResponse } from "next/server";
 
 import { getDb } from "@/lib/db/connection";
+import { createDownloadResponse } from "@/lib/download-response";
 import {
   DownloadAccessError,
+  ExpiredDownloadLinkError,
   getPublicEnvelopeDownloadForToken,
 } from "@/lib/downloads";
 import { logRouteError } from "@/lib/security/logging";
@@ -11,10 +13,7 @@ import {
   buildRateLimitKey,
 } from "@/lib/security/route-controls";
 import { getClientIpAddress } from "@/lib/security/request";
-import { buildContentDisposition } from "@/lib/services/storage";
-import { createStorageService } from "@/lib/services/storage";
-
-const PRESIGNED_DOWNLOAD_TTL_SECONDS = 5 * 60;
+import { resolveAppUrl } from "@/lib/utils/env";
 
 // Public download route for recipient email links only.
 // Sender downloads must go through the authenticated /api/envelopes/[id]/download route.
@@ -29,7 +28,7 @@ export async function GET(
   context: PublicDownloadRouteContext,
 ) {
   const { token } = await context.params;
-  const rateLimitResponse = applyRateLimit({
+  const rateLimitResponse = await applyRateLimit({
     category: "public_download",
     key: buildRateLimitKey([
       "public-download",
@@ -57,34 +56,19 @@ export async function GET(
       database: getDb(),
     });
 
-    if ("body" in download) {
-      const responseBody = download.body.slice().buffer as ArrayBuffer;
-
-      return new Response(responseBody, {
-        headers: {
-          "cache-control": "private, no-store",
-          "content-disposition": buildContentDisposition(download.fileName),
-          "content-length": String(download.contentLength),
-          "content-type": download.contentType,
-        },
-        status: 200,
-      });
+    return await createDownloadResponse(download);
+  } catch (error) {
+    // The page there offers to email fresh links to the signer.
+    if (error instanceof ExpiredDownloadLinkError) {
+      return NextResponse.redirect(
+        new URL(
+          `/download/${encodeURIComponent(token)}`,
+          resolveAppUrl() ?? request.url,
+        ),
+        { headers: { "cache-control": "private, no-store" }, status: 303 },
+      );
     }
 
-    const presignedDownload =
-      await createStorageService().createPresignedDownloadUrl({
-        expiresInSeconds: PRESIGNED_DOWNLOAD_TTL_SECONDS,
-        fileName: download.fileName,
-        key: download.key,
-      });
-
-    return NextResponse.redirect(new URL(presignedDownload.url, request.url), {
-      headers: {
-        "cache-control": "private, no-store",
-      },
-      status: 302,
-    });
-  } catch (error) {
     if (error instanceof DownloadAccessError) {
       return new NextResponse(error.message, {
         headers: {

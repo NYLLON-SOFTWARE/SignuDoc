@@ -15,7 +15,23 @@ import { signUpSchema } from "@/lib/schemas/auth";
 const defaultSuccessMessage = "Check your email to verify your sender account.";
 
 type AuthErrorLike = {
+  code?: string;
   message?: string;
+};
+
+// Codes the server answers with when this install's sign-up rule turns an
+// address away. The message that comes with them says what the rule is.
+const SIGNUP_RULE_ERROR_CODES = new Set([
+  "setup_required",
+  "signup_closed",
+  "signup_domain_not_allowed",
+]);
+
+type SignupShellProps = {
+  /** False when this install is not taking new accounts at all. */
+  signupAvailable?: boolean;
+  /** One sentence on who can create an account, or null when anyone can. */
+  signupRule?: string | null;
 };
 
 type SignupFormValues = {
@@ -60,6 +76,7 @@ type SignupFormCardProps = {
   onResendVerification?: () => void | Promise<void>;
   onSubmit: (event: FormEvent<HTMLFormElement>) => void | Promise<void>;
   showSuccess: boolean;
+  signupRule: string | null;
   successMessage: string | null;
   values: SignupFormValues;
 };
@@ -76,24 +93,27 @@ function SignupFormCard({
   onResendVerification,
   onSubmit,
   showSuccess,
+  signupRule,
   successMessage,
   values,
 }: SignupFormCardProps) {
   return (
-    <section className="editorial-panel w-full max-w-[460px] p-8 sm:p-10">
+    <section className="panel w-full max-w-[460px] p-8 sm:p-10">
       <div className="space-y-7">
         <div className="space-y-2">
           <p className="section-eyebrow">Create account</p>
-          <h1 className="text-[clamp(2.2rem,5vw,3rem)] font-extrabold leading-[1.02] tracking-[-0.045em] text-black">
+          <h1 className="text-[clamp(1.875rem,4.5vw,2.375rem)] font-extrabold leading-[1.08] tracking-[-0.035em] text-(--fg)">
             Create your account
           </h1>
+          {signupRule ? (
+            <p className="pt-1 text-sm leading-6 text-muted-foreground">
+              {signupRule}
+            </p>
+          ) : null}
         </div>
 
         {bannerMessage ? (
-          <p
-            className="rounded-[22px] border border-[rgba(180,35,53,0.16)] bg-[rgba(180,35,53,0.06)] px-4 py-3 text-sm font-medium text-(--accent)"
-            role="alert"
-          >
+          <p className="notice notice-danger" role="alert">
             {bannerMessage}
           </p>
         ) : null}
@@ -101,9 +121,9 @@ function SignupFormCard({
         {showSuccess ? (
           <div
             aria-live="polite"
-            className="rounded-[24px] border border-[rgba(5,150,105,0.18)] bg-[rgba(5,150,105,0.08)] px-5 py-4"
+            className="notice notice-success"
           >
-            <p className="text-sm font-semibold text-(--fg)">
+            <p>
               {successMessage ?? defaultSuccessMessage}
             </p>
           </div>
@@ -180,10 +200,10 @@ function SignupFormCard({
           )}
         </form>
 
-        <div className="border-t border-(--border) pt-5 text-sm text-muted-foreground">
+        <div className="border-t border-(--border) pt-5 text-sm text-(--secondary)">
           Already have an account?{" "}
           <Link
-            className="font-semibold text-(--fg) transition hover:text-(--accent)"
+            className="font-bold text-(--accent-ink) underline-offset-4 hover:underline"
             href="/login"
           >
             Log in
@@ -194,11 +214,41 @@ function SignupFormCard({
   );
 }
 
-export function SignupShell() {
-  return <LiveSignupShell />;
+export function SignupShell({
+  signupAvailable = true,
+  signupRule = null,
+}: SignupShellProps) {
+  if (!signupAvailable) {
+    return <SignupClosedCard />;
+  }
+
+  return <LiveSignupShell signupRule={signupRule} />;
 }
 
-function LiveSignupShell() {
+function SignupClosedCard() {
+  return (
+    <section className="panel w-full max-w-[460px] p-8 sm:p-10">
+      <div className="space-y-7">
+        <div className="space-y-2">
+          <p className="section-eyebrow">Create account</p>
+          <h1 className="text-[clamp(1.875rem,4.5vw,2.375rem)] font-extrabold leading-[1.08] tracking-[-0.035em] text-(--fg)">
+            Sign-up is closed
+          </h1>
+          <p className="pt-1 text-sm leading-6 text-muted-foreground">
+            New accounts are not being accepted on this site. If you were sent
+            a document to sign, use the link in that email. You do not need an
+            account.
+          </p>
+        </div>
+        <ShellButton className="w-full" href="/login" variant="primary">
+          Go to log in
+        </ShellButton>
+      </div>
+    </section>
+  );
+}
+
+function LiveSignupShell({ signupRule }: { signupRule: string | null }) {
   const [values, setValues] = useState<SignupFormValues>(
     createSignupFormValues(),
   );
@@ -321,7 +371,11 @@ function LiveSignupShell() {
     if (result.error) {
       const normalizedErrorMessage = normalizeAuthErrorMessage(result.error);
 
-      if (
+      if (SIGNUP_RULE_ERROR_CODES.has(result.error.code ?? "")) {
+        setBannerMessage(
+          result.error.message ?? "New accounts are not being accepted.",
+        );
+      } else if (
         normalizedErrorMessage.includes("user already exists") ||
         normalizedErrorMessage.includes("use another email")
       ) {
@@ -363,6 +417,7 @@ function LiveSignupShell() {
       onResendVerification={handleResendVerification}
       onSubmit={handleSubmit}
       showSuccess={showSuccess}
+      signupRule={signupRule}
       successMessage={successMessage}
       values={values}
     />

@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 
-import { RateLimitExceededError, enforceSlidingWindowRateLimit } from "./rate-limit.ts";
 import { logSecurityEvent } from "./logging.ts";
+import { consumeRateLimit } from "./rate-limit.ts";
 import { getClientIpAddress, getRequestPathname } from "./request.ts";
 
 type RateLimitInput = {
@@ -14,44 +14,40 @@ type RateLimitInput = {
   windowMs: number;
 };
 
-function getRetryAfterHeaders(retryAfterSeconds: number) {
-  return {
-    "retry-after": String(retryAfterSeconds),
-  };
-}
+/**
+ * Counts this request against a limit. Returns the 429 response to send when
+ * it is over, or null when the request may go ahead.
+ */
+export async function applyRateLimit(
+  input: RateLimitInput,
+): Promise<NextResponse | null> {
+  const decision = await consumeRateLimit({
+    key: input.key,
+    limit: input.limit,
+    windowMs: input.windowMs,
+  });
 
-export function applyRateLimit(input: RateLimitInput): NextResponse | null {
-  try {
-    enforceSlidingWindowRateLimit({
-      key: input.key,
-      limit: input.limit,
-      windowMs: input.windowMs,
-    });
-
+  if (decision.allowed) {
     return null;
-  } catch (error) {
-    if (!(error instanceof RateLimitExceededError)) {
-      throw error;
-    }
-
-    logSecurityEvent("warn", {
-      category: input.category,
-      ipAddress: getClientIpAddress(input.request.headers),
-      message: "Rate limit exceeded.",
-      path: getRequestPathname(input.request),
-      userId: input.userId ?? null,
-    });
-
-    return NextResponse.json(
-      {
-        error: input.message ?? "Too many requests. Please try again soon.",
-      },
-      {
-        headers: getRetryAfterHeaders(error.retryAfterSeconds),
-        status: 429,
-      },
-    );
   }
+
+  logSecurityEvent("warn", {
+    category: input.category,
+    ipAddress: getClientIpAddress(input.request.headers),
+    message: "Rate limit exceeded.",
+    path: getRequestPathname(input.request),
+    userId: input.userId ?? null,
+  });
+
+  return NextResponse.json(
+    {
+      error: input.message ?? "Too many requests. Please try again soon.",
+    },
+    {
+      headers: { "retry-after": String(decision.retryAfterSeconds) },
+      status: 429,
+    },
+  );
 }
 
 export function buildRateLimitKey(parts: Array<string | null | undefined>) {

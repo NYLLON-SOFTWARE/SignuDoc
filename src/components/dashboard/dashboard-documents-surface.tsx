@@ -1,20 +1,20 @@
+import { PlusIcon, SearchIcon } from "lucide-react";
 import Link from "next/link";
 import type { ChangeEventHandler } from "react";
 
 import { cn } from "@/lib/cn";
 import type { DashboardEnvelopeListItem } from "@/lib/envelopes";
+import {
+  DocumentThumbnail,
+  SampleDocumentPage,
+} from "@/components/shared/document-thumbnail";
 import { ShellButton, StaticShellButton } from "@/components/shared/form-shell";
 import { PageHeader } from "@/components/shared/page-header";
 
 export type DashboardShellState = "default" | "empty" | "error";
 
 export type DashboardFilter =
-  | "All"
-  | "Draft"
-  | "Sent"
-  | "Completed"
-  | "Declined"
-  | "Voided";
+  "All" | "Draft" | "Sent" | "Completed" | "Declined" | "Voided";
 
 type EnvelopeStatus = "draft" | "sent" | "completed" | "declined" | "voided";
 
@@ -49,12 +49,12 @@ const statusLabelMap: Record<EnvelopeStatus, string> = {
   voided: "Voided",
 };
 
-const statusBadgeClasses: Record<EnvelopeStatus, string> = {
-  completed: "bg-[rgba(5,150,105,0.12)] text-chart-4",
-  declined: "bg-[rgba(255,0,51,0.1)] text-(--accent)",
-  draft: "bg-[rgba(17,17,17,0.06)] text-muted-foreground",
-  sent: "bg-[rgba(37,99,235,0.12)] text-chart-1",
-  voided: "bg-[rgba(17,17,17,0.06)] text-(--tertiary)",
+const statusPillClasses: Record<EnvelopeStatus, string> = {
+  completed: "pill-success",
+  declined: "pill-danger",
+  draft: "pill-neutral",
+  sent: "pill-accent",
+  voided: "pill-neutral",
 };
 
 type DashboardDocumentsHeaderProps = {
@@ -74,7 +74,7 @@ type DashboardDocumentsPanelProps = {
   selectedFilter: DashboardFilter;
 };
 
-type EnvelopeListProps = {
+type EnvelopeGridProps = {
   envelopes: readonly DashboardEnvelopeListItem[];
   interactive: boolean;
 };
@@ -92,17 +92,27 @@ type ErrorBannerProps = {
 export function DashboardDocumentsHeader({
   interactive = true,
 }: DashboardDocumentsHeaderProps) {
+  const label = (
+    <>
+      <PlusIcon
+        aria-hidden="true"
+        className="size-[1.125rem]"
+        strokeWidth={2.4}
+      />
+      New envelope
+    </>
+  );
+
   return (
     <PageHeader
       action={
         interactive ? (
-          <ShellButton href="/envelopes/new">New envelope</ShellButton>
+          <ShellButton href="/envelopes/new">{label}</ShellButton>
         ) : (
-          <StaticShellButton>New envelope</StaticShellButton>
+          <StaticShellButton>{label}</StaticShellButton>
         )
       }
       description={documentsDescription}
-      eyebrow="Sender workspace"
       title="Documents"
     />
   );
@@ -123,31 +133,47 @@ export function DashboardDocumentsPanel({
   const hasSeededEnvelopes = envelopes.length > 0;
 
   return (
-    <section
-      className="editorial-panel overflow-hidden p-4 sm:p-6"
-      data-animate="enter"
-      data-animate-delay="1"
-    >
-      <div className="space-y-6">
-        <div className="flex flex-col gap-4 border-b border-(--border) pb-5">
-          <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
-            <div>
-              <p className="section-eyebrow">Filter documents</p>
-              <p className="mt-2 text-sm leading-6 text-muted-foreground">
-                Search by title or signer email, then narrow by status.
-              </p>
-            </div>
-            {!isError && hasSeededEnvelopes ? (
-              <p className="text-sm text-muted-foreground">
-                Showing {filteredEnvelopes.length} of {envelopes.length}{" "}
-                envelopes
-              </p>
-            ) : null}
-          </div>
+    <section className="space-y-4" data-animate="enter" data-animate-delay="1">
+      <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+        <div
+          aria-label="Filter documents"
+          className="segmented self-start"
+          role="group"
+        >
+          {filterOptions.map((filter) => {
+            const isActive = filter === selectedFilter;
 
+            if (!interactive) {
+              return (
+                <span
+                  className="segmented-item"
+                  data-active={isActive}
+                  key={filter}
+                >
+                  {filter}
+                </span>
+              );
+            }
+
+            return (
+              <button
+                aria-pressed={isActive}
+                className="segmented-item"
+                key={filter}
+                onClick={() => onFilterChange?.(filter)}
+                type="button"
+              >
+                {filter}
+              </button>
+            );
+          })}
+        </div>
+
+        <label className="flex min-h-[2.625rem] w-full items-center gap-2.5 rounded-xl bg-white px-3.5 text-(--tertiary) transition focus-within:ring-3 focus-within:ring-ring/50 lg:w-[19rem]">
+          <SearchIcon aria-hidden="true" className="size-4 shrink-0" />
           <input
             aria-label="Search by title or email..."
-            className="min-h-12 w-full rounded-none border border-(--border) bg-white px-4 text-sm text-(--fg) outline-none placeholder:text-(--placeholder)"
+            className="min-w-0 flex-1 bg-transparent py-2 text-sm text-(--fg) outline-none placeholder:text-(--placeholder)"
             onChange={interactive ? onSearchChange : undefined}
             placeholder="Search by title or email..."
             readOnly={!interactive}
@@ -155,57 +181,24 @@ export function DashboardDocumentsPanel({
             type="search"
             value={searchValue}
           />
-
-          <div className="flex flex-wrap gap-2">
-            {filterOptions.map((filter) => {
-              const isActive = filter === selectedFilter;
-              const filterClassName = cn(
-                "inline-flex min-h-10 items-center rounded-none border px-4 [font-family:var(--font-mono)] text-[0.72rem] font-semibold uppercase tracking-[0.18em] transition",
-                isActive
-                  ? "border-(--accent) bg-(--accent) text-white"
-                  : "border-(--border) bg-white text-muted-foreground hover:border-black hover:bg-white hover:text-(--fg)",
-              );
-
-              if (!interactive) {
-                return (
-                  <span
-                    aria-pressed={isActive}
-                    className={filterClassName}
-                    key={filter}
-                  >
-                    {filter}
-                  </span>
-                );
-              }
-
-              return (
-                <button
-                  aria-pressed={isActive}
-                  className={filterClassName}
-                  key={filter}
-                  onClick={() => onFilterChange?.(filter)}
-                  type="button"
-                >
-                  {filter}
-                </button>
-              );
-            })}
-          </div>
-        </div>
-
-        {isError ? (
-          <ErrorBanner interactive={interactive} onRetry={onRetry} />
-        ) : null}
-
-        {filteredEnvelopes.length > 0 ? (
-          <EnvelopeList
-            envelopes={filteredEnvelopes}
-            interactive={interactive}
-          />
-        ) : hasSeededEnvelopes ? (
-          <NoResultsState interactive={interactive} onReset={onReset} />
-        ) : null}
+        </label>
       </div>
+
+      {isError ? (
+        <ErrorBanner interactive={interactive} onRetry={onRetry} />
+      ) : null}
+
+      {filteredEnvelopes.length > 0 ? (
+        <EnvelopeGrid envelopes={filteredEnvelopes} interactive={interactive} />
+      ) : hasSeededEnvelopes ? (
+        <NoResultsState interactive={interactive} onReset={onReset} />
+      ) : null}
+
+      {!isError && hasSeededEnvelopes ? (
+        <p className="px-1 text-[0.8125rem] text-(--tertiary)">
+          Showing {filteredEnvelopes.length} of {envelopes.length} envelopes
+        </p>
+      ) : null}
     </section>
   );
 }
@@ -213,10 +206,10 @@ export function DashboardDocumentsPanel({
 function ErrorBanner({ interactive, onRetry }: ErrorBannerProps) {
   return (
     <div
-      className="flex flex-col gap-4 border border-[rgba(229,0,0,0.2)] bg-[#fff8f8] px-5 py-4 sm:flex-row sm:items-center sm:justify-between"
+      className="flex flex-col gap-4 rounded-2xl bg-(--danger-soft) px-5 py-4 sm:flex-row sm:items-center sm:justify-between"
       role="alert"
     >
-      <p className="text-sm font-medium text-(--fg)">
+      <p className="text-sm font-semibold text-(--danger)">
         We couldn&apos;t load your documents. Please try again.
       </p>
       {interactive ? (
@@ -230,22 +223,22 @@ function ErrorBanner({ interactive, onRetry }: ErrorBannerProps) {
   );
 }
 
-function EnvelopeList({ envelopes, interactive }: EnvelopeListProps) {
+function EnvelopeGrid({ envelopes, interactive }: EnvelopeGridProps) {
   return (
-    <ul className="overflow-hidden border border-(--border) bg-white">
+    <ul className="grid grid-cols-[repeat(auto-fill,minmax(15rem,1fr))] gap-4">
       {envelopes.map((envelope) => (
-        <li
-          className="border-b border-(--border) last:border-b-0"
-          key={envelope.id}
-        >
-          <EnvelopeRow envelope={envelope} interactive={interactive} />
+        <li className="min-w-0" key={envelope.id}>
+          <EnvelopeCard envelope={envelope} interactive={interactive} />
         </li>
       ))}
+      <li className="min-w-0">
+        <UploadCard interactive={interactive} />
+      </li>
     </ul>
   );
 }
 
-function EnvelopeRow({
+function EnvelopeCard({
   envelope,
   interactive,
 }: {
@@ -254,47 +247,95 @@ function EnvelopeRow({
 }) {
   const content = (
     <>
-      <div className="space-y-2">
-        <div className="flex flex-wrap items-start gap-3">
-          <h2
-            className={`text-lg font-semibold tracking-[-0.03em] ${
-              envelope.status === "voided"
-                ? "text-muted-foreground line-through"
-                : "text-(--fg)"
-            }`}
-          >
-            {envelope.title}
-          </h2>
-        </div>
-        <p className="text-sm leading-6 text-muted-foreground">
-          {envelope.contextLine}
-        </p>
-        <p className="text-sm text-(--tertiary)">
-          Created {envelope.createdAtLabel}
-        </p>
-      </div>
+      <span className="flex h-52 items-center justify-center rounded-2xl bg-(--surface) p-3.5 transition group-hover:bg-[#f0f0f6]">
+        {interactive ? (
+          <DocumentThumbnail envelopeId={envelope.id} title={envelope.title} />
+        ) : (
+          <SampleDocumentPage seed={envelope.id} />
+        )}
+      </span>
 
-      <span
-        aria-label={`Status: ${statusLabelMap[envelope.status]}`}
-        className={`inline-flex min-h-10 items-center justify-center rounded-none px-4 [font-family:var(--font-mono)] text-[0.72rem] font-semibold uppercase tracking-[0.18em] ${statusBadgeClasses[envelope.status]}`}
-      >
-        {statusLabelMap[envelope.status]}
+      <span className="block min-w-0 space-y-1 px-1">
+        <span
+          className={cn(
+            "block truncate text-[0.9375rem] font-bold leading-snug",
+            envelope.status === "voided" ? "text-(--tertiary)" : "text-(--fg)",
+          )}
+          role="heading"
+          aria-level={2}
+        >
+          {envelope.title}
+        </span>
+        <span className="block truncate text-[0.8125rem] text-(--tertiary)">
+          {envelope.contextLine}
+        </span>
+      </span>
+
+      <span className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1.5 px-1 pb-0.5">
+        <span
+          aria-label={`Status: ${
+            envelope.expired ? "Expired" : statusLabelMap[envelope.status]
+          }`}
+          className={cn(
+            "pill",
+            envelope.expired
+              ? "pill-danger"
+              : statusPillClasses[envelope.status],
+          )}
+        >
+          {envelope.statusLabel}
+        </span>
+        <span className="text-xs text-(--tertiary)">
+          <span className="sr-only">Created </span>
+          {envelope.createdAtLabel}
+        </span>
       </span>
     </>
   );
+  const className =
+    "group panel flex h-full flex-col gap-3.5 rounded-[1.25rem] p-3.5";
 
   if (!interactive) {
-    return (
-      <div className="grid gap-4 px-5 py-5 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-start sm:px-6">
-        {content}
-      </div>
-    );
+    return <div className={className}>{content}</div>;
   }
 
   return (
     <Link
-      className="grid gap-4 px-5 py-5 transition hover:bg-[#f7f7f8] sm:grid-cols-[minmax(0,1fr)_auto] sm:items-start sm:px-6"
+      className={cn(
+        className,
+        "transition hover:-translate-y-0.5 hover:shadow-(--shadow-lift)",
+      )}
       href={`/envelopes/${envelope.id}`}
+    >
+      {content}
+    </Link>
+  );
+}
+
+/** The last tile in the grid: the way to add the next document. */
+function UploadCard({ interactive }: { interactive: boolean }) {
+  const content = (
+    <>
+      <span className="inline-flex size-11 items-center justify-center rounded-[0.875rem] bg-(--accent-soft) text-(--accent)">
+        <PlusIcon aria-hidden="true" className="size-5" strokeWidth={2.4} />
+      </span>
+      Upload a PDF
+    </>
+  );
+  const className =
+    "flex h-full min-h-[17.5rem] flex-col items-center justify-center gap-2.5 rounded-[1.25rem] border-2 border-dashed border-(--border-strong) text-sm font-bold text-(--secondary)";
+
+  if (!interactive) {
+    return <div className={className}>{content}</div>;
+  }
+
+  return (
+    <Link
+      className={cn(
+        className,
+        "transition hover:border-(--accent) hover:bg-(--accent-softer) hover:text-(--accent-ink)",
+      )}
+      href="/envelopes/new"
     >
       {content}
     </Link>
@@ -303,15 +344,15 @@ function EnvelopeRow({
 
 function NoResultsState({ interactive, onReset }: NoResultsStateProps) {
   return (
-    <div className="border border-dashed border-(--border) bg-(--surface) px-6 py-10 text-center">
+    <div className="panel px-6 py-12 text-center">
       <div className="mx-auto max-w-md space-y-3">
-        <h2 className="text-xl font-semibold tracking-[-0.03em] text-(--fg)">
+        <h2 className="text-xl font-extrabold tracking-[-0.02em] text-(--fg)">
           No documents match your search
         </h2>
-        <p className="text-sm leading-6 text-muted-foreground">
+        <p className="text-sm leading-6 text-(--secondary)">
           Try a different title, signer email, or status filter.
         </p>
-        <div className="flex justify-center">
+        <div className="flex justify-center pt-2">
           {interactive ? (
             <ShellButton onClick={onReset} variant="secondary">
               Reset filters

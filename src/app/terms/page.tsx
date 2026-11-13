@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 
 import { PublicDocumentShell } from "@/components/layout/public-document-shell";
+import { requireHostedMode } from "@/lib/hosted-pages";
 import { resolvePublicSupportAddress } from "@/lib/public-contact";
 
 export const metadata: Metadata = {
@@ -10,8 +11,10 @@ export const metadata: Metadata = {
   title: "Terms of Service | SignuDoc",
 };
 
-export default function TermsPage() {
-  const supportAddress = resolvePublicSupportAddress();
+export default async function TermsPage() {
+  await requireHostedMode();
+
+  const supportAddress = await resolvePublicSupportAddress();
 
   return (
     <PublicDocumentShell
@@ -20,7 +23,7 @@ export default function TermsPage() {
       title="Terms of Service"
     >
       <section className="space-y-3">
-        <h2 className="text-xl font-semibold tracking-[-0.03em] text-(--fg)">
+        <h2 className="text-xl font-extrabold tracking-[-0.02em] text-(--fg)">
           1. Overview
         </h2>
         <p>
@@ -43,7 +46,7 @@ export default function TermsPage() {
       </section>
 
       <section className="space-y-3">
-        <h2 className="text-xl font-semibold tracking-[-0.03em] text-(--fg)">
+        <h2 className="text-xl font-extrabold tracking-[-0.02em] text-(--fg)">
           2. Eligibility and authority
         </h2>
         <p>
@@ -61,7 +64,7 @@ export default function TermsPage() {
       </section>
 
       <section className="space-y-4">
-        <h2 className="text-xl font-semibold tracking-[-0.03em] text-(--fg)">
+        <h2 className="text-xl font-extrabold tracking-[-0.02em] text-(--fg)">
           3. Permitted use and excluded documents
         </h2>
         <p>
@@ -118,7 +121,7 @@ export default function TermsPage() {
       </section>
 
       <section className="space-y-3">
-        <h2 className="text-xl font-semibold tracking-[-0.03em] text-(--fg)">
+        <h2 className="text-xl font-extrabold tracking-[-0.02em] text-(--fg)">
           4. Sender responsibilities
         </h2>
         <p>
@@ -137,7 +140,7 @@ export default function TermsPage() {
       </section>
 
       <section className="space-y-3">
-        <h2 className="text-xl font-semibold tracking-[-0.03em] text-(--fg)">
+        <h2 className="text-xl font-extrabold tracking-[-0.02em] text-(--fg)">
           5. Electronic signatures and records
         </h2>
         <p>
@@ -157,7 +160,7 @@ export default function TermsPage() {
       </section>
 
       <section className="space-y-3">
-        <h2 className="text-xl font-semibold tracking-[-0.03em] text-(--fg)">
+        <h2 className="text-xl font-extrabold tracking-[-0.02em] text-(--fg)">
           6. Account security and acceptable use
         </h2>
         <p>
@@ -176,7 +179,7 @@ export default function TermsPage() {
       </section>
 
       <section className="space-y-3">
-        <h2 className="text-xl font-semibold tracking-[-0.03em] text-(--fg)">
+        <h2 className="text-xl font-extrabold tracking-[-0.02em] text-(--fg)">
           7. Service changes, availability, and records
         </h2>
         <p>
@@ -195,7 +198,7 @@ export default function TermsPage() {
       </section>
 
       <section className="space-y-3">
-        <h2 className="text-xl font-semibold tracking-[-0.03em] text-(--fg)">
+        <h2 className="text-xl font-extrabold tracking-[-0.02em] text-(--fg)">
           8. Intellectual property and your content
         </h2>
         <p>
@@ -213,7 +216,7 @@ export default function TermsPage() {
       </section>
 
       <section className="space-y-3">
-        <h2 className="text-xl font-semibold tracking-[-0.03em] text-(--fg)">
+        <h2 className="text-xl font-extrabold tracking-[-0.02em] text-(--fg)">
           9. Suspension, termination, and account closure
         </h2>
         <p>
@@ -226,7 +229,7 @@ export default function TermsPage() {
           Account-closure requests may be submitted through the settings page or
           by contacting{" "}
           <Link
-            className="font-semibold text-(--fg) underline decoration-[rgba(17,17,17,0.24)] underline-offset-4"
+            className="font-semibold text-(--accent-ink) underline decoration-[rgb(var(--accent-rgb)/0.35)] underline-offset-4"
             href={`mailto:${supportAddress}`}
           >
             {supportAddress}
@@ -240,7 +243,7 @@ export default function TermsPage() {
       </section>
 
       <section className="space-y-3">
-        <h2 className="text-xl font-semibold tracking-[-0.03em] text-(--fg)">
+        <h2 className="text-xl font-extrabold tracking-[-0.02em] text-(--fg)">
           10. Disclaimers
         </h2>
         <p>
@@ -262,7 +265,7 @@ export default function TermsPage() {
       </section>
 
       <section className="space-y-3">
-        <h2 className="text-xl font-semibold tracking-[-0.03em] text-(--fg)">
+        <h2 className="text-xl font-extrabold tracking-[-0.02em] text-(--fg)">
           11. Limitation of liability
         </h2>
         <p>
@@ -282,7 +285,7 @@ export default function TermsPage() {
       </section>
 
       <section className="space-y-3">
-        <h2 className="text-xl font-semibold tracking-[-0.03em] text-(--fg)">
+        <h2 className="text-xl font-extrabold tracking-[-0.02em] text-(--fg)">
           12. Indemnification
         </h2>
         <p>
@@ -296,7 +299,7 @@ export default function TermsPage() {
       </section>
 
       <section className="space-y-3">
-        <h2 className="text-xl font-semibold tracking-[-0.03em] text-(--fg)">
+        <h2 className="text-xl font-extrabold tracking-[-0.02em] text-(--fg)">
           13. Governing law and changes
         </h2>
         <p>
@@ -315,20 +318,20 @@ export default function TermsPage() {
       </section>
 
       <section className="space-y-3">
-        <h2 className="text-xl font-semibold tracking-[-0.03em] text-(--fg)">
+        <h2 className="text-xl font-extrabold tracking-[-0.02em] text-(--fg)">
           14. Contact
         </h2>
         <p>
           Questions about these Terms may be sent to{" "}
           <Link
-            className="font-semibold text-(--fg) underline decoration-[rgba(17,17,17,0.24)] underline-offset-4"
+            className="font-semibold text-(--accent-ink) underline decoration-[rgb(var(--accent-rgb)/0.35)] underline-offset-4"
             href={`mailto:${supportAddress}`}
           >
             {supportAddress}
           </Link>{" "}
           or through the{" "}
           <Link
-            className="font-semibold text-(--fg) underline decoration-[rgba(17,17,17,0.24)] underline-offset-4"
+            className="font-semibold text-(--accent-ink) underline decoration-[rgb(var(--accent-rgb)/0.35)] underline-offset-4"
             href="/contact"
           >
             Contact

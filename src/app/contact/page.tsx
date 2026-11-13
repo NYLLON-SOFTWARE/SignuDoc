@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 
 import { ContactForm } from "@/components/contact/contact-form";
 import { PublicDocumentShell } from "@/components/layout/public-document-shell";
+import { requireHostedMode } from "@/lib/hosted-pages";
 
 export const metadata: Metadata = {
   description:
@@ -9,7 +10,9 @@ export const metadata: Metadata = {
   title: "Contact | SignuDoc",
 };
 
-export default function ContactPage() {
+export default async function ContactPage() {
+  await requireHostedMode();
+
   return (
     <PublicDocumentShell
       description="Use the form below for product support, privacy requests, accessibility accommodations, legal notices, or questions about a document sent through SignuDoc."

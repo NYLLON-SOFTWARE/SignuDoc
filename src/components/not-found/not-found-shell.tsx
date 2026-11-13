@@ -26,27 +26,27 @@ export function NotFoundShell({
   const ctaLabel = authenticated ? "Go to Dashboard" : "Go to Home";
 
   return (
-    <main className="min-h-screen bg-white px-4 py-6 sm:px-6 sm:py-8 lg:px-8">
-      <div className="mx-auto flex min-h-[calc(100vh-3rem)] max-w-[1080px] items-center justify-center sm:min-h-[calc(100vh-4rem)]">
-        <section className="relative w-full max-w-[620px] overflow-hidden border border-(--border) bg-white px-6 py-16 text-center sm:px-10 sm:py-20">
-          <div className="relative">
-            <p className="section-eyebrow">Unavailable</p>
-            <h1 className="mt-4 text-[clamp(2.4rem,6vw,4rem)] font-extrabold leading-[1.02] tracking-[-0.05em] text-(--fg)">
-              Page not found
-            </h1>
-            <p className="mx-auto mt-4 max-w-md text-sm leading-7 text-muted-foreground sm:text-base">
-              The page you&apos;re looking for doesn&apos;t exist or has been
-              moved.
-            </p>
+    <main className="flex min-h-screen items-center justify-center px-4 py-10">
+      <section
+        className="panel w-full max-w-[560px] px-6 py-14 text-center sm:px-12 sm:py-16"
+        data-animate="enter"
+      >
+        <p className="text-[4.5rem] font-extrabold leading-none tracking-[-0.05em] text-(--accent)">
+          404
+        </p>
+        <h1 className="mt-4 text-[clamp(1.875rem,5vw,2.5rem)] font-extrabold leading-[1.08] tracking-[-0.035em] text-(--fg)">
+          Page not found
+        </h1>
+        <p className="mx-auto mt-3 max-w-md text-base leading-7 text-(--secondary)">
+          The page you&apos;re looking for doesn&apos;t exist or has been moved.
+        </p>
 
-            <div className="mt-8 flex justify-center">
-              <ShellButton className="px-6" href={ctaHref}>
-                {ctaLabel}
-              </ShellButton>
-            </div>
-          </div>
-        </section>
-      </div>
+        <div className="mt-8 flex justify-center">
+          <ShellButton className="px-6" href={ctaHref}>
+            {ctaLabel}
+          </ShellButton>
+        </div>
+      </section>
     </main>
   );
 }

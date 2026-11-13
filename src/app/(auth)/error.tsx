@@ -11,11 +11,10 @@ export default function AuthError({
   return (
     <div className="w-full max-w-[520px]">
       <StatusPanel
-        description="The public route-group shell is ready, but this page hit an unexpected error."
-        eyebrow="Auth shell"
+        description="This page hit an unexpected error. Please try again."
         footer={
           <button
-            className="inline-flex min-h-11 items-center justify-center rounded-full border border-(--border) px-5 text-sm font-semibold text-(--fg) transition hover:bg-(--surface)"
+            className="btn-quiet min-h-11 px-5"
             onClick={reset}
             type="button"
           >

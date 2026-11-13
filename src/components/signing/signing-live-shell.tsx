@@ -1,5 +1,6 @@
 "use client";
 
+import { DownloadIcon } from "lucide-react";
 import Image from "next/image";
 import {
   type PointerEvent as ReactPointerEvent,
@@ -37,6 +38,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 import {
@@ -45,6 +47,11 @@ import {
   type SigningVisibleField,
 } from "@/lib/schemas/signing";
 import { type SigningSubmission } from "@/lib/schemas/field";
+import {
+  countAnswerableFields,
+  isNumberEntry,
+  NUMBER_ENTRY_MESSAGE,
+} from "@/lib/field-choices";
 
 const typedSignatureFont =
   '"Snell Roundhand", "Brush Script MT", "Segoe Script", cursive';
@@ -132,6 +139,12 @@ function getCanvasFieldLabel(
       return "Text";
     case "checkbox":
       return "Checkbox";
+    case "number":
+      return "Number";
+    case "dropdown":
+      return "Choose";
+    case "radio":
+      return "Option";
     default:
       return "Field";
   }
@@ -165,9 +178,47 @@ function getFieldLabel(
       return "Enter text";
     case "checkbox":
       return "Checkbox";
+    case "number":
+      return "Enter a number";
+    case "dropdown":
+      return "Choose one";
+    case "radio":
+      return "Option";
     default:
       return "Field";
   }
+}
+
+/** The values the signer has entered so far, by field. */
+type EnteredValues = {
+  /** Checkboxes and radio buttons. */
+  checkboxValues: Record<string, boolean>;
+  signatureValues: Record<string, SignatureEntry>;
+  /** Text, number and dropdown fields. */
+  textValues: Record<string, string>;
+};
+
+/** The radio buttons that are answered together with this one. */
+function getRadioGroup(
+  field: SigningCurrentField,
+  fields: readonly SigningCurrentField[],
+) {
+  return fields.filter(
+    (other) =>
+      other.type === "radio" &&
+      (other.id === field.id ||
+        (field.groupId !== undefined && other.groupId === field.groupId)),
+  );
+}
+
+/** A number field holding something that is not a number. */
+function hasInvalidNumber(
+  field: SigningCurrentField,
+  textValues: Record<string, string>,
+) {
+  const value = (textValues[field.id] ?? "").trim();
+
+  return field.type === "number" && value.length > 0 && !isNumberEntry(value);
 }
 
 function getSummaryLabel(field: SigningCurrentField) {
@@ -182,6 +233,12 @@ function getSummaryLabel(field: SigningCurrentField) {
       return "Text input";
     case "checkbox":
       return "Checkbox";
+    case "number":
+      return "Number";
+    case "dropdown":
+      return "Dropdown";
+    case "radio":
+      return "Choice";
     default:
       return "Field";
   }
@@ -192,11 +249,15 @@ function isActionSummaryField(field: SigningCurrentField) {
     return true;
   }
 
-  if (field.type === "text") {
+  if (
+    field.type === "text" ||
+    field.type === "number" ||
+    field.type === "dropdown"
+  ) {
     return true;
   }
 
-  if (field.type === "checkbox") {
+  if (field.type === "checkbox" || field.type === "radio") {
     return field.required;
   }
 
@@ -205,17 +266,13 @@ function isActionSummaryField(field: SigningCurrentField) {
 
 function getCompletionValue(
   field: SigningCurrentField,
+  fields: readonly SigningCurrentField[],
   {
     checkboxValues,
     localDateLabel,
     signatureValues,
     textValues,
-  }: {
-    checkboxValues: Record<string, boolean>;
-    localDateLabel: string;
-    signatureValues: Record<string, SignatureEntry>;
-    textValues: Record<string, string>;
-  },
+  }: EnteredValues & { localDateLabel: string },
 ) {
   if (field.type === "signature" || field.type === "initials") {
     return signatureValues[field.id]?.value ?? "Tap to sign";
@@ -225,8 +282,26 @@ function getCompletionValue(
     return textValues[field.id]?.trim() || "Enter text";
   }
 
+  if (field.type === "number") {
+    return hasInvalidNumber(field, textValues)
+      ? "Not a number"
+      : textValues[field.id]?.trim() || "Enter a number";
+  }
+
+  if (field.type === "dropdown") {
+    return textValues[field.id]?.trim() || "Choose one";
+  }
+
   if (field.type === "checkbox") {
     return checkboxValues[field.id] ? "Checked" : "Optional";
+  }
+
+  if (field.type === "radio") {
+    const chosen = getRadioGroup(field, fields).find(
+      (button) => checkboxValues[button.id],
+    );
+
+    return chosen ? getFieldLabel(chosen) : "Choose one";
   }
 
   return localDateLabel;
@@ -234,21 +309,22 @@ function getCompletionValue(
 
 function isFieldComplete(
   field: SigningCurrentField,
-  {
-    checkboxValues,
-    signatureValues,
-    textValues,
-  }: {
-    checkboxValues: Record<string, boolean>;
-    signatureValues: Record<string, SignatureEntry>;
-    textValues: Record<string, string>;
-  },
+  fields: readonly SigningCurrentField[],
+  { checkboxValues, signatureValues, textValues }: EnteredValues,
 ) {
   if (field.type === "signature" || field.type === "initials") {
     return Boolean(signatureValues[field.id]?.value);
   }
 
-  if (field.type === "text") {
+  if (field.type === "number" && hasInvalidNumber(field, textValues)) {
+    return false;
+  }
+
+  if (
+    field.type === "text" ||
+    field.type === "number" ||
+    field.type === "dropdown"
+  ) {
     if (!field.required) {
       return true;
     }
@@ -264,11 +340,22 @@ function isFieldComplete(
     return Boolean(checkboxValues[field.id]);
   }
 
+  if (field.type === "radio") {
+    if (!field.required) {
+      return true;
+    }
+
+    // One chosen button answers for the whole group.
+    return getRadioGroup(field, fields).some(
+      (button) => checkboxValues[button.id],
+    );
+  }
+
   return true;
 }
 
 function getVisibleFieldValue(field: SigningVisibleField) {
-  if (field.type === "checkbox") {
+  if (field.type === "checkbox" || field.type === "radio") {
     return field.checked ? "Checked" : "Unchecked";
   }
 
@@ -277,15 +364,7 @@ function getVisibleFieldValue(field: SigningVisibleField) {
 
 function buildSigningSubmissionPayload(
   record: SigningPayload,
-  {
-    checkboxValues,
-    signatureValues,
-    textValues,
-  }: {
-    checkboxValues: Record<string, boolean>;
-    signatureValues: Record<string, SignatureEntry>;
-    textValues: Record<string, string>;
-  },
+  { checkboxValues, signatureValues, textValues }: EnteredValues,
 ): SigningSubmission {
   const fields: SigningSubmission["fields"] = [];
 
@@ -316,13 +395,17 @@ function buildSigningSubmissionPayload(
       continue;
     }
 
-    if (field.type === "text") {
+    if (
+      field.type === "text" ||
+      field.type === "number" ||
+      field.type === "dropdown"
+    ) {
       const value = textValues[field.id]?.trim();
 
       if (value) {
         fields.push({
           fieldId: field.id,
-          type: "text",
+          type: field.type,
           value,
         });
       }
@@ -330,11 +413,11 @@ function buildSigningSubmissionPayload(
       continue;
     }
 
-    if (field.type === "checkbox") {
+    if (field.type === "checkbox" || field.type === "radio") {
       fields.push({
         checked: Boolean(checkboxValues[field.id]),
         fieldId: field.id,
-        type: "checkbox",
+        type: field.type,
       });
     }
   }
@@ -355,6 +438,10 @@ export function SigningLiveShell({ record }: { record: SigningPayload }) {
   const [checkboxValues, setCheckboxValues] = useState<Record<string, boolean>>(
     {},
   );
+  const [consentedAt, setConsentedAt] = useState(record.consentedAt);
+  const [isConsentChecked, setIsConsentChecked] = useState(false);
+  const [isSavingConsent, setIsSavingConsent] = useState(false);
+  const [consentError, setConsentError] = useState<string | null>(null);
   const [declineError, setDeclineError] = useState<string | null>(null);
   const [declineReason, setDeclineReason] = useState("");
   const [isDeclineDialogOpen, setIsDeclineDialogOpen] = useState(false);
@@ -397,19 +484,52 @@ export function SigningLiveShell({ record }: { record: SigningPayload }) {
   const pageVisibleFields = record.visibleFields.filter(
     (field) => field.page === activePage,
   );
-  const actionSummaryFields = record.currentSignerFields.filter(
-    isActionSummaryField,
-  );
-  const remainingFields = record.currentSignerFields.filter(
+  const enteredValues: EnteredValues = {
+    checkboxValues,
+    signatureValues,
+    textValues,
+  };
+  // A group of radio buttons is one question: it is listed and counted once.
+  const seenRadioGroups = new Set<string>();
+  const actionSummaryFields = record.currentSignerFields.filter((field) => {
+    if (!isActionSummaryField(field)) {
+      return false;
+    }
+
+    if (field.type !== "radio" || field.groupId === undefined) {
+      return true;
+    }
+
+    if (seenRadioGroups.has(field.groupId)) {
+      return false;
+    }
+
+    seenRadioGroups.add(field.groupId);
+
+    return true;
+  });
+  const remainingFields = countAnswerableFields(
+    record.currentSignerFields,
     (field) =>
       field.required &&
-      !isFieldComplete(field, {
-        checkboxValues,
-        signatureValues,
-        textValues,
-      }),
+      !isFieldComplete(field, record.currentSignerFields, enteredValues),
+  );
+  // An optional number field may be left empty, but not filled with
+  // something that is not a number.
+  const invalidNumberCount = record.currentSignerFields.filter((field) =>
+    hasInvalidNumber(field, textValues),
   ).length;
-  const canFinish = remainingFields === 0;
+  const canFinish = remainingFields === 0 && invalidNumberCount === 0;
+  const requiredFieldCount = countAnswerableFields(
+    record.currentSignerFields,
+    (field) => field.required,
+  );
+  const completionPercent =
+    requiredFieldCount === 0
+      ? 100
+      : Math.round(
+          ((requiredFieldCount - remainingFields) / requiredFieldCount) * 100,
+        );
   const isDocumentReady = pdfRenderState === "ready";
 
   function applyZoomLevel(nextZoomLevel: number) {
@@ -463,11 +583,7 @@ export function SigningLiveShell({ record }: { record: SigningPayload }) {
     try {
       const response = await fetch(record.submitUrl, {
         body: JSON.stringify(
-          buildSigningSubmissionPayload(record, {
-            checkboxValues,
-            signatureValues,
-            textValues,
-          }),
+          buildSigningSubmissionPayload(record, enteredValues),
         ),
         headers: {
           "content-type": "application/json",
@@ -497,6 +613,36 @@ export function SigningLiveShell({ record }: { record: SigningPayload }) {
     } catch {
       setSubmitError(defaultSubmitErrorMessage);
       setIsSubmitting(false);
+    }
+  }
+
+  async function handleConsent() {
+    setIsSavingConsent(true);
+    setConsentError(null);
+
+    try {
+      const response = await fetch(record.consentUrl, {
+        body: JSON.stringify({ disclosureVersion: record.disclosure.version }),
+        headers: { "content-type": "application/json" },
+        method: "POST",
+      });
+      const payload = (await response.json().catch(() => null)) as {
+        consentedAt?: number;
+        error?: string;
+      } | null;
+
+      if (!response.ok || typeof payload?.consentedAt !== "number") {
+        setConsentError(
+          payload?.error ?? "Your agreement could not be saved right now.",
+        );
+        return;
+      }
+
+      setConsentedAt(payload.consentedAt);
+    } catch {
+      setConsentError("Your agreement could not be saved right now.");
+    } finally {
+      setIsSavingConsent(false);
     }
   }
 
@@ -574,38 +720,48 @@ export function SigningLiveShell({ record }: { record: SigningPayload }) {
   }
 
   return (
-    <div className="flex min-h-screen flex-col bg-white">
-      <header className="sticky top-0 z-20 border-b border-(--border) bg-white/95 backdrop-blur">
-        <div className="mx-auto flex w-full max-w-[1440px] items-center justify-between gap-4 px-4 py-4 sm:px-6 lg:px-8">
+    <div className="flex min-h-screen flex-col">
+      <header className="sticky top-0 z-20 bg-[rgba(243,244,248,0.88)] backdrop-blur-md">
+        <div className="mx-auto flex w-full max-w-[1320px] items-center justify-between gap-4 px-4 py-3 sm:px-6 sm:py-4">
           <div className="flex min-w-0 items-center gap-5">
             <Brand href="/" />
-            <div className="hidden min-w-0 border-l border-(--border) pl-5 sm:block">
-              <p className="truncate text-sm font-semibold text-(--fg)">
+            <div className="hidden min-w-0 border-l border-(--border-strong) pl-5 sm:block">
+              <p className="truncate text-sm font-bold text-(--fg)">
                 {record.envelopeTitle}
               </p>
-              <p className="mt-1 text-xs uppercase tracking-[0.18em] text-(--tertiary)">
+              <p className="mt-0.5 truncate text-[0.8125rem] text-(--tertiary)">
                 From {record.senderName}
               </p>
             </div>
           </div>
-          <ShellButton
-            className="min-h-11 px-4"
-            disabled={isSubmitting || isDeclining}
-            onClick={() => {
-              setDeclineError(null);
-              setIsDeclineDialogOpen(true);
-            }}
-            variant="secondary"
-          >
-            Decline
-          </ShellButton>
+          <div className="flex items-center gap-3">
+            <a
+              className="btn-quiet min-h-11 px-3 sm:px-4"
+              download="document.pdf"
+              href={`${record.documentUrl}?download=1`}
+            >
+              <DownloadIcon aria-hidden="true" className="size-4" />
+              <span className="sr-only sm:not-sr-only">Download PDF</span>
+            </a>
+            <ShellButton
+              className="min-h-11 px-4"
+              disabled={isSubmitting || isDeclining}
+              onClick={() => {
+                setDeclineError(null);
+                setIsDeclineDialogOpen(true);
+              }}
+              variant="secondary"
+            >
+              Decline
+            </ShellButton>
+          </div>
         </div>
       </header>
 
-      <main className="mx-auto flex w-full max-w-[1440px] flex-1 flex-col gap-6 px-4 py-5 sm:px-6 lg:px-8 lg:py-8">
-        <section className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_320px]">
+      <main className="mx-auto flex w-full max-w-[1320px] flex-1 flex-col gap-5 px-4 pb-8 pt-1 sm:px-6">
+        <section className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_340px]">
           <div className="flex min-w-0 flex-col gap-4">
-            <div className="editorial-panel px-4 py-3 sm:px-5">
+            <div className="panel rounded-[1.25rem] px-4 py-3">
               <div className="flex flex-col gap-3 xl:grid xl:grid-cols-[1fr_auto_1fr] xl:items-center">
                 <div className="flex justify-center xl:justify-start">
                   <DocumentZoomControls
@@ -627,7 +783,7 @@ export function SigningLiveShell({ record }: { record: SigningPayload }) {
                 <div className="flex items-center justify-center gap-3">
                   <button
                     aria-label="Previous page"
-                    className="inline-flex size-11 items-center justify-center rounded-none border border-(--border) bg-white text-muted-foreground transition hover:border-black hover:bg-white disabled:cursor-not-allowed disabled:text-(--placeholder)"
+                    className="btn-quiet size-10 px-0"
                     disabled={activePage === 1}
                     onClick={() =>
                       setActivePage((page) => Math.max(1, page - 1))
@@ -636,17 +792,15 @@ export function SigningLiveShell({ record }: { record: SigningPayload }) {
                   >
                     <ChevronLeftIcon className="size-4" />
                   </button>
-                  <div className="min-w-[132px] text-center">
-                    <p className="text-xs font-semibold uppercase tracking-[0.22em] text-(--tertiary)">
-                      Document page
-                    </p>
-                    <p className="mt-1 text-sm font-semibold text-(--fg)">
+                  <div className="min-w-[7.5rem] text-center">
+                    <p className="sr-only">Document page</p>
+                    <p className="text-sm font-bold text-(--fg)">
                       {`Page ${activePage} of ${record.pageCount}`}
                     </p>
                   </div>
                   <button
                     aria-label="Next page"
-                    className="inline-flex size-11 items-center justify-center rounded-none border border-(--border) bg-white text-muted-foreground transition hover:border-black hover:bg-white disabled:cursor-not-allowed disabled:text-(--placeholder)"
+                    className="btn-quiet size-10 px-0"
                     disabled={activePage === record.pageCount}
                     onClick={() =>
                       setActivePage((page) =>
@@ -668,9 +822,9 @@ export function SigningLiveShell({ record }: { record: SigningPayload }) {
               </div>
             </div>
 
-            <div className="editorial-panel p-3 sm:p-4">
+            <div className="panel overflow-hidden rounded-[1.25rem]">
               <div
-                className={`relative overflow-auto border border-(--border) bg-(--surface) p-3 sm:p-5 ${
+                className={`relative overflow-auto p-3 sm:p-6 ${
                   zoomLevel > DEFAULT_DOCUMENT_ZOOM_LEVEL
                     ? isDocumentPanning
                       ? "cursor-grabbing"
@@ -692,7 +846,7 @@ export function SigningLiveShell({ record }: { record: SigningPayload }) {
                   }`}
                 >
                   <div
-                    className="relative border border-[rgba(17,17,17,0.08)] bg-white"
+                    className="relative overflow-hidden rounded-md bg-white shadow-[0_1px_2px_rgba(28,29,43,0.08),0_12px_32px_rgba(28,29,43,0.12)]"
                     style={{
                       width: `${zoomLevel * 100}%`,
                     }}
@@ -723,12 +877,30 @@ export function SigningLiveShell({ record }: { record: SigningPayload }) {
                               field={field}
                               key={field.id}
                               localDateLabel={localDateLabel}
+                              isInvalid={hasInvalidNumber(field, textValues)}
                               onCheckboxChange={(checked) => {
                                 setSubmitError(null);
-                                setCheckboxValues((current) => ({
-                                  ...current,
-                                  [field.id]: checked,
-                                }));
+                                setCheckboxValues((current) => {
+                                  const next = {
+                                    ...current,
+                                    [field.id]: checked,
+                                  };
+
+                                  // Choosing one radio button lets go of
+                                  // the others in its group.
+                                  if (field.type === "radio" && checked) {
+                                    for (const button of getRadioGroup(
+                                      field,
+                                      record.currentSignerFields,
+                                    )) {
+                                      if (button.id !== field.id) {
+                                        next[button.id] = false;
+                                      }
+                                    }
+                                  }
+
+                                  return next;
+                                });
                               }}
                               onSignatureClick={() =>
                                 handleSignatureFieldClick(field)
@@ -750,11 +922,11 @@ export function SigningLiveShell({ record }: { record: SigningPayload }) {
                       pageCurrentFields.length === 0 &&
                       pageVisibleFields.length === 0 ? (
                         <div className="absolute inset-0 z-1 flex items-center justify-center px-6">
-                          <div className="max-w-[320px] border border-dashed border-[rgba(17,17,17,0.12)] bg-white/92 px-6 py-8 text-center">
-                            <p className="text-lg font-semibold tracking-[-0.03em] text-(--fg)">
+                          <div className="max-w-[320px] rounded-[1.25rem] border-2 border-dashed border-(--border-strong) bg-white/92 px-6 py-7 text-center">
+                            <p className="text-lg font-extrabold tracking-[-0.02em] text-(--fg)">
                               No signer fields on this page
                             </p>
-                            <p className="mt-3 text-sm leading-6 text-muted-foreground">
+                            <p className="mt-2 text-sm leading-6 text-(--secondary)">
                               Move between pages to review your assigned fields
                               and any completed values from earlier signers.
                             </p>
@@ -768,83 +940,97 @@ export function SigningLiveShell({ record }: { record: SigningPayload }) {
             </div>
           </div>
 
-          <aside className="space-y-4 xl:sticky xl:top-24 xl:self-start">
-            <section className="editorial-panel p-5 sm:p-6">
-              <p className="text-xs font-semibold uppercase tracking-[0.22em] text-(--tertiary)">
-                Current signer
-              </p>
-              <div className="mt-4 flex items-center gap-3">
-                <span className="inline-flex size-11 items-center justify-center rounded-full bg-(--signer-1-tint) text-base font-semibold text-chart-1">
+          <aside className="space-y-4 xl:sticky xl:top-[5.25rem] xl:self-start">
+            <section className="panel rounded-[1.25rem] p-5">
+              <p className="section-eyebrow">Current signer</p>
+              <div className="mt-3 flex items-center gap-3">
+                <span className="inline-flex size-11 shrink-0 items-center justify-center rounded-full bg-(--accent-soft) text-[0.9375rem] font-bold text-(--accent-ink)">
                   {getInitials(record.signer.name)}
                 </span>
                 <div className="min-w-0">
-                  <p className="truncate text-sm font-semibold text-(--fg)">
+                  <p className="truncate text-[0.9375rem] font-bold text-(--fg)">
                     {record.signer.name}
                   </p>
-                  <p className="truncate text-sm text-muted-foreground">
+                  <p className="truncate text-sm text-(--secondary)">
                     {record.signer.email}
                   </p>
                 </div>
               </div>
 
-              <div className="mt-6 border-t border-(--border) pt-5">
-                <p className="text-xs font-semibold uppercase tracking-[0.22em] text-(--tertiary)">
-                  Ready to finish
-                </p>
-                <p className="mt-3 text-sm font-semibold text-(--fg)">
+              <div className="well mt-5 p-4">
+                <p className="section-eyebrow">Ready to finish</p>
+                <p className="mt-1.5 text-[0.9375rem] font-bold text-(--fg)">
                   {remainingFields === 0
                     ? "All required fields complete"
                     : `${remainingFields} required field${remainingFields === 1 ? "" : "s"} remaining`}
                 </p>
-                <p className="mt-2 text-sm leading-6 text-muted-foreground">
+                {invalidNumberCount > 0 ? (
+                  <p
+                    className="mt-1.5 text-[0.8125rem] font-semibold leading-5 text-(--danger)"
+                    role="alert"
+                  >
+                    A number field marked in red does not hold a number.{" "}
+                    {NUMBER_ENTRY_MESSAGE}
+                  </p>
+                ) : null}
+                <div
+                  aria-hidden="true"
+                  className="mt-3 h-2 overflow-hidden rounded-full bg-(--surface-strong)"
+                >
+                  <div
+                    className={`h-full rounded-full transition-[width] duration-300 ${
+                      remainingFields === 0 ? "bg-(--success)" : "bg-(--accent)"
+                    }`}
+                    style={{ width: `${completionPercent}%` }}
+                  />
+                </div>
+                <p className="mt-3 text-[0.8125rem] leading-5 text-(--secondary)">
                   Previous signer values stay visible but locked. Only your
                   assigned fields are interactive.
                 </p>
-                <div className="mt-5">
-                  <ShellButton
-                    className="w-full"
-                    disabled={!canFinish || isDeclining || isSubmitting}
-                    onClick={() => {
-                      setSubmitError(null);
-                      setIsFinishDialogOpen(true);
-                    }}
-                  >
-                    Finish
-                  </ShellButton>
-                </div>
+              </div>
+
+              <div className="mt-4">
+                <ShellButton
+                  className="w-full"
+                  disabled={!canFinish || isDeclining || isSubmitting}
+                  onClick={() => {
+                    setSubmitError(null);
+                    setIsFinishDialogOpen(true);
+                  }}
+                >
+                  Finish
+                </ShellButton>
               </div>
             </section>
 
-            <section className="editorial-panel p-5 sm:p-6">
+            <section className="panel rounded-[1.25rem] p-5">
               <div className="flex items-center justify-between gap-3">
-                <p className="text-xs font-semibold uppercase tracking-[0.22em] text-(--tertiary)">
-                  Assigned fields
-                </p>
-                <span className="text-xs font-semibold uppercase tracking-[0.18em] text-(--tertiary)">
+                <p className="section-eyebrow">Assigned fields</p>
+                <span className="pill pill-neutral">
                   {actionSummaryFields.length}
                 </span>
               </div>
-              <div className="mt-4 divide-y divide-(--border) border-y border-(--border)">
+              <div className="mt-3 space-y-2">
                 {actionSummaryFields.map((field) => (
                   <FieldStatusRow
-                    isComplete={isFieldComplete(field, {
-                      checkboxValues,
-                      signatureValues,
-                      textValues,
-                    })}
+                    isComplete={isFieldComplete(
+                      field,
+                      record.currentSignerFields,
+                      enteredValues,
+                    )}
+                    isInvalid={hasInvalidNumber(field, textValues)}
                     key={field.id}
                     label={`${getSummaryLabel(field)} · Page ${field.page}`}
-                    value={getCompletionValue(field, {
-                      checkboxValues,
-                      localDateLabel,
-                      signatureValues,
-                      textValues,
-                    })}
+                    value={getCompletionValue(
+                      field,
+                      record.currentSignerFields,
+                      { ...enteredValues, localDateLabel },
+                    )}
                   />
                 ))}
               </div>
             </section>
-
           </aside>
         </section>
       </main>
@@ -904,12 +1090,12 @@ export function SigningLiveShell({ record }: { record: SigningPayload }) {
             setSubmitError(null);
           }}
         >
-          <p className="text-sm leading-6 text-muted-foreground">
+          <p className="text-sm leading-6 text-(--secondary)">
             By clicking Finish, you confirm that your electronic signature is
             intended to be binding for this document.
           </p>
           {submitError ? (
-            <div className="border border-[rgba(180,35,53,0.18)] bg-[rgba(180,35,53,0.08)] px-4 py-3 text-sm text-(--accent)">
+            <div className="notice notice-danger" role="alert">
               {submitError}
             </div>
           ) : null}
@@ -931,6 +1117,59 @@ export function SigningLiveShell({ record }: { record: SigningPayload }) {
         </DialogFrame>
       ) : null}
 
+      {consentedAt === null && !isDeclineDialogOpen ? (
+        <DialogFrame
+          description={`${record.senderName} sent you "${record.envelopeTitle}" to sign electronically.`}
+          onClose={() => undefined}
+          title="Before you sign"
+        >
+          <div className="well max-h-[45vh] space-y-4 overflow-y-auto px-4 py-4 text-sm leading-6 text-(--secondary) sm:px-5">
+            {record.disclosure.sections.map((section) => (
+              <section key={section.heading}>
+                <h3 className="font-bold text-(--fg)">{section.heading}</h3>
+                <p className="mt-1">{section.text}</p>
+              </section>
+            ))}
+          </div>
+          <label className="flex items-start gap-3 text-sm leading-6 text-(--fg)">
+            <Checkbox
+              aria-label="I agree to use electronic records and signatures"
+              checked={isConsentChecked}
+              className="mt-1"
+              disabled={isSavingConsent}
+              onCheckedChange={(checked) =>
+                setIsConsentChecked(checked === true)
+              }
+            />
+            <span>{record.disclosure.statement}</span>
+          </label>
+          {consentError ? (
+            <div className="notice notice-danger" role="alert">
+              {consentError}
+            </div>
+          ) : null}
+          <div className="flex flex-col-reverse gap-3 sm:flex-row sm:justify-end">
+            <ShellButton
+              disabled={isSavingConsent}
+              onClick={() => {
+                setDeclineError(null);
+                setIsDeclineDialogOpen(true);
+              }}
+              variant="secondary"
+            >
+              Decline
+            </ShellButton>
+            <ShellButton
+              disabled={!isConsentChecked}
+              loading={isSavingConsent}
+              onClick={handleConsent}
+            >
+              Agree and continue
+            </ShellButton>
+          </div>
+        </DialogFrame>
+      ) : null}
+
       {isDeclineDialogOpen ? (
         <DialogFrame
           description={`The sender (${record.senderName}) will be notified that you declined. This cannot be undone.`}
@@ -944,11 +1183,13 @@ export function SigningLiveShell({ record }: { record: SigningPayload }) {
             setIsDeclineDialogOpen(false);
           }}
         >
-          <label className="grid gap-2 text-sm">
-            <span className="font-semibold text-(--fg)">Reason (optional)</span>
+          <label className="grid gap-1.5">
+            <span className="text-[0.8125rem] font-semibold text-(--secondary)">
+              Reason (optional)
+            </span>
             <Textarea
               autoFocus
-              className="min-h-28 rounded-none border-(--border) bg-white"
+              className="min-h-28"
               id="signing-decline-reason"
               name="signing-decline-reason"
               onChange={(event) => setDeclineReason(event.target.value)}
@@ -957,7 +1198,7 @@ export function SigningLiveShell({ record }: { record: SigningPayload }) {
             />
           </label>
           {declineError ? (
-            <div className="border border-[rgba(180,35,53,0.18)] bg-[rgba(180,35,53,0.08)] px-4 py-3 text-sm text-(--accent)">
+            <div className="notice notice-danger" role="alert">
               {declineError}
             </div>
           ) : null}
@@ -972,7 +1213,11 @@ export function SigningLiveShell({ record }: { record: SigningPayload }) {
             >
               Cancel
             </ShellButton>
-            <ShellButton loading={isDeclining} onClick={handleDeclineSigning}>
+            <ShellButton
+              loading={isDeclining}
+              onClick={handleDeclineSigning}
+              variant="danger"
+            >
               {isDeclining ? "Declining..." : "Decline to sign"}
             </ShellButton>
           </div>
@@ -990,13 +1235,13 @@ function SigningToolbarStatus({
   remainingFields: number;
 }) {
   return (
-    <div className="inline-flex min-h-11 items-center gap-3 border border-(--border) bg-white px-3 py-2">
+    <div className="inline-flex min-h-10 items-center gap-2.5 rounded-full bg-(--surface) py-1.5 pl-2.5 pr-4">
       <span
         aria-hidden="true"
-        className={`inline-flex size-5 items-center justify-center rounded-full ${
+        className={`inline-flex size-6 items-center justify-center rounded-full ${
           remainingFields === 0
-            ? "bg-[rgba(24,132,74,0.12)] text-[rgb(24,132,74)]"
-            : "bg-(--signer-1-tint) text-chart-1"
+            ? "bg-(--success-soft) text-(--success)"
+            : "bg-(--accent) text-white"
         }`}
       >
         {remainingFields === 0 ? (
@@ -1015,18 +1260,18 @@ function SigningToolbarStatus({
             />
           </svg>
         ) : (
-          <span className="text-[11px] font-semibold leading-none">
+          <span className="text-[11px] font-bold leading-none">
             {remainingFields}
           </span>
         )}
       </span>
       <div className="min-w-0">
-        <p className="text-sm font-semibold text-(--fg)">
+        <p className="text-[0.8125rem] font-bold leading-tight text-(--fg)">
           {remainingFields === 0
             ? "Ready to finish"
             : `${remainingFields} required remaining`}
         </p>
-        <p className="text-xs text-muted-foreground">
+        <p className="text-xs leading-tight text-(--tertiary)">
           {hasLockedFields ? "Locked values visible" : "Current signer view"}
         </p>
       </div>
@@ -1037,6 +1282,7 @@ function SigningToolbarStatus({
 function CurrentSignerField({
   checkboxValue,
   field,
+  isInvalid,
   localDateLabel,
   onCheckboxChange,
   onSignatureClick,
@@ -1046,6 +1292,8 @@ function CurrentSignerField({
 }: {
   checkboxValue: boolean;
   field: SigningCurrentField;
+  /** True for a number field holding something that is not a number. */
+  isInvalid: boolean;
   localDateLabel: string;
   onCheckboxChange: (checked: boolean) => void;
   onSignatureClick: () => void;
@@ -1061,21 +1309,19 @@ function CurrentSignerField({
     return (
       <button
         aria-label={getSummaryLabel(field)}
-        className={`absolute z-2 overflow-hidden border-2 text-chart-1 transition ${
+        className={`absolute z-2 overflow-hidden rounded-[0.375rem] border-2 border-(--accent) text-(--accent-ink) transition ${
           signatureEntry?.value
-            ? "bg-(--signer-1-tint) text-chart-1"
-            : "bg-[rgba(37,99,235,0.06)] hover:bg-[rgba(37,99,235,0.12)]"
+            ? "bg-[rgb(var(--accent-rgb)/0.10)]"
+            : "bg-[rgb(var(--accent-rgb)/0.07)] hover:bg-[rgb(var(--accent-rgb)/0.16)]"
         }`}
         data-signing-field="true"
         onClick={onSignatureClick}
-        style={{
-          borderColor: "var(--signer-1)",
-          ...frame,
-        }}
+        style={frame}
         type="button"
       >
         <span className="pointer-events-none flex h-full w-full items-center justify-center overflow-hidden px-1 text-center">
-          {signatureEntry?.inputMethod === "drawn" && signatureEntry.imageDataUrl ? (
+          {signatureEntry?.inputMethod === "drawn" &&
+          signatureEntry.imageDataUrl ? (
             <span className="relative block h-full w-full">
               <Image
                 alt={`${field.type === "initials" ? "Initials" : "Signature"} preview`}
@@ -1094,13 +1340,15 @@ function CurrentSignerField({
                     ? typedSignatureFont
                     : undefined,
                 fontSize:
-                  signatureEntry.inputMethod === "typed" ? "1.05rem" : undefined,
+                  signatureEntry.inputMethod === "typed"
+                    ? "1.05rem"
+                    : undefined,
               }}
             >
               {signatureEntry.value}
             </span>
           ) : showInlineLabel ? (
-            <span className="block max-w-full truncate px-1 text-[11px] font-semibold uppercase tracking-[0.18em]">
+            <span className="block max-w-full truncate px-1 text-xs font-bold">
               {getCanvasFieldLabel(field)}
             </span>
           ) : null}
@@ -1112,7 +1360,7 @@ function CurrentSignerField({
   if (field.type === "date") {
     return (
       <div
-        className="absolute z-2 overflow-hidden border border-[rgba(17,17,17,0.12)] bg-white/92 text-sm text-(--fg)"
+        className="absolute z-2 overflow-hidden rounded-[0.375rem] border border-(--border-strong) bg-white/92 text-sm text-(--fg)"
         data-signing-field="true"
         style={frame}
       >
@@ -1128,7 +1376,7 @@ function CurrentSignerField({
   if (field.type === "text") {
     return (
       <div
-        className="absolute z-2 overflow-hidden border-2 border-chart-1 bg-[rgba(37,99,235,0.06)]"
+        className="absolute z-2 overflow-hidden rounded-[0.375rem] border-2 border-(--accent) bg-[rgb(var(--accent-rgb)/0.07)] focus-within:bg-white"
         data-signing-field="true"
         style={frame}
       >
@@ -1145,14 +1393,100 @@ function CurrentSignerField({
     );
   }
 
+  if (field.type === "number") {
+    return (
+      <div
+        className={`absolute z-2 overflow-hidden rounded-[0.375rem] border-2 focus-within:bg-white ${
+          isInvalid
+            ? "border-(--danger) bg-(--danger-soft)"
+            : "border-(--accent) bg-[rgb(var(--accent-rgb)/0.07)]"
+        }`}
+        data-signing-field="true"
+        style={frame}
+        title={isInvalid ? NUMBER_ENTRY_MESSAGE : undefined}
+      >
+        <input
+          aria-invalid={isInvalid ? true : undefined}
+          aria-label={getFieldLabel(field)}
+          autoComplete="off"
+          className="h-full w-full border-none bg-transparent px-2 text-sm text-(--fg) outline-none placeholder:text-(--placeholder)"
+          id={`signing-field-${field.id}`}
+          inputMode="decimal"
+          name={`signing-field-${field.id}`}
+          onChange={(event) => onTextChange(event.target.value)}
+          placeholder={showInlineLabel ? "Number" : ""}
+          value={textValue}
+        />
+      </div>
+    );
+  }
+
+  if (field.type === "dropdown") {
+    return (
+      <div
+        className="absolute z-2 overflow-hidden rounded-[0.375rem] border-2 border-(--accent) bg-[rgb(var(--accent-rgb)/0.07)] focus-within:bg-white"
+        data-signing-field="true"
+        style={frame}
+      >
+        <select
+          aria-label={getFieldLabel(field)}
+          className={`h-full w-full cursor-pointer border-none bg-transparent px-1.5 text-sm outline-none ${
+            textValue ? "text-(--fg)" : "text-(--secondary)"
+          }`}
+          id={`signing-field-${field.id}`}
+          name={`signing-field-${field.id}`}
+          onChange={(event) => onTextChange(event.target.value)}
+          value={textValue}
+        >
+          <option value="">
+            {field.required ? "Choose one" : "No answer"}
+          </option>
+          {(field.options ?? []).map((option) => (
+            <option key={option} value={option}>
+              {option}
+            </option>
+          ))}
+        </select>
+      </div>
+    );
+  }
+
+  if (field.type === "radio") {
+    return (
+      <button
+        aria-checked={checkboxValue}
+        aria-label={getFieldLabel(field)}
+        className={`absolute z-2 flex items-center justify-center rounded-full border-2 border-(--accent) text-(--accent-ink) transition ${
+          checkboxValue
+            ? "bg-[rgb(var(--accent-rgb)/0.14)]"
+            : "bg-white hover:bg-[rgb(var(--accent-rgb)/0.10)]"
+        }`}
+        data-signing-field="true"
+        // An answer that is needed can be changed but not taken back; one
+        // that is optional can be cleared by choosing it again.
+        onClick={() => onCheckboxChange(field.required ? true : !checkboxValue)}
+        role="radio"
+        style={frame}
+        type="button"
+      >
+        {checkboxValue ? (
+          <span
+            aria-hidden="true"
+            className="block size-[52%] max-h-3 max-w-3 rounded-full bg-current"
+          />
+        ) : null}
+      </button>
+    );
+  }
+
   return (
     <button
       aria-label={getFieldLabel(field)}
       aria-pressed={checkboxValue}
-      className={`absolute z-2 flex items-center justify-center border-2 transition ${
+      className={`absolute z-2 flex items-center justify-center rounded-[0.25rem] border-2 border-(--accent) text-(--accent-ink) transition ${
         checkboxValue
-          ? "bg-(--signer-1-tint) text-chart-1"
-          : "bg-white text-chart-1 hover:bg-[rgba(37,99,235,0.08)]"
+          ? "bg-[rgb(var(--accent-rgb)/0.14)]"
+          : "bg-white hover:bg-[rgb(var(--accent-rgb)/0.10)]"
       }`}
       data-signing-field="true"
       onClick={() => onCheckboxChange(!checkboxValue)}
@@ -1184,17 +1518,34 @@ function VisibleFieldStamp({ field }: { field: SigningVisibleField }) {
   const showInlineLabel = shouldShowInlineFieldLabel(field);
   const showInlineValue = shouldShowInlineFieldValue(field);
 
+  if (field.type === "radio") {
+    return (
+      <div
+        className="pointer-events-none absolute z-1 flex items-center justify-center rounded-full border border-(--border-strong) bg-[rgba(28,29,43,0.03)]"
+        data-signing-field="true"
+        style={frame}
+      >
+        {field.checked ? (
+          <span
+            aria-hidden="true"
+            className="block size-[52%] max-h-3 max-w-3 rounded-full bg-(--secondary)"
+          />
+        ) : null}
+      </div>
+    );
+  }
+
   if (field.type === "checkbox") {
     return (
       <div
-        className="pointer-events-none absolute z-1 flex items-center justify-center border border-[rgba(17,17,17,0.12)] bg-[rgba(17,17,17,0.03)]"
+        className="pointer-events-none absolute z-1 flex items-center justify-center rounded-[0.25rem] border border-(--border-strong) bg-[rgba(28,29,43,0.03)]"
         data-signing-field="true"
         style={frame}
       >
         {field.checked ? (
           <svg
             aria-hidden="true"
-            className="h-[68%] w-[68%] max-h-4 max-w-4 text-[rgba(17,17,17,0.76)]"
+            className="h-[68%] w-[68%] max-h-4 max-w-4 text-(--secondary)"
             fill="none"
             viewBox="0 0 16 16"
           >
@@ -1217,7 +1568,7 @@ function VisibleFieldStamp({ field }: { field: SigningVisibleField }) {
   ) {
     return (
       <div
-        className="pointer-events-none absolute z-1 overflow-hidden border border-[rgba(17,17,17,0.12)] bg-[rgba(17,17,17,0.03)]"
+        className="pointer-events-none absolute z-1 overflow-hidden rounded-[0.375rem] border border-(--border-strong) bg-[rgba(28,29,43,0.03)]"
         data-signing-field="true"
         style={frame}
       >
@@ -1234,7 +1585,7 @@ function VisibleFieldStamp({ field }: { field: SigningVisibleField }) {
 
   return (
     <div
-      className="pointer-events-none absolute z-1 overflow-hidden border border-[rgba(17,17,17,0.12)] bg-[rgba(17,17,17,0.03)] text-muted-foreground"
+      className="pointer-events-none absolute z-1 overflow-hidden rounded-[0.375rem] border border-(--border-strong) bg-[rgba(28,29,43,0.03)] text-(--secondary)"
       data-signing-field="true"
       style={frame}
     >
@@ -1260,7 +1611,7 @@ function VisibleFieldStamp({ field }: { field: SigningVisibleField }) {
             {getVisibleFieldValue(field)}
           </p>
         ) : showInlineLabel ? (
-          <p className="w-full truncate text-center text-[10px] font-semibold uppercase tracking-[0.16em] text-(--tertiary)">
+          <p className="w-full truncate text-center text-[11px] font-semibold text-(--tertiary)">
             {getCanvasFieldLabel(field)}
           </p>
         ) : null}
@@ -1338,15 +1689,15 @@ function SignatureModal({
         onValueChange={(value) => onModeChange(value as "typed" | "drawn")}
         value={signatureMode}
       >
-        <TabsList className="flex w-full gap-2 rounded-none border-0 bg-transparent p-0 shadow-none">
+        <TabsList className="segmented flex h-auto w-full p-1 group-data-horizontal/tabs:h-auto">
           <TabsTrigger
-            className="min-h-11 flex-1 rounded-none border border-(--border) bg-(--surface) px-4 text-sm font-semibold text-muted-foreground data-active:border-(--border) data-active:bg-white data-active:text-(--fg) after:hidden"
+            className="segmented-item h-auto min-h-10 flex-1 data-active:bg-white data-active:text-(--fg) data-active:shadow-[0_1px_3px_rgba(28,29,43,0.12)] after:hidden"
             value="typed"
           >
             Type
           </TabsTrigger>
           <TabsTrigger
-            className="min-h-11 flex-1 rounded-none border border-(--border) bg-(--surface) px-4 text-sm font-semibold text-muted-foreground data-active:border-(--border) data-active:bg-white data-active:text-(--fg) after:hidden"
+            className="segmented-item h-auto min-h-10 flex-1 data-active:bg-white data-active:text-(--fg) data-active:shadow-[0_1px_3px_rgba(28,29,43,0.12)] after:hidden"
             value="drawn"
           >
             Draw
@@ -1355,14 +1706,14 @@ function SignatureModal({
       </Tabs>
 
       {signatureMode === "typed" ? (
-        <div className="space-y-4 border border-(--border) bg-(--surface) p-5 sm:p-6">
-          <label className="grid gap-2 text-sm">
-            <span className="font-semibold text-(--fg)">
+        <div className="space-y-4">
+          <label className="grid gap-1.5">
+            <span className="text-[0.8125rem] font-semibold text-(--secondary)">
               {fieldType === "initials" ? "Type initials" : "Type signature"}
             </span>
             <input
               autoFocus
-              className="min-h-12 w-full rounded-none border border-(--border) bg-white px-4 text-sm text-(--fg) outline-none placeholder:text-(--placeholder)"
+              className="field-input"
               id={`signature-modal-${fieldType}`}
               maxLength={fieldType === "initials" ? 4 : 80}
               name={`signature-modal-${fieldType}`}
@@ -1374,7 +1725,7 @@ function SignatureModal({
             />
           </label>
 
-          <div className="border border-(--border) bg-white px-6 py-7 text-center">
+          <div className="well px-6 py-8 text-center">
             <p
               className={`text-[40px] leading-none sm:text-[52px] ${
                 normalizedTypedSignatureValue
@@ -1385,13 +1736,13 @@ function SignatureModal({
             >
               {normalizedTypedSignatureValue || typedPlaceholder}
             </p>
-            <p className="mt-4 text-xs uppercase tracking-[0.2em] text-(--tertiary)">
+            <p className="mt-4 text-xs font-medium text-(--tertiary)">
               Rendered in signature style
             </p>
           </div>
         </div>
       ) : (
-        <div className="border border-(--border) bg-(--surface) p-4">
+        <div className="well p-3">
           <SignatureDrawCanvas
             emptyMessage={drawPreviewMessage}
             initialDataUrl={
@@ -1403,8 +1754,9 @@ function SignatureModal({
             key={drawnSignatureVersion}
             onChange={setDrawnSignatureDataUrl}
           />
-          <div className="mt-3 flex justify-end">
+          <div className="mt-2 flex justify-end">
             <ShellButton
+              className="min-h-10 px-4 text-sm"
               onClick={() => {
                 setDrawnSignatureDataUrl(null);
                 onClearDrawnSignature();
@@ -1616,7 +1968,7 @@ function SignatureDrawCanvas({
   }
 
   return (
-    <div className="relative border border-dashed border-[rgba(17,17,17,0.16)] bg-white">
+    <div className="relative overflow-hidden rounded-xl border-2 border-dashed border-(--border-strong) bg-white">
       <canvas
         aria-label="Draw signature canvas"
         className="h-[220px] w-full touch-none"
@@ -1628,7 +1980,7 @@ function SignatureDrawCanvas({
         ref={canvasRef}
       />
       {!hasSignature ? (
-        <div className="pointer-events-none absolute inset-0 flex items-center justify-center px-6 text-center text-sm text-muted-foreground">
+        <div className="pointer-events-none absolute inset-0 flex items-center justify-center px-6 text-center text-sm text-(--tertiary)">
           {emptyMessage}
         </div>
       ) : null}
@@ -1649,16 +2001,15 @@ function DialogFrame({
 }) {
   return (
     <Dialog open onOpenChange={(open) => !open && onClose()}>
-      <DialogContent
-        className="max-w-[680px] rounded-none border-(--border) bg-white p-0 shadow-[0_24px_72px_rgba(0,0,0,0.14)]"
-        showCloseButton={false}
-      >
+      <DialogContent className="max-w-[600px] p-0" showCloseButton={false}>
         <div>
-          <DialogHeader className="space-y-3 border-b border-(--border) px-6 py-5 sm:px-8 sm:py-6">
+          <DialogHeader className="space-y-2 px-6 pt-6 sm:px-8 sm:pt-8">
             <DialogTitle>{title}</DialogTitle>
             <DialogDescription>{description}</DialogDescription>
           </DialogHeader>
-          <div className="space-y-5 px-6 py-5 sm:px-8 sm:py-6">{children}</div>
+          <div className="space-y-5 px-6 pb-6 pt-5 sm:px-8 sm:pb-8">
+            {children}
+          </div>
         </div>
       </DialogContent>
     </Dialog>
@@ -1667,29 +2018,34 @@ function DialogFrame({
 
 function FieldStatusRow({
   isComplete,
+  isInvalid,
   label,
   value,
 }: {
   isComplete: boolean;
+  /** Filled in, but with something the field cannot take. */
+  isInvalid: boolean;
   label: string;
   value: string;
 }) {
   return (
-    <div className="flex items-center justify-between gap-4 px-4 py-3.5">
+    <div className="well flex items-center justify-between gap-3 rounded-xl px-3.5 py-3">
       <div className="min-w-0">
-        <p className="text-xs font-semibold uppercase tracking-[0.18em] text-(--tertiary)">
-          {label}
+        <p className="text-xs font-semibold text-(--tertiary)">{label}</p>
+        <p className="mt-0.5 truncate text-sm font-semibold text-(--fg)">
+          {value}
         </p>
-        <p className="mt-1 truncate text-sm font-medium text-(--fg)">{value}</p>
       </div>
       <span
-        className={`inline-flex min-h-8 shrink-0 items-center border px-3 text-[11px] font-semibold uppercase tracking-[0.18em] ${
-          isComplete
-            ? "border-[rgba(5,150,105,0.18)] bg-[rgba(5,150,105,0.08)] text-chart-4"
-            : "border-[rgba(37,99,235,0.18)] bg-[rgba(37,99,235,0.08)] text-chart-1"
+        className={`pill shrink-0 ${
+          isInvalid
+            ? "pill-danger"
+            : isComplete
+              ? "pill-success"
+              : "pill-accent"
         }`}
       >
-        {isComplete ? "Complete" : "Required"}
+        {isInvalid ? "Fix this" : isComplete ? "Complete" : "Required"}
       </span>
     </div>
   );

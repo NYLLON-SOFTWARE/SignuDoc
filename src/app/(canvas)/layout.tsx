@@ -1,7 +1,15 @@
+import type { Metadata } from "next";
 import type { ReactNode } from "react";
 import { redirect } from "next/navigation";
 
+import { BrandingProvider } from "@/components/layout/branding-provider";
 import { getAuthSession } from "@/lib/auth/server";
+import { getInstallMetadata } from "@/lib/install";
+import { getBranding } from "@/lib/settings";
+
+export function generateMetadata(): Promise<Metadata> {
+  return getInstallMetadata();
+}
 
 export default async function CanvasLayout({
   children,
@@ -14,5 +22,9 @@ export default async function CanvasLayout({
     redirect("/login");
   }
 
-  return children;
+  return (
+    <BrandingProvider branding={await getBranding()}>
+      {children}
+    </BrandingProvider>
+  );
 }

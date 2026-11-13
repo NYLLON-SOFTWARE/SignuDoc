@@ -13,6 +13,7 @@ const TOKEN_PATH_PATTERNS = [
   /^\/sign\/[^/]+/i,
   /^\/api\/signing\/[^/]+/i,
   /^\/api\/download\/[^/]+/i,
+  /^\/download\/[^/]+/i,
 ] as const;
 
 function normalizeLoggedPath(path: string): string {

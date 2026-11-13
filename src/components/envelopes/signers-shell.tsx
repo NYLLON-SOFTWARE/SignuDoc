@@ -12,10 +12,14 @@ import { StatusPanel } from "@/components/shared/status-panel";
 import { StepIndicator } from "@/components/shared/step-indicator";
 import type { DraftSignerStepData } from "@/lib/envelopes";
 import {
+  duplicateCopyRecipientEmailMessage,
   duplicateSignerEmailMessage,
   type ReplaceSignersResponse,
 } from "@/lib/schemas/signer";
-import { MAX_SIGNERS_PER_ENVELOPE } from "@/lib/types/domain";
+import {
+  MAX_COPY_RECIPIENTS_PER_ENVELOPE,
+  MAX_SIGNERS_PER_ENVELOPE,
+} from "@/lib/types/domain";
 import { getSignerPalette } from "./signer-palette";
 
 const envelopeSteps = ["Upload", "Signers", "Place fields", "Review"];
@@ -30,7 +34,16 @@ type SignersShellProps = {
 
 type SignerField = "email" | "name";
 
-type ShellSigner = {
+type SignerChecks = {
+  /** A new code typed by the sender. Empty means "no change". */
+  accessCode: string;
+  /** A code is saved on the server. */
+  hasAccessCode: boolean;
+  removeAccessCode: boolean;
+  requireEmailCode: boolean;
+};
+
+type ShellSigner = SignerChecks & {
   email: string;
   localId: string;
   name: string;
@@ -39,11 +52,22 @@ type ShellSigner = {
 };
 
 type SignerErrors = {
+  accessCode?: string;
   email?: string;
   name?: string;
 };
 
+/** Someone who gets the finished document without signing it. */
+type ShellCopyRecipient = {
+  email: string;
+  localId: string;
+  name: string;
+  recipientId?: string;
+  touched: Record<SignerField, boolean>;
+};
+
 type InitialModel = {
+  copyRecipients: ShellCopyRecipient[];
   showAllErrors: boolean;
   signers: ShellSigner[];
 };
@@ -55,8 +79,12 @@ function createSigner(
   },
 ): ShellSigner {
   return {
+    accessCode: "",
     email: overrides?.email ?? "",
+    hasAccessCode: overrides?.hasAccessCode ?? false,
     localId,
+    removeAccessCode: false,
+    requireEmailCode: overrides?.requireEmailCode ?? false,
     name: overrides?.name ?? "",
     signerId: overrides?.signerId,
     touched: {
@@ -74,16 +102,60 @@ function buildInitialModel(record?: DraftSignerStepData): InitialModel {
       .map((signer) =>
         createSigner(signer.id, {
           email: signer.email,
+          hasAccessCode: signer.hasAccessCode,
           name: signer.name,
+          requireEmailCode: signer.requireEmailCode,
           signerId: signer.id,
           touched: { email: true, name: true },
         }),
       ) ?? [];
 
   return {
+    copyRecipients: (record?.copyRecipients ?? []).map((recipient) => ({
+      email: recipient.email,
+      localId: recipient.id,
+      name: recipient.name,
+      recipientId: recipient.id,
+      touched: { email: true, name: true },
+    })),
     showAllErrors: false,
     signers: signers.length > 0 ? signers : [createSigner("signer-1")],
   };
+}
+
+function buildCopyRecipientErrors(
+  copyRecipients: readonly ShellCopyRecipient[],
+  signers: readonly ShellSigner[],
+) {
+  const errorsByLocalId: Record<string, SignerErrors> = {};
+  const taken = new Set(
+    signers
+      .map((signer) => signer.email.trim().toLowerCase())
+      .filter((email) => email.length > 0),
+  );
+
+  for (const recipient of copyRecipients) {
+    const errors: SignerErrors = {};
+    const normalizedEmail = recipient.email.trim().toLowerCase();
+
+    if (recipient.name.trim().length === 0) {
+      errors.name = "Name is required";
+    }
+
+    if (
+      normalizedEmail.length === 0 ||
+      !validEmailPattern.test(normalizedEmail)
+    ) {
+      errors.email = "Enter a valid email address";
+    } else if (taken.has(normalizedEmail)) {
+      errors.email = duplicateCopyRecipientEmailMessage;
+    }
+
+    taken.add(normalizedEmail);
+    errorsByLocalId[recipient.localId] = errors;
+  }
+
+  return errorsByLocalId;
 }
 
 function buildSignerErrors(signers: readonly ShellSigner[]) {
@@ -119,6 +191,15 @@ function buildSignerErrors(signers: readonly ShellSigner[]) {
       signerErrors.email = duplicateSignerEmailMessage;
     }
 
+    const accessCode = signer.accessCode.trim();
+
+    if (
+      accessCode.length > 0 &&
+      (accessCode.length < 4 || accessCode.length > 64)
+    ) {
+      signerErrors.accessCode = "Use 4 to 64 characters";
+    }
+
     errorsBySignerId[signer.localId] = signerErrors;
   }
 
@@ -126,7 +207,7 @@ function buildSignerErrors(signers: readonly ShellSigner[]) {
 }
 
 function hasSignerErrors(errors: SignerErrors) {
-  return Boolean(errors.name || errors.email);
+  return Boolean(errors.name || errors.email || errors.accessCode);
 }
 
 function reorderSigners(
@@ -155,12 +236,27 @@ function reorderSigners(
   return nextSigners;
 }
 
-function buildSignerRequest(signers: readonly ShellSigner[]) {
+function buildSignerRequest(
+  signers: readonly ShellSigner[],
+  copyRecipients: readonly ShellCopyRecipient[],
+) {
   return {
+    copyRecipients: copyRecipients.map((recipient) => ({
+      email: recipient.email,
+      id: recipient.recipientId,
+      name: recipient.name,
+    })),
     signers: signers.map((signer, index) => ({
+      accessCode:
+        signer.accessCode.trim().length > 0
+          ? signer.accessCode.trim()
+          : signer.removeAccessCode
+            ? null
+            : undefined,
       email: signer.email,
       id: signer.signerId,
       name: signer.name,
+      requireEmailCode: signer.requireEmailCode,
       signOrder: index + 1,
     })),
   };
@@ -170,9 +266,7 @@ async function parseJsonResponse<T>(
   response: Response,
 ): Promise<{ data: T | null; error: string | null }> {
   const payload = (await response.json().catch(() => null)) as
-    | { error?: string }
-    | T
-    | null;
+    { error?: string } | T | null;
 
   if (!response.ok) {
     return {
@@ -203,10 +297,14 @@ function SignerCard({
   nameError,
   onChange,
   onBlur,
+  onChecksChange,
   onMove,
   onRemove,
+  accessCodeError,
   signer,
 }: {
+  accessCodeError?: string;
+  onChecksChange: (patch: Partial<SignerChecks>) => void;
   canMoveEarlier: boolean;
   canMoveLater: boolean;
   canRemove: boolean;
@@ -228,12 +326,12 @@ function SignerCard({
       : `Receives the document after Signer ${order - 1} finishes.`;
 
   return (
-    <li className="border border-(--border) bg-white p-5 sm:p-6">
+    <li className="well p-4 sm:p-5">
       <div className="flex flex-col gap-4">
-        <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
-          <div className="space-y-3">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+          <div className="space-y-1.5">
             <span
-              className="inline-flex w-fit items-center gap-2 rounded-full px-3 py-1 text-xs font-semibold uppercase tracking-[0.22em]"
+              className="pill"
               style={{
                 backgroundColor: palette.tint,
                 color: palette.color,
@@ -246,7 +344,7 @@ function SignerCard({
               />
               Signer {order}
             </span>
-            <p className="text-sm leading-6 text-muted-foreground">
+            <p className="text-[0.8125rem] leading-5 text-(--secondary)">
               {routeLabel}
             </p>
           </div>
@@ -254,27 +352,27 @@ function SignerCard({
           <div className="flex flex-wrap items-center gap-2">
             <button
               aria-label={`Move signer ${order} earlier`}
-              className="inline-flex min-h-11 items-center justify-center rounded-none border border-(--border) bg-white px-4 [font-family:var(--font-mono)] text-[0.72rem] font-semibold uppercase tracking-[0.18em] text-muted-foreground transition hover:border-black hover:text-(--fg) disabled:cursor-not-allowed disabled:text-(--placeholder)"
+              className="btn-quiet"
               disabled={disabled || !canMoveEarlier}
               onClick={() => onMove("earlier")}
               type="button"
             >
-              <ChevronLeftIcon className="mr-1 size-4" />
+              <ChevronLeftIcon aria-hidden="true" className="-ml-1 size-4" />
               Earlier
             </button>
             <button
               aria-label={`Move signer ${order} later`}
-              className="inline-flex min-h-11 items-center justify-center rounded-none border border-(--border) bg-white px-4 [font-family:var(--font-mono)] text-[0.72rem] font-semibold uppercase tracking-[0.18em] text-muted-foreground transition hover:border-black hover:text-(--fg) disabled:cursor-not-allowed disabled:text-(--placeholder)"
+              className="btn-quiet"
               disabled={disabled || !canMoveLater}
               onClick={() => onMove("later")}
               type="button"
             >
               Later
-              <ChevronRightIcon className="ml-1 size-4" />
+              <ChevronRightIcon aria-hidden="true" className="-mr-1 size-4" />
             </button>
             <button
               aria-label={`Remove signer ${order}`}
-              className="inline-flex min-h-11 items-center justify-center rounded-none border border-(--border) bg-white px-4 [font-family:var(--font-mono)] text-[0.72rem] font-semibold uppercase tracking-[0.18em] text-muted-foreground transition hover:border-black hover:text-(--fg) disabled:cursor-not-allowed disabled:text-(--placeholder)"
+              className="btn-quiet btn-quiet-danger"
               disabled={disabled || !canRemove}
               onClick={onRemove}
               type="button"
@@ -284,17 +382,15 @@ function SignerCard({
           </div>
         </div>
 
-        <div className="grid gap-4 md:grid-cols-2">
-          <label className="grid auto-rows-min gap-2 text-sm">
-            <span className="font-semibold text-(--fg)">Name</span>
+        <div className="grid gap-x-4 gap-y-1 md:grid-cols-2">
+          <label className="grid auto-rows-min gap-1.5">
+            <span className="text-[0.8125rem] font-semibold text-(--secondary)">
+              Name
+            </span>
             <input
               aria-invalid={nameError ? true : undefined}
               aria-label={`Signer ${order} name`}
-              className={`min-h-12 rounded-none border bg-popover px-4 text-(--fg) outline-none placeholder:text-(--placeholder) disabled:cursor-not-allowed disabled:bg-[rgba(247,247,248,0.92)] ${
-                nameError
-                  ? "border-[rgba(180,35,53,0.36)]"
-                  : "border-(--border)"
-              }`}
+              className="field-input"
               disabled={disabled}
               onChange={(event: ChangeEvent<HTMLInputElement>) =>
                 onChange("name", event.target.value)
@@ -306,7 +402,7 @@ function SignerCard({
             />
             <span
               aria-live="polite"
-              className={`min-h-4 text-xs font-semibold text-(--accent) ${
+              className={`min-h-4 text-xs font-semibold text-(--danger) ${
                 nameError ? "" : "invisible"
               }`}
               role={nameError ? "alert" : undefined}
@@ -315,16 +411,14 @@ function SignerCard({
             </span>
           </label>
 
-          <label className="grid auto-rows-min gap-2 text-sm">
-            <span className="font-semibold text-(--fg)">Email</span>
+          <label className="grid auto-rows-min gap-1.5">
+            <span className="text-[0.8125rem] font-semibold text-(--secondary)">
+              Email
+            </span>
             <input
               aria-invalid={emailError ? true : undefined}
               aria-label={`Signer ${order} email`}
-              className={`min-h-12 rounded-none border bg-popover px-4 text-(--fg) outline-none placeholder:text-(--placeholder) disabled:cursor-not-allowed disabled:bg-[rgba(247,247,248,0.92)] ${
-                emailError
-                  ? "border-[rgba(180,35,53,0.36)]"
-                  : "border-(--border)"
-              }`}
+              className="field-input"
               disabled={disabled}
               onChange={(event: ChangeEvent<HTMLInputElement>) =>
                 onChange("email", event.target.value)
@@ -336,7 +430,182 @@ function SignerCard({
             />
             <span
               aria-live="polite"
-              className={`min-h-4 text-xs font-semibold text-(--accent) ${
+              className={`min-h-4 text-xs font-semibold text-(--danger) ${
+                emailError ? "" : "invisible"
+              }`}
+              role={emailError ? "alert" : undefined}
+            >
+              {emailError ?? " "}
+            </span>
+          </label>
+        </div>
+
+        <fieldset className="grid gap-3 rounded-2xl bg-white p-4 text-sm text-(--fg) sm:p-5">
+          <legend className="sr-only">Extra check before signing</legend>
+          <p className="font-bold text-(--fg)">
+            Extra check before signing{" "}
+            <span className="font-normal text-(--secondary)">(optional)</span>
+          </p>
+          <p className="text-[0.8125rem] leading-5 text-(--secondary)">
+            By default anyone holding the emailed link can sign. Add a check
+            when the signer&apos;s identity matters.
+          </p>
+          <label className="flex items-start gap-3">
+            <input
+              aria-label={`Email signer ${order} a one-time code`}
+              checked={signer.requireEmailCode}
+              className="mt-0.5 size-4.5 shrink-0 cursor-pointer accent-(--accent)"
+              disabled={disabled}
+              onChange={(event: ChangeEvent<HTMLInputElement>) =>
+                onChecksChange({ requireEmailCode: event.target.checked })
+              }
+              type="checkbox"
+            />
+            <span>Email a one-time code when they open the link</span>
+          </label>
+          <label className="grid gap-2">
+            <span className="text-[0.8125rem] font-semibold text-(--secondary)">
+              Access code you will give them yourself, for example by phone
+              {signer.hasAccessCode && !signer.removeAccessCode
+                ? " (a code is set; type a new one to change it)"
+                : ""}
+            </span>
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+              <input
+                aria-invalid={accessCodeError ? true : undefined}
+                aria-label={`Signer ${order} access code`}
+                autoComplete="off"
+                className="field-input flex-1"
+                disabled={disabled}
+                maxLength={64}
+                onChange={(event: ChangeEvent<HTMLInputElement>) =>
+                  onChecksChange({
+                    accessCode: event.target.value,
+                    removeAccessCode: false,
+                  })
+                }
+                placeholder={
+                  signer.hasAccessCode && !signer.removeAccessCode
+                    ? "••••••"
+                    : "No access code"
+                }
+                type="text"
+                value={signer.accessCode}
+              />
+              {signer.hasAccessCode && !signer.removeAccessCode ? (
+                <button
+                  className="btn-quiet btn-quiet-danger min-h-12"
+                  disabled={disabled}
+                  onClick={() =>
+                    onChecksChange({ accessCode: "", removeAccessCode: true })
+                  }
+                  type="button"
+                >
+                  Remove code
+                </button>
+              ) : null}
+            </div>
+            {accessCodeError ? (
+              <span
+                className="text-xs font-semibold text-(--danger)"
+                role="alert"
+              >
+                {accessCodeError}
+              </span>
+            ) : null}
+          </label>
+        </fieldset>
+      </div>
+    </li>
+  );
+}
+
+function CopyRecipientCard({
+  disabled = false,
+  emailError,
+  index,
+  nameError,
+  onBlur,
+  onChange,
+  onRemove,
+  recipient,
+}: {
+  disabled?: boolean;
+  emailError?: string;
+  index: number;
+  nameError?: string;
+  onBlur: (field: SignerField) => void;
+  onChange: (field: SignerField, value: string) => void;
+  onRemove: () => void;
+  recipient: ShellCopyRecipient;
+}) {
+  const position = index + 1;
+
+  return (
+    <li className="well p-4 sm:p-5">
+      <div className="flex flex-col gap-3">
+        <div className="flex items-center justify-between gap-3">
+          <span className="pill pill-neutral">Copy {position}</span>
+          <button
+            aria-label={`Remove copy recipient ${position}`}
+            className="btn-quiet btn-quiet-danger"
+            disabled={disabled}
+            onClick={onRemove}
+            type="button"
+          >
+            Remove
+          </button>
+        </div>
+
+        <div className="grid gap-x-4 gap-y-1 md:grid-cols-2">
+          <label className="grid auto-rows-min gap-1.5">
+            <span className="text-[0.8125rem] font-semibold text-(--secondary)">
+              Name
+            </span>
+            <input
+              aria-invalid={nameError ? true : undefined}
+              aria-label={`Copy recipient ${position} name`}
+              className="field-input"
+              disabled={disabled}
+              onBlur={() => onBlur("name")}
+              onChange={(event: ChangeEvent<HTMLInputElement>) =>
+                onChange("name", event.target.value)
+              }
+              placeholder="Alex Jones"
+              type="text"
+              value={recipient.name}
+            />
+            <span
+              aria-live="polite"
+              className={`min-h-4 text-xs font-semibold text-(--danger) ${
+                nameError ? "" : "invisible"
+              }`}
+              role={nameError ? "alert" : undefined}
+            >
+              {nameError ?? " "}
+            </span>
+          </label>
+
+          <label className="grid auto-rows-min gap-1.5">
+            <span className="text-[0.8125rem] font-semibold text-(--secondary)">
+              Email
+            </span>
+            <input
+              aria-invalid={emailError ? true : undefined}
+              aria-label={`Copy recipient ${position} email`}
+              className="field-input"
+              disabled={disabled}
+              onBlur={() => onBlur("email")}
+              onChange={(event: ChangeEvent<HTMLInputElement>) =>
+                onChange("email", event.target.value)
+              }
+              placeholder="alex@company.com"
+              type="email"
+              value={recipient.email}
+            />
+            <span
+              aria-live="polite"
+              className={`min-h-4 text-xs font-semibold text-(--danger) ${
                 emailError ? "" : "invisible"
               }`}
               role={emailError ? "alert" : undefined}
@@ -357,6 +626,12 @@ export function SignersShell({
 }: SignersShellProps) {
   const initialModel = buildInitialModel(record);
   const [signers, setSigners] = useState(initialModel.signers);
+  const [copyRecipients, setCopyRecipients] = useState(
+    initialModel.copyRecipients,
+  );
+  const nextCopyRecipientNumberRef = useRef(
+    initialModel.copyRecipients.length + 1,
+  );
   const [showAllErrors, setShowAllErrors] = useState(
     initialModel.showAllErrors,
   );
@@ -365,11 +640,21 @@ export function SignersShell({
   const nextSignerNumberRef = useRef(initialModel.signers.length + 1);
 
   const errorsBySignerId = buildSignerErrors(signers);
+  const errorsByCopyRecipientId = buildCopyRecipientErrors(
+    copyRecipients,
+    signers,
+  );
   const canAddSigner = signers.length < MAX_SIGNERS_PER_ENVELOPE;
+  const canAddCopyRecipient =
+    copyRecipients.length < MAX_COPY_RECIPIENTS_PER_ENVELOPE;
   const canContinue =
     signers.length > 0 &&
     signers.every(
       (signer) => !hasSignerErrors(errorsBySignerId[signer.localId] ?? {}),
+    ) &&
+    copyRecipients.every(
+      (recipient) =>
+        !hasSignerErrors(errorsByCopyRecipientId[recipient.localId] ?? {}),
     );
 
   function clearSubmitError() {
@@ -395,6 +680,18 @@ export function SignersShell({
     );
   }
 
+  function handleSignerChecksChange(
+    signerLocalId: string,
+    patch: Partial<SignerChecks>,
+  ) {
+    clearSubmitError();
+    setSigners((currentSigners) =>
+      currentSigners.map((signer) =>
+        signer.localId === signerLocalId ? { ...signer, ...patch } : signer,
+      ),
+    );
+  }
+
   function handleSignerBlur(signerLocalId: string, field: SignerField) {
     setSigners((currentSigners) =>
       currentSigners.map((signer) =>
@@ -408,6 +705,59 @@ export function SignersShell({
             }
           : signer,
       ),
+    );
+  }
+
+  function handleAddCopyRecipient() {
+    if (!canAddCopyRecipient || isSubmitting) {
+      return;
+    }
+
+    clearSubmitError();
+    const number = nextCopyRecipientNumberRef.current;
+    nextCopyRecipientNumberRef.current += 1;
+    setCopyRecipients((current) => [
+      ...current,
+      {
+        email: "",
+        localId: `copy-${number}`,
+        name: "",
+        touched: { email: false, name: false },
+      },
+    ]);
+  }
+
+  function handleCopyRecipientChange(
+    localId: string,
+    patch: Partial<Pick<ShellCopyRecipient, "email" | "name">>,
+  ) {
+    clearSubmitError();
+    setShowAllErrors(false);
+    setCopyRecipients((current) =>
+      current.map((recipient) =>
+        recipient.localId === localId ? { ...recipient, ...patch } : recipient,
+      ),
+    );
+  }
+
+  function handleCopyRecipientBlur(localId: string, field: SignerField) {
+    setCopyRecipients((current) =>
+      current.map((recipient) =>
+        recipient.localId === localId
+          ? { ...recipient, touched: { ...recipient.touched, [field]: true } }
+          : recipient,
+      ),
+    );
+  }
+
+  function handleRemoveCopyRecipient(localId: string) {
+    if (isSubmitting) {
+      return;
+    }
+
+    clearSubmitError();
+    setCopyRecipients((current) =>
+      current.filter((recipient) => recipient.localId !== localId),
     );
   }
 
@@ -464,7 +814,7 @@ export function SignersShell({
 
     try {
       const response = await fetch(`/api/envelopes/${envelopeId}/signers`, {
-        body: JSON.stringify(buildSignerRequest(signers)),
+        body: JSON.stringify(buildSignerRequest(signers, copyRecipients)),
         headers: {
           "content-type": "application/json",
         },
@@ -487,7 +837,7 @@ export function SignersShell({
 
   if (initialState === "error") {
     return (
-      <div className="space-y-6">
+      <div className="space-y-5">
         <PageHeader
           description="Step 2 of 4 - Add signers"
           title="New envelope"
@@ -507,42 +857,36 @@ export function SignersShell({
   }
 
   return (
-    <div className="space-y-8">
+    <div className="space-y-5">
       <PageHeader
         description="Step 2 of 4 - Add signers"
-        eyebrow="Envelope workflow"
         title="New envelope"
       />
 
       <StepIndicator current={2} steps={envelopeSteps} />
 
       <section
-        className="editorial-panel p-6 sm:p-8"
+        className="panel p-5 sm:p-8"
         data-animate="enter"
         data-animate-delay="2"
       >
-        <div className="space-y-6">
-          <div className="space-y-2 border-b border-(--border) pb-5">
-            <p className="text-base font-semibold text-(--fg)">
+        <div className="space-y-5">
+          <div className="space-y-1">
+            <h2 className="text-lg font-extrabold text-(--fg)">
               Signers will receive the document in this order.
-            </p>
-            <p className="text-sm leading-6 text-muted-foreground">
+            </h2>
+            <p className="text-sm leading-6 text-(--secondary)">
               Up to 10 signers per document.
             </p>
           </div>
 
           {submissionError ? (
-            <div
-              className="rounded-[24px] border border-[rgba(180,35,53,0.18)] bg-[rgba(180,35,53,0.04)] px-5 py-4"
-              role="alert"
-            >
-              <p className="text-sm font-semibold text-(--accent)">
-                {submissionError}
-              </p>
+            <div className="notice notice-danger" role="alert">
+              <p>{submissionError}</p>
             </div>
           ) : null}
 
-          <ol className="space-y-4">
+          <ol className="space-y-3">
             {signers.map((signer, index) => {
               const signerErrors = errorsBySignerId[signer.localId] ?? {};
               const nameError =
@@ -568,6 +912,10 @@ export function SignersShell({
                     handleSignerChange(signer.localId, field, value)
                   }
                   onBlur={(field) => handleSignerBlur(signer.localId, field)}
+                  accessCodeError={errorsBySignerId[signer.localId]?.accessCode}
+                  onChecksChange={(patch) =>
+                    handleSignerChecksChange(signer.localId, patch)
+                  }
                   onMove={(direction) =>
                     handleMoveSigner(signer.localId, direction)
                   }
@@ -578,9 +926,9 @@ export function SignersShell({
             })}
           </ol>
 
-          <div className="space-y-2">
+          <div className="flex flex-wrap items-center gap-3">
             <button
-              className="inline-flex min-h-11 items-center justify-center rounded-none border border-(--border) bg-(--surface) px-5 [font-family:var(--font-mono)] text-[0.72rem] font-semibold uppercase tracking-[0.18em] text-(--fg) transition hover:border-black hover:bg-white disabled:cursor-not-allowed disabled:text-(--placeholder)"
+              className="inline-flex min-h-11 items-center justify-center rounded-[0.875rem] bg-(--accent-soft) px-4.5 text-sm font-bold text-(--accent-ink) transition hover:bg-(--accent-soft-hover) disabled:cursor-not-allowed disabled:opacity-50"
               disabled={!canAddSigner || isSubmitting}
               onClick={handleAddSigner}
               type="button"
@@ -588,13 +936,83 @@ export function SignersShell({
               + Add another signer
             </button>
             {!canAddSigner ? (
-              <p className="text-xs font-semibold uppercase tracking-[0.22em] text-(--tertiary)">
+              <p className="text-[0.8125rem] font-semibold text-(--tertiary)">
                 Maximum reached
               </p>
             ) : null}
           </div>
 
-          <div className="flex flex-col gap-3 pt-2 sm:flex-row sm:justify-end">
+          <div className="space-y-3 pt-3">
+            <div className="space-y-1">
+              <h2 className="text-lg font-extrabold text-(--fg)">
+                Send a copy to{" "}
+                <span className="text-sm font-normal text-(--secondary)">
+                  (optional)
+                </span>
+              </h2>
+              <p className="text-sm leading-6 text-(--secondary)">
+                These people do not sign. They receive the finished document and
+                its certificate once everyone has signed.
+              </p>
+            </div>
+
+            {copyRecipients.length > 0 ? (
+              <ol className="space-y-3">
+                {copyRecipients.map((recipient, index) => {
+                  const errors =
+                    errorsByCopyRecipientId[recipient.localId] ?? {};
+
+                  return (
+                    <CopyRecipientCard
+                      disabled={isSubmitting}
+                      emailError={
+                        showAllErrors || recipient.touched.email
+                          ? errors.email
+                          : undefined
+                      }
+                      index={index}
+                      key={recipient.localId}
+                      nameError={
+                        showAllErrors || recipient.touched.name
+                          ? errors.name
+                          : undefined
+                      }
+                      onBlur={(field) =>
+                        handleCopyRecipientBlur(recipient.localId, field)
+                      }
+                      onChange={(field, value) =>
+                        handleCopyRecipientChange(recipient.localId, {
+                          [field]: value,
+                        })
+                      }
+                      onRemove={() =>
+                        handleRemoveCopyRecipient(recipient.localId)
+                      }
+                      recipient={recipient}
+                    />
+                  );
+                })}
+              </ol>
+            ) : null}
+
+            <div className="flex flex-wrap items-center gap-3">
+              <button
+                className="btn-quiet min-h-11 px-4.5"
+                disabled={!canAddCopyRecipient || isSubmitting}
+                onClick={handleAddCopyRecipient}
+                type="button"
+              >
+                + Add a copy recipient
+              </button>
+              {!canAddCopyRecipient ? (
+                <p className="text-[0.8125rem] font-semibold text-(--tertiary)">
+                  Maximum reached
+                </p>
+              ) : null}
+            </div>
+          </div>
+
+          <div className="flex flex-col-reverse gap-3 pt-2 sm:flex-row sm:justify-end">
             <ShellButton href="/envelopes/new" variant="secondary">
               ← Back
             </ShellButton>

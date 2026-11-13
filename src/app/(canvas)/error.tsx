@@ -11,11 +11,10 @@ export default function CanvasError({
   return (
     <div className="p-4 sm:p-6 lg:p-8">
       <StatusPanel
-        description="The full-screen document shell is mounted, but the canvas payload could not render."
-        eyebrow="Canvas shell"
+        description="Something went wrong while opening this document. Please try again."
         footer={
           <button
-            className="inline-flex min-h-11 items-center justify-center rounded-full border border-(--border) px-5 text-sm font-semibold text-(--fg) transition hover:bg-(--surface)"
+            className="btn-quiet min-h-11 px-5"
             onClick={reset}
             type="button"
           >

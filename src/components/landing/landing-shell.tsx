@@ -1,16 +1,15 @@
 import type { LucideIcon } from "lucide-react";
-import type { ReactNode } from "react";
 import Link from "next/link";
-import { Archivo, IBM_Plex_Mono } from "next/font/google";
 import {
+  CheckIcon,
   ClipboardCheck,
   Globe,
   Link2,
-  Menu,
   ShieldCheck,
-  X,
+  XIcon,
 } from "lucide-react";
 
+import { Brand, BrandMark } from "@/components/layout/brand";
 import { PublicSessionMenu } from "@/components/layout/public-session-menu";
 import { PublicLegalFooter } from "@/components/layout/public-legal-links";
 import { LandingDashboardPreview } from "@/components/landing/dashboard-preview";
@@ -18,30 +17,8 @@ import {
   LandingSessionLoginAction,
   LandingSessionPrimaryAction,
 } from "@/components/landing/landing-session-actions";
-import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
-import { Separator } from "@/components/ui/separator";
-import {
-  Sheet,
-  SheetClose,
-  SheetContent,
-  SheetHeader,
-  SheetTitle,
-  SheetTrigger,
-} from "@/components/ui/sheet";
+import { buttonVariants } from "@/components/ui/button";
 import { cn } from "@/lib/cn";
-
-const archivo = Archivo({
-  display: "swap",
-  subsets: ["latin"],
-  weight: ["400", "500", "600", "700", "800", "900"],
-});
-
-const ibmPlexMono = IBM_Plex_Mono({
-  display: "swap",
-  subsets: ["latin"],
-  weight: ["400", "500", "600", "700"],
-});
 
 type WorkflowStep = {
   body: string;
@@ -121,7 +98,7 @@ type SecurityPillar = {
 const securityPillars: readonly SecurityPillar[] = [
   {
     title: "Encrypted at rest and in transit",
-    body: "Documents are stored with encryption on Cloudflare's infrastructure. All connections use HTTPS with HSTS enforcement.",
+    body: "Documents are kept in private, encrypted storage. All connections use HTTPS with HSTS enforcement.",
     icon: ShieldCheck,
   },
   {
@@ -131,7 +108,7 @@ const securityPillars: readonly SecurityPillar[] = [
   },
   {
     title: "Secure signing links",
-    body: "Each signer gets a unique cryptographic token. Links expire after 7 days and can't be guessed or reused.",
+    body: "Each signer gets a unique cryptographic token. Links expire at the deadline the sender sets and can't be guessed or reused.",
     icon: Link2,
   },
   {
@@ -141,162 +118,131 @@ const securityPillars: readonly SecurityPillar[] = [
   },
 ];
 
+const sectionHeadingClassName =
+  "text-[clamp(1.875rem,4vw,2.75rem)] font-extrabold leading-[1.08] tracking-[-0.035em] text-(--fg)";
+const sectionLeadClassName =
+  "mx-auto mt-4 max-w-xl text-[1.0625rem] leading-relaxed text-(--secondary)";
+
 export function LandingShell() {
-  const monoClassName = ibmPlexMono.className;
-  const secondaryLabel = "See how it works";
-
   return (
-    <div
-      className={`${archivo.className} min-h-screen bg-white text-[#000000]`}
-    >
-      <div
-        aria-hidden="true"
-        className="pointer-events-none fixed inset-0 z-0 opacity-35"
-        style={{
-          backgroundImage:
-            "radial-gradient(circle, #d4d4d4 0.8px, transparent 0.8px)",
-          backgroundSize: "48px 48px",
-        }}
-      />
+    <div className="flex min-h-screen flex-col text-(--fg)">
+      <header className="sticky top-0 z-30 bg-[rgba(243,244,248,0.86)] backdrop-blur-md">
+        <div className="page-width flex items-center justify-between gap-3 py-3 sm:py-4">
+          <Brand href="/" />
 
-      <header className="relative z-10 border-b border-[#d4d4d4] bg-white/90 backdrop-blur">
-        <div className="mx-auto flex max-w-[1200px] flex-wrap items-center justify-between gap-4 px-6 py-5 sm:px-8 lg:px-10">
-          <LandingWordmark />
-
-          <PublicSessionMenu
-            buttonClassName="hidden rounded-none border-[#d4d4d4] bg-white text-black hover:border-black hover:bg-white hover:text-black sm:inline-flex"
-            contentClassName="rounded-none border-[#d4d4d4] bg-white text-black"
-          >
-            <nav className="hidden flex-wrap items-center gap-3 sm:flex">
+          <PublicSessionMenu>
+            <nav
+              aria-label="Public navigation"
+              className="flex items-center gap-1 sm:gap-2"
+            >
               <Link
-                className={`${monoClassName} text-sm font-medium text-[#71717a] transition-colors hover:text-black`}
+                className={cn(
+                  buttonVariants({ size: "sm", variant: "ghost" }),
+                  "px-3 sm:px-4",
+                )}
                 href="/login"
                 prefetch
               >
                 Log in
               </Link>
-              <ActionLink
+              <Link
+                className={buttonVariants({ size: "sm" })}
                 href="/signup"
-                monoClassName={monoClassName}
                 prefetch
-                variant="primary"
               >
                 Start free
-              </ActionLink>
+              </Link>
             </nav>
-          </PublicSessionMenu>
-
-          <PublicSessionMenu
-            buttonClassName="rounded-none border-[#d4d4d4] bg-white text-black hover:border-black hover:bg-white hover:text-black sm:hidden"
-            contentClassName="rounded-none border-[#d4d4d4] bg-white text-black"
-          >
-            <MobileNavigationMenu monoClassName={monoClassName} />
           </PublicSessionMenu>
         </div>
       </header>
 
-      <main className="relative z-10">
-        <section className="overflow-hidden border-b border-[#d4d4d4]">
-          <div className="mx-auto max-w-[1200px] px-6 pb-20 pt-16 sm:px-8 sm:pt-20 lg:px-10 lg:pb-24 lg:pt-24">
-            <div className="relative">
-              <CropMarks
-                className="hidden lg:block"
-                color="#e50000"
-                offset={26}
-                size={28}
-              />
-              <div className="px-0 py-4 sm:py-6 lg:px-4 lg:py-8">
-                <div
-                  className="mx-auto max-w-216 text-center"
-                  data-animate="enter"
-                >
-                  <SectionMarker center monoClassName={monoClassName}>
-                    Free e-signature software
-                  </SectionMarker>
+      <main className="flex-1">
+        <section className="page-width pb-14 pt-12 sm:pt-16 lg:pb-20 lg:pt-20">
+          <div
+            className="mx-auto max-w-[52rem] text-center"
+            data-animate="enter"
+          >
+            <SectionMarker>Free e-signature software</SectionMarker>
 
-                  <h1
-                    className="mx-auto max-w-[22ch] text-[clamp(2.2rem,4.5vw,4.2rem)] font-extrabold leading-[1.08] tracking-[-0.035em] text-black sm:max-w-[23ch] lg:max-w-[24ch] lg:leading-[1.1] lg:tracking-[-0.03em]"
-                    style={{ textWrap: "balance" }}
-                  >
-                    Sign PDFs Online for Free. No catch.
-                  </h1>
+            <h1 className="mx-auto max-w-[18ch] text-[clamp(2.375rem,6vw,4.25rem)] font-extrabold leading-[1.04] tracking-[-0.045em] text-(--fg)">
+              Sign PDFs Online for Free.{" "}
+              <span className="text-(--accent)">No catch.</span>
+            </h1>
 
-                  <p className="mx-auto mt-6 max-w-2xl text-lg leading-relaxed text-[#71717a] sm:text-[1.15rem]">
-                    Upload a PDF, drop in signature fields, and send.
-                    That&apos;s it.
-                  </p>
+            <p className="mx-auto mt-5 max-w-xl text-lg leading-relaxed text-(--secondary) sm:text-[1.1875rem]">
+              Upload a PDF, drop in signature fields, and send. That&apos;s it.
+            </p>
 
-                  <div className="mt-10 flex flex-wrap items-center justify-center gap-4">
-                    <LandingSessionPrimaryAction monoClassName={monoClassName} />
-                    <ActionLink
-                      href="#workflow"
-                      monoClassName={monoClassName}
-                      variant="secondary"
-                    >
-                      {secondaryLabel}
-                    </ActionLink>
-                  </div>
-                </div>
-              </div>
+            <div className="mt-8 flex flex-wrap items-center justify-center gap-3">
+              <LandingSessionPrimaryAction />
+              <Link
+                className={buttonVariants({ size: "lg", variant: "outline" })}
+                href="#workflow"
+              >
+                See how it works
+              </Link>
             </div>
+          </div>
+
+          <div
+            className="mt-12 sm:mt-16"
+            data-animate="enter"
+            data-animate-delay="1"
+          >
+            <LandingDashboardPreview />
           </div>
         </section>
 
-        <section
-          className="border-b border-[#d4d4d4] bg-[#f7f7f8]"
-          data-animate="enter"
-          data-animate-delay="1"
-          id="workflow"
-        >
-          <div className="mx-auto max-w-[1200px] px-6 py-20 sm:px-8 lg:px-10 lg:py-24">
-            <div className="mx-auto max-w-160 text-center">
-              <SectionMarker center monoClassName={monoClassName}>
-                How it works
-              </SectionMarker>
-              <h2 className="text-[clamp(2rem,4vw,3.1rem)] font-extrabold leading-[1.06] tracking-[-0.03em] text-black">
+        <section className="scroll-mt-20 py-14 lg:py-20" id="workflow">
+          <div className="page-width">
+            <div className="mx-auto max-w-[40rem] text-center">
+              <SectionMarker>How it works</SectionMarker>
+              <h2 className={sectionHeadingClassName}>
                 Four steps. One signed document.
               </h2>
-              <p className="mx-auto mt-5 max-w-xl text-lg leading-relaxed text-[#71717a]">
+              <p className={sectionLeadClassName}>
                 Upload a PDF, set the signing order, place fields, and hit send.
                 Your signers don&apos;t even need an account.
               </p>
             </div>
 
-            <div className="mt-12">
-              <LandingDashboardPreview />
-            </div>
-
-            <div className="mt-14 grid gap-10 sm:grid-cols-2 lg:grid-cols-4 lg:gap-8">
+            <ol className="mt-10 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
               {workflowSteps.map((step, index) => (
-                <WorkflowStepInline
-                  body={step.body}
-                  index={index + 1}
-                  key={step.title}
-                  monoClassName={monoClassName}
-                  title={step.title}
-                />
+                <li className="panel p-6" key={step.title}>
+                  <span
+                    aria-hidden="true"
+                    className="inline-flex size-10 items-center justify-center rounded-xl bg-(--accent-soft) text-[0.9375rem] font-extrabold text-(--accent-ink)"
+                  >
+                    {index + 1}
+                  </span>
+                  <h3 className="mt-4 text-lg font-extrabold leading-tight tracking-[-0.02em] text-(--fg)">
+                    {step.title}
+                  </h3>
+                  <p className="mt-2 text-[0.9375rem] leading-relaxed text-(--secondary)">
+                    {step.body}
+                  </p>
+                </li>
               ))}
-            </div>
+            </ol>
           </div>
         </section>
 
-        <section className="border-b border-[#d4d4d4]" data-animate="enter">
-          <div className="mx-auto max-w-[1200px] px-6 py-20 sm:px-8 lg:px-10 lg:py-24">
-            <div className="mx-auto max-w-160 text-center">
-              <SectionMarker center monoClassName={monoClassName}>
-                Security
-              </SectionMarker>
-              <h2 className="text-[clamp(2rem,4vw,3.1rem)] font-extrabold leading-[1.06] tracking-[-0.03em] text-black">
+        <section className="py-14 lg:py-20">
+          <div className="page-width">
+            <div className="mx-auto max-w-[40rem] text-center">
+              <SectionMarker>Security</SectionMarker>
+              <h2 className={sectionHeadingClassName}>
                 Your documents stay safe.
               </h2>
-              <p className="mx-auto mt-5 max-w-xl text-lg leading-relaxed text-[#71717a]">
+              <p className={sectionLeadClassName}>
                 Every PDF is encrypted, every action is logged, and every
                 signing link is cryptographically secured. The code is open
                 source so you can verify it yourself.
               </p>
             </div>
 
-            <div className="mx-auto mt-14 grid max-w-[880px] gap-4 sm:grid-cols-2">
+            <div className="mx-auto mt-10 grid max-w-[60rem] gap-4 sm:grid-cols-2">
               {securityPillars.map((pillar) => (
                 <SecurityPillarCard
                   body={pillar.body}
@@ -309,83 +255,75 @@ export function LandingShell() {
           </div>
         </section>
 
-        <section className="border-b border-[#d4d4d4]" data-animate="enter">
-          <div className="mx-auto max-w-[1200px] px-6 py-20 sm:px-8 lg:px-10 lg:py-24">
-            <div className="mx-auto max-w-160 text-center">
-              <SectionMarker center monoClassName={monoClassName}>
-                Pricing
-              </SectionMarker>
-              <h2 className="text-[clamp(2rem,4vw,3.1rem)] font-extrabold leading-[1.06] tracking-[-0.03em] text-black">
+        <section className="py-14 lg:py-20">
+          <div className="page-width">
+            <div className="mx-auto max-w-[40rem] text-center">
+              <SectionMarker>Pricing</SectionMarker>
+              <h2 className={sectionHeadingClassName}>
                 Free beats $120 a year.
               </h2>
-              <p className="mx-auto mt-5 max-w-xl text-lg leading-relaxed text-[#71717a]">
+              <p className={sectionLeadClassName}>
                 Everything below is included. Forever. For $0. See how that
                 stacks up against DocuSign.
               </p>
             </div>
 
-            <div className="mt-14">
-              <ComparisonTable monoClassName={monoClassName} />
+            <div className="mx-auto mt-10 max-w-[60rem]">
+              <ComparisonTable />
             </div>
 
-            <div className="mt-10 flex flex-col items-center gap-4 text-center">
-              <LandingSessionPrimaryAction monoClassName={monoClassName} />
-              <p
-                className={`${monoClassName} text-[11px] uppercase tracking-[0.18em] text-[#71717a]`}
-              >
+            <div className="mt-8 flex flex-col items-center gap-3 text-center">
+              <LandingSessionPrimaryAction />
+              <p className="text-sm text-(--tertiary)">
                 Your signers never need to create an account.
               </p>
             </div>
+          </div>
+        </section>
 
-            <div className="mt-20 lg:mt-24">
-              <div className="mx-auto max-w-[780px]">
-                <div className="text-center">
-                  <SectionMarker center monoClassName={monoClassName}>
-                    FAQ
-                  </SectionMarker>
-                  <h3 className="text-[clamp(1.9rem,3.5vw,2.85rem)] font-extrabold leading-[1.06] tracking-[-0.03em] text-black">
-                    Quick answers.
-                  </h3>
-                </div>
-                <div className="mt-8 border-t border-[#d4d4d4]">
-                  {faqItems.map((item) => (
-                    <FaqRow
-                      answer={item.answer}
-                      key={item.question}
-                      question={item.question}
-                    />
-                  ))}
-                </div>
+        <section className="py-14 lg:py-20">
+          <div className="page-width">
+            <div className="mx-auto max-w-[48rem]">
+              <div className="text-center">
+                <SectionMarker>FAQ</SectionMarker>
+                <h2 className={sectionHeadingClassName}>Quick answers.</h2>
+              </div>
+              <div className="mt-8 space-y-3">
+                {faqItems.map((item) => (
+                  <article
+                    className="panel px-6 py-5 sm:px-7"
+                    key={item.question}
+                  >
+                    <h3 className="text-lg font-extrabold leading-snug tracking-[-0.02em] text-(--fg)">
+                      {item.question}
+                    </h3>
+                    <p className="mt-2 text-[0.9375rem] leading-relaxed text-(--secondary)">
+                      {item.answer}
+                    </p>
+                  </article>
+                ))}
               </div>
             </div>
           </div>
         </section>
 
-        <section
-          className="border-b border-[#d4d4d4] bg-[#f7f7f8]"
-          data-animate="enter"
-          data-animate-delay="1"
-        >
-          <div className="mx-auto max-w-[1200px] px-6 py-20 text-center sm:px-8 lg:px-10 lg:py-24">
-            <div className="mx-auto max-w-[780px]">
-              <SectionMarker center monoClassName={monoClassName}>
-                Start free
-              </SectionMarker>
-              <h2 className="text-[clamp(2.1rem,4.5vw,3.6rem)] font-extrabold leading-[1.04] tracking-[-0.04em] text-black">
+        <section className="page-width pb-10 pt-6 lg:pb-14">
+          <div className="rounded-[2rem] bg-(--accent) px-6 py-14 text-center sm:px-10 lg:py-20">
+            <div className="mx-auto max-w-[44rem]">
+              <p className="text-sm font-semibold text-white/80">Start free</p>
+              <h2 className="mt-3 text-[clamp(2rem,4.5vw,3.25rem)] font-extrabold leading-[1.06] tracking-[-0.04em] text-white">
                 Send your next agreement. On us.
               </h2>
-              <p className="mx-auto mt-6 max-w-2xl text-lg leading-relaxed text-[#71717a]">
+              <p className="mx-auto mt-4 max-w-xl text-[1.0625rem] leading-relaxed text-white/85">
                 No credit card. No per-envelope fees. Just upload and send.
               </p>
 
-              <div className="mt-10 flex flex-wrap justify-center gap-4">
-                <LandingSessionPrimaryAction monoClassName={monoClassName} />
-                <LandingSessionLoginAction monoClassName={monoClassName} />
+              <div className="mt-8 flex flex-wrap justify-center gap-3">
+                <LandingSessionPrimaryAction tone="inverse" />
+                <LandingSessionLoginAction tone="inverse" />
               </div>
 
-              <p
-                className={`${monoClassName} mt-8 text-[11px] uppercase tracking-[0.18em] text-[#71717a]`}
-              >
+              <p className="mt-7 text-sm text-white/75">
                 Free • no signer account required • up to 10 signers per
                 document
               </p>
@@ -399,312 +337,76 @@ export function LandingShell() {
   );
 }
 
-function LandingWordmark({ asLink = true }: { asLink?: boolean }) {
-  const wordmark = (
-    <span className="text-[24px] font-extrabold tracking-[-0.035em] text-black sm:text-[27px]">
-      Signu<span className="text-[#e50000]">Doc</span>
-    </span>
-  );
-
-  if (!asLink) {
-    return (
-      <div aria-label="SignuDoc" className="flex items-center">
-        {wordmark}
-      </div>
-    );
-  }
-
+function SectionMarker({ children }: { children: string }) {
   return (
-    <Link aria-label="SignuDoc" className="flex items-center" href="/">
-      {wordmark}
-    </Link>
-  );
-}
-
-function ActionLink({
-  children,
-  href,
-  monoClassName,
-  prefetch,
-  variant,
-}: {
-  children: ReactNode;
-  href: string;
-  monoClassName: string;
-  prefetch?: boolean;
-  variant: "primary" | "secondary";
-}) {
-  return (
-    <Link
-      className={actionLinkClassName({ monoClassName, variant })}
-      href={href}
-      prefetch={prefetch}
-      style={variant === "primary" ? { color: "#fff" } : undefined}
-    >
-      {children}
-    </Link>
-  );
-}
-
-function actionLinkClassName({
-  className,
-  monoClassName,
-  variant,
-}: {
-  className?: string;
-  monoClassName: string;
-  variant: "primary" | "secondary";
-}) {
-  return cn(
-    `${monoClassName} inline-flex items-center justify-center border-2 px-5 py-3 text-sm font-bold uppercase tracking-[0.16em] transition-colors`,
-    variant === "primary"
-      ? "border-[#e50000] bg-[#e50000] text-white hover:border-[#c00000] hover:bg-[#c00000]"
-      : "border-[#d4d4d4] bg-transparent text-black hover:border-black",
-    className,
-  );
-}
-
-function MobileNavigationMenu({ monoClassName }: { monoClassName: string }) {
-  return (
-    <Sheet>
-      <SheetTrigger asChild>
-        <Button
-          aria-label="Open navigation menu"
-          className="rounded-none border-0 bg-transparent text-black shadow-none hover:bg-transparent hover:text-black focus-visible:border-transparent sm:hidden"
-          size="icon-sm"
-          variant="ghost"
-        >
-          <Menu className="size-5" />
-        </Button>
-      </SheetTrigger>
-      <SheetContent
-        className="border-l-2 border-[#d4d4d4] bg-white p-0 text-black"
-        side="right"
-        showCloseButton={false}
-      >
-        <SheetHeader className="relative border-b border-[#d4d4d4] px-5 py-4 pr-18 text-left">
-          <SheetTitle className="sr-only">SignuDoc</SheetTitle>
-          <LandingWordmark asLink={false} />
-          <SheetClose
-            aria-label="Close"
-            className="absolute right-4 top-4 inline-flex h-10 w-10 items-center justify-center border-0 bg-transparent text-[#71717a] transition-colors hover:bg-transparent hover:text-black"
-          >
-            <X className="size-6" />
-          </SheetClose>
-        </SheetHeader>
-
-        <nav className="flex flex-col gap-3 px-5 py-5">
-          <SheetClose asChild>
-            <Link
-              className={actionLinkClassName({
-                className: "w-full",
-                monoClassName,
-                variant: "primary",
-              })}
-              href="/signup"
-              prefetch
-              style={{ color: "#fff" }}
-            >
-              Start free
-            </Link>
-          </SheetClose>
-
-          <SheetClose asChild>
-            <Link
-              className={actionLinkClassName({
-                className: "w-full",
-                monoClassName,
-                variant: "secondary",
-              })}
-              href="/login"
-              prefetch
-            >
-              Log in
-            </Link>
-          </SheetClose>
-        </nav>
-      </SheetContent>
-    </Sheet>
-  );
-}
-
-function SectionMarker({
-  center = false,
-  children,
-  monoClassName,
-}: {
-  center?: boolean;
-  children: string;
-  monoClassName: string;
-}) {
-  return (
-    <div
-      className={`mb-6 flex items-center gap-3 ${center ? "justify-center" : ""}`}
-    >
-      <GridDot />
-      <span
-        className={`${monoClassName} text-xs font-medium uppercase tracking-[0.2em] text-[#71717a]`}
-      >
+    <p className="mb-5 flex justify-center">
+      <span className="pill pill-accent px-3.5 py-1 text-[0.8125rem]">
         {children}
       </span>
-    </div>
-  );
-}
-
-function CropMarks({
-  className = "",
-  color = "#e50000",
-  offset = 0,
-  size = 20,
-}: {
-  className?: string;
-  color?: string;
-  offset?: number;
-  size?: number;
-}) {
-  return (
-    <div
-      className={`pointer-events-none absolute ${className}`}
-      style={{ inset: offset }}
-    >
-      <span
-        className="absolute left-0 top-0"
-        style={{
-          borderLeft: `2px solid ${color}`,
-          borderTop: `2px solid ${color}`,
-          height: size,
-          width: size,
-        }}
-      />
-      <span
-        className="absolute right-0 top-0"
-        style={{
-          borderRight: `2px solid ${color}`,
-          borderTop: `2px solid ${color}`,
-          height: size,
-          width: size,
-        }}
-      />
-      <span
-        className="absolute bottom-0 left-0"
-        style={{
-          borderBottom: `2px solid ${color}`,
-          borderLeft: `2px solid ${color}`,
-          height: size,
-          width: size,
-        }}
-      />
-      <span
-        className="absolute bottom-0 right-0"
-        style={{
-          borderBottom: `2px solid ${color}`,
-          borderRight: `2px solid ${color}`,
-          height: size,
-          width: size,
-        }}
-      />
-    </div>
-  );
-}
-
-function GridDot() {
-  return (
-    <span className="inline-block h-[6px] w-[6px] rounded-full bg-[#e50000]" />
-  );
-}
-
-function WorkflowStepInline({
-  body,
-  index,
-  monoClassName,
-  title,
-}: WorkflowStep & {
-  index: number;
-  monoClassName: string;
-}) {
-  return (
-    <div className="text-center lg:text-left">
-      <div className="flex justify-center lg:justify-start">
-        <div className="flex h-12 w-12 items-center justify-center rounded-full bg-[#e50000]">
-          <span
-            className={`${monoClassName} text-base font-bold leading-none text-white`}
-          >
-            {String(index).padStart(2, "0")}
-          </span>
-        </div>
-      </div>
-      <h3 className="mt-4 text-lg font-bold leading-tight tracking-[-0.02em] text-black">
-        {title}
-      </h3>
-      <p className="mt-2 text-[15px] leading-relaxed text-[#71717a]">{body}</p>
-    </div>
+    </p>
   );
 }
 
 function SecurityPillarCard({ body, icon: Icon, title }: SecurityPillar) {
   return (
-    <div className="border-2 border-[#d4d4d4] bg-white px-6 py-7 text-center">
-      <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center border border-[rgba(229,0,0,0.14)] bg-[#fff8f8]">
-        <Icon className="h-[22px] w-[22px]" color="#e50000" strokeWidth={1.8} />
+    <div className="panel flex gap-4 p-6">
+      <span
+        aria-hidden="true"
+        className="inline-flex size-11 shrink-0 items-center justify-center rounded-xl bg-(--accent-soft) text-(--accent)"
+      >
+        <Icon className="size-5" strokeWidth={2} />
+      </span>
+      <div>
+        <h3 className="text-[1.0625rem] font-extrabold leading-tight tracking-[-0.02em] text-(--fg)">
+          {title}
+        </h3>
+        <p className="mt-1.5 text-[0.9375rem] leading-relaxed text-(--secondary)">
+          {body}
+        </p>
       </div>
-      <h3 className="text-base font-bold leading-tight tracking-[-0.02em] text-black">
-        {title}
-      </h3>
-      <p className="mt-2 text-[15px] leading-relaxed text-[#71717a]">{body}</p>
     </div>
   );
 }
 
-function FaqRow({ answer, question }: FaqItem) {
+function ComparisonTable() {
   return (
-    <article className="border-b border-[#d4d4d4] py-6 last:border-b-0">
-      <h3 className="text-xl font-bold leading-tight tracking-[-0.03em] text-black">
-        {question}
-      </h3>
-      <p className="mt-3 text-[15px] leading-relaxed text-[#71717a]">
-        {answer}
-      </p>
-    </article>
-  );
-}
-
-function ComparisonTable({ monoClassName }: { monoClassName: string }) {
-  return (
-    <div className="relative border-2 border-[#d4d4d4] bg-white">
-      <CropMarks color="#e50000" size={14} />
-
+    <div className="panel overflow-hidden">
       {/* Desktop table */}
-      <div className="hidden lg:block">
+      <div className="hidden p-3 sm:block">
         <table className="w-full border-separate border-spacing-0 text-left">
           <thead>
             <tr>
-              <th
-                className={`${monoClassName} w-[35%] border-b-2 border-[#d4d4d4] px-6 py-5 text-[10px] font-semibold uppercase tracking-[0.2em] text-[#71717a]`}
-              >
+              <th className="w-[36%] px-5 py-4 text-[0.8125rem] font-semibold text-(--tertiary)">
                 Feature
               </th>
-              <th className="w-[32.5%] border-b-2 border-l border-[#d4d4d4] bg-[#fff8f8] px-6 py-5 text-center">
-                <span className="text-[17px] font-bold tracking-tight text-black">
-                  Signu<span className="text-[#e50000]">Doc</span>
+              <th className="w-[32%] rounded-t-2xl bg-(--accent-softer) px-5 py-4 text-center">
+                <span className="inline-flex items-center gap-2 text-[1.0625rem] font-extrabold tracking-[-0.02em] text-(--fg)">
+                  <BrandMark className="size-6 rounded-[0.5rem]" />
+                  SignuDoc
                 </span>
               </th>
-              <th className="w-[32.5%] border-b-2 border-l border-[#d4d4d4] px-6 py-5 text-center">
-                <span className="text-[17px] font-bold tracking-tight text-[#71717a]">
+              <th className="w-[32%] px-5 py-4 text-center">
+                <span className="text-[1.0625rem] font-bold tracking-[-0.02em] text-(--tertiary)">
                   DocuSign
                 </span>
               </th>
             </tr>
           </thead>
           <tbody>
-            {comparisonRows.map((row) => (
+            {comparisonRows.map((row, index) => (
               <tr key={row.feature}>
-                <td className="border-t border-[#d4d4d4] px-6 py-4 text-[15px] font-medium text-black">
+                <td className="border-t border-(--border) px-5 py-4 text-[0.9375rem] font-semibold text-(--fg)">
                   {row.feature}
                 </td>
-                <td className="border-t border-l border-[#d4d4d4] bg-[#fff8f8] px-6 py-4 text-center">
+                <td
+                  className={cn(
+                    "border-t border-[rgb(var(--accent-rgb)/0.12)] bg-(--accent-softer) px-5 py-4 text-center",
+                    index === comparisonRows.length - 1 && "rounded-b-2xl",
+                  )}
+                >
                   <ComparisonValue advantage value={row.signudoc} />
                 </td>
-                <td className="border-t border-l border-[#d4d4d4] px-6 py-4 text-center text-[#71717a]">
+                <td className="border-t border-(--border) px-5 py-4 text-center text-(--secondary)">
                   <ComparisonValue value={row.docusign} />
                 </td>
               </tr>
@@ -714,33 +416,18 @@ function ComparisonTable({ monoClassName }: { monoClassName: string }) {
       </div>
 
       {/* Mobile stacked layout */}
-      <div className="space-y-4 p-4 lg:hidden sm:p-5">
+      <div className="space-y-3 p-4 sm:hidden">
         {comparisonRows.map((row) => (
-          <div
-            className="border border-[#d4d4d4] bg-[#fcfcfc]"
-            key={row.feature}
-          >
-            <div className="border-b border-[#d4d4d4] px-4 py-3">
-              <p
-                className={`${monoClassName} text-[10px] font-semibold uppercase tracking-[0.2em] text-[#71717a]`}
-              >
-                {row.feature}
-              </p>
-            </div>
-            <div className="bg-[#fff8f8]">
-              <ComparisonMobileRow
-                advantage
-                label="SignuDoc"
-                monoClassName={monoClassName}
-                value={row.signudoc}
-              />
-            </div>
-            <Separator className="bg-[#d4d4d4]" />
+          <div className="well overflow-hidden" key={row.feature}>
+            <p className="px-4 pb-2 pt-3.5 text-[0.8125rem] font-semibold text-(--tertiary)">
+              {row.feature}
+            </p>
             <ComparisonMobileRow
-              label="DocuSign"
-              monoClassName={monoClassName}
-              value={row.docusign}
+              advantage
+              label="SignuDoc"
+              value={row.signudoc}
             />
+            <ComparisonMobileRow label="DocuSign" value={row.docusign} />
           </div>
         ))}
       </div>
@@ -751,38 +438,30 @@ function ComparisonTable({ monoClassName }: { monoClassName: string }) {
 function ComparisonMobileRow({
   advantage = false,
   label,
-  monoClassName,
   value,
 }: {
   advantage?: boolean;
   label: string;
-  monoClassName: string;
   value: string | boolean;
 }) {
   return (
-    <div className="flex items-center justify-between gap-4 px-4 py-3">
-      <Badge
+    <div
+      className={cn(
+        "flex items-center justify-between gap-4 px-4 py-3",
+        advantage ? "bg-(--accent-softer)" : "text-(--secondary)",
+      )}
+    >
+      <span
         className={cn(
-          `${monoClassName} w-[5.5rem] justify-center rounded-none border px-2.5 py-1 text-[10px] font-semibold normal-case tracking-tight shadow-none`,
-          advantage
-            ? "border-[#e50000]/20 bg-[#fff8f8] text-black"
-            : "border-[#d4d4d4] bg-white text-[#71717a]",
+          "text-sm",
+          advantage ? "font-extrabold text-(--fg)" : "font-semibold",
         )}
-        variant="outline"
       >
-        {advantage ? (
-          <span>
-            Signu<span className="text-[#e50000]">Doc</span>
-          </span>
-        ) : (
-          label
-        )}
-      </Badge>
-      <div
-        className={cn("max-w-[58%] text-right", !advantage && "text-[#71717a]")}
-      >
+        {label}
+      </span>
+      <span className="max-w-[58%] text-right">
         <ComparisonValue advantage={advantage} value={value} />
-      </div>
+      </span>
     </div>
   );
 }
@@ -795,54 +474,27 @@ function ComparisonValue({
   value: string | boolean;
 }) {
   if (typeof value === "boolean") {
-    return value ? <CheckIcon /> : <XIcon />;
+    return value ? (
+      <span className="inline-flex size-7 items-center justify-center rounded-full bg-(--success-soft) text-(--success)">
+        <CheckIcon aria-hidden="true" className="size-4" strokeWidth={3} />
+        <span className="sr-only">Included</span>
+      </span>
+    ) : (
+      <span className="inline-flex size-7 items-center justify-center rounded-full bg-(--danger-soft) text-(--danger)">
+        <XIcon aria-hidden="true" className="size-4" strokeWidth={3} />
+        <span className="sr-only">Not included</span>
+      </span>
+    );
   }
-
-  const isStrong =
-    advantage &&
-    (value === "Free forever" || value === "Unlimited" || value === "Included");
 
   return (
     <span
-      className={
-        isStrong
-          ? "text-[15px] font-bold text-black"
-          : "text-[15px] leading-relaxed"
-      }
+      className={cn(
+        "text-[0.9375rem] leading-relaxed",
+        advantage && "font-extrabold text-(--accent-ink)",
+      )}
     >
       {value}
     </span>
-  );
-}
-
-function CheckIcon() {
-  return (
-    <svg
-      className="inline-block h-5 w-5 text-[#16a34a]"
-      fill="currentColor"
-      viewBox="0 0 20 20"
-    >
-      <path
-        clipRule="evenodd"
-        d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z"
-        fillRule="evenodd"
-      />
-    </svg>
-  );
-}
-
-function XIcon() {
-  return (
-    <svg
-      className="inline-block h-5 w-5 text-[#e50000]"
-      fill="currentColor"
-      viewBox="0 0 20 20"
-    >
-      <path
-        clipRule="evenodd"
-        d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z"
-        fillRule="evenodd"
-      />
-    </svg>
   );
 }
