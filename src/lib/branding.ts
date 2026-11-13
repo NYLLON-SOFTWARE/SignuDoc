@@ -12,7 +12,7 @@ import type { ResolvedSettings } from "./settings.ts";
 export const SIGNUDOC_NAME = "SignuDoc";
 // The project's home is its repository. There is no SignuDoc-run site that
 // an install should send its visitors to, and no address there to write to.
-export const SIGNUDOC_URL = "https://github.com/NYLLON-SOFTWARE/signudoc";
+export const SIGNUDOC_URL = "https://github.com/NYLLON-SOFTWARE/SignuDoc";
 
 /** Where the install's logo is served. Public: it is shown to signers. */
 export const BRAND_LOGO_PATH = "/api/brand/logo";

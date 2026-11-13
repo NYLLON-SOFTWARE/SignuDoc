@@ -92,7 +92,7 @@ function buildContentSecurityPolicy() {
         preview && "https://vercel.live",
         // BotID's deeper check runs in a hidden frame on this same site.
         // Not yet confirmed against a live deployment; see the note on
-        // BotID in the README.
+        // BotID in docs/self-hosting.md.
         botProtection && "'self'",
         !preview && !botProtection && "'none'",
       ],

@@ -238,7 +238,7 @@ test("a new install is set up, a sender sends a PDF and a recipient signs it", a
       // run by the project to send anyone to.
       await expect(
         footer.getByRole("link", { name: "Powered by SignuDoc" }),
-      ).toHaveAttribute("href", "https://github.com/NYLLON-SOFTWARE/signudoc");
+      ).toHaveAttribute("href", "https://github.com/NYLLON-SOFTWARE/SignuDoc");
     }
 
     // A signer with a question is sent to the organization's own address.

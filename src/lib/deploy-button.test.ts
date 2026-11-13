@@ -13,9 +13,9 @@ const repoRoot = path.resolve(import.meta.dirname, "..", "..");
 const readme = readFileSync(path.join(repoRoot, "README.md"), "utf8");
 
 function readDeployLink(): URL {
-  const match = /\]\((https:\/\/vercel\.com\/new\/clone\?[^)\s]+)\)/.exec(
-    readme,
-  );
+  // A Markdown link or, as the README centres it, an <a href="...">.
+  const match =
+    /(?:\]\(|href=")(https:\/\/vercel\.com\/new\/clone\?[^)"\s]+)/.exec(readme);
 
   assert.ok(match?.[1], "README.md has no Deploy with Vercel link");
 
@@ -27,7 +27,7 @@ test("the button copies this repository and pre-fills its name", () => {
 
   assert.equal(
     link.searchParams.get("repository-url"),
-    "https://github.com/NYLLON-SOFTWARE/signudoc",
+    "https://github.com/NYLLON-SOFTWARE/SignuDoc",
   );
   assert.equal(link.searchParams.get("project-name"), "signudoc");
   assert.equal(link.searchParams.get("repository-name"), "signudoc");
@@ -78,26 +78,40 @@ test("the button's demo card is complete and its picture is in the repository", 
   // the repository, where the README shows the product.
   assert.equal(
     link.searchParams.get("demo-url"),
-    "https://github.com/NYLLON-SOFTWARE/signudoc",
+    "https://github.com/NYLLON-SOFTWARE/SignuDoc",
   );
 
   const image = link.searchParams.get("demo-image") ?? "";
   const prefix =
-    "https://raw.githubusercontent.com/NYLLON-SOFTWARE/signudoc/main/";
+    "https://raw.githubusercontent.com/NYLLON-SOFTWARE/SignuDoc/main/";
 
   assert.ok(image.startsWith(prefix), image);
   assert.ok(existsSync(path.join(repoRoot, image.slice(prefix.length))));
 });
 
-test("every picture the README shows is in the repository", () => {
-  const pictures = [...readme.matchAll(/!\[[^\]]*\]\((?!https?:)([^)\s]+)\)/g)];
+test("every picture and page the README and the guides link to is in the repository", () => {
+  // Markdown pictures and links, and the <img> and <a> tags the README
+  // centres.
+  const localTarget =
+    /!?\[[^\]]*\]\((?!https?:|#|mailto:)([^)\s#]+)[^)]*\)|<(?:img[^>]*\ssrc|a[^>]*\shref)="(?!https?:|#|mailto:)([^"#]+)[^"]*"/g;
 
-  assert.ok(pictures.length > 0);
-
-  for (const [, relativePath] of pictures) {
-    assert.ok(
-      existsSync(path.join(repoRoot, relativePath ?? "")),
-      relativePath,
+  for (const document of [
+    "README.md",
+    "docs/self-hosting.md",
+    "docs/development.md",
+  ]) {
+    const text = readFileSync(path.join(repoRoot, document), "utf8");
+    const targets = [...text.matchAll(localTarget)].map(
+      (match) => match[1] ?? match[2] ?? "",
     );
+
+    assert.ok(targets.length > 0, document);
+
+    for (const target of targets) {
+      assert.ok(
+        existsSync(path.join(repoRoot, path.dirname(document), target)),
+        `${document}: ${target}`,
+      );
+    }
   }
 });
