@@ -1,21 +1,28 @@
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import { after, before, test } from "node:test";
 
 import type pg from "pg";
 
 import { openTestDatabase } from "./db/test-database.ts";
 import { listPeople, PeopleError, setPersonRole } from "./people.ts";
+import { runRetentionSweep } from "./retention.ts";
+import { createStorageService } from "./services/storage.ts";
 
 // Administrator roles against a real Postgres: there is always at least
 // one, even when two removals arrive at once. Run with `npm run test:db`.
 
 let database: pg.Pool;
+let storageDir: string;
 const createdUsers: string[] = [];
 let administratorsBefore: string[] = [];
 
 before(async () => {
   database = await openTestDatabase();
+  storageDir = await mkdtemp(path.join(tmpdir(), "signudoc-people-"));
 
   // The rule under test is about every administrator in the database, so
   // the ones other tests left behind step aside while this file runs.
@@ -35,6 +42,7 @@ after(async () => {
     [administratorsBefore],
   );
   await database.end();
+  await rm(storageDir, { force: true, recursive: true });
 });
 
 async function createUser({
@@ -204,6 +212,75 @@ test("a request already under way does not outlive its administrator's role", as
 
   assert.equal(await roleOf(removed), "user");
   assert.equal(await roleOf(staying), "admin");
+});
+
+test("a closed account's records do not go to someone whose role is being taken away", async () => {
+  await resetRoles();
+
+  // The older of the two administrators is the one a closed account's
+  // finished envelopes are handed to.
+  const removed = await createUser({ role: "admin" });
+  const staying = await createUser({ role: "admin" });
+  const leaver = await createUser();
+  const envelopeId = randomUUID();
+
+  await database.query(
+    `update public."user" set "createdAt" = now() - interval '1 day' where id = $1`,
+    [removed],
+  );
+  await database.query(
+    `
+      insert into envelopes (
+        id, user_id, title, status, source_pdf_key, source_pdf_filename,
+        source_pdf_size_bytes, page_count, source_pdf_hash, completed_at
+      ) values ($1, $2, 'Lease', 'completed', $3, 'lease.pdf', 10, 1, $4, 1)
+    `,
+    [envelopeId, leaver, `test/${envelopeId}.pdf`, "a".repeat(64)],
+  );
+  await database.query(
+    `
+      insert into account_closure_requests
+        (user_id, requested_at, export_expires_at, purge_after_at, updated_at)
+      values ($1, 1, 1, 1, 1)
+    `,
+    [leaver],
+  );
+
+  const holder = await database.connect();
+
+  try {
+    // A removal that is under way and has not been committed yet, so the
+    // hand-over still finds an administrator when it chooses.
+    await holder.query("begin");
+    await holder.query(`update public."user" set role = 'user' where id = $1`, [
+      removed,
+    ]);
+
+    const sweep = runRetentionSweep({
+      database,
+      storageService: createStorageService({
+        env: { STORAGE_DRIVER: "local", STORAGE_LOCAL_DIR: storageDir },
+      }),
+    });
+
+    sweep.catch(() => undefined);
+    // The hand-over waits for the removal instead of going ahead of it.
+    await waitForLockWaiters(1);
+    await holder.query("commit");
+
+    assert.ok(!(await sweep).accountPurgeFailures.includes(leaver));
+  } finally {
+    await holder.query("rollback").catch(() => undefined);
+    holder.release();
+  }
+
+  const owner = await database.query<{ user_id: string }>(
+    `select user_id from envelopes where id = $1`,
+    [envelopeId],
+  );
+
+  assert.equal(owner.rows[0]?.user_id, staying);
+  assert.equal(await roleOf(leaver), null);
 });
 
 test("an administrator whose account is closing does not count as the one that stays", async () => {
