@@ -157,6 +157,32 @@ function toFieldErrors(error: z.ZodError) {
   return fieldErrors;
 }
 
+const ACCOUNT_FIELDS = ["email", "fullName", "password"] as const;
+
+/**
+ * What is wrong with the account fields, when the request carries any of
+ * them. The form of a new install sends them, and the form that claims an
+ * older install does not, so this tells the two apart before the database
+ * has been read.
+ */
+function accountFieldErrors(
+  rawInput: unknown,
+): Partial<Record<SetupFieldName, string>> {
+  if (typeof rawInput !== "object" || rawInput === null) {
+    return {};
+  }
+
+  const input = rawInput as Record<string, unknown>;
+
+  if (ACCOUNT_FIELDS.every((field) => input[field] === undefined)) {
+    return {};
+  }
+
+  const parsed = createAccountSchema.safeParse(rawInput);
+
+  return parsed.success ? {} : toFieldErrors(parsed.error);
+}
+
 function tokensMatch(provided: string | undefined, expected: string): boolean {
   if (!provided) {
     return false;
@@ -268,11 +294,12 @@ export async function completeSetup(
   const parsedBase = baseSetupSchema.safeParse(rawInput);
 
   if (!parsedBase.success) {
-    throw new SetupError(
-      "Check the highlighted fields.",
-      400,
-      toFieldErrors(parsedBase.error),
-    );
+    // One answer names every field that needs attention, the account's
+    // among them, so nobody fixes one field only to be told about the next.
+    throw new SetupError("Check the highlighted fields.", 400, {
+      ...accountFieldErrors(rawInput),
+      ...toFieldErrors(parsedBase.error),
+    });
   }
 
   const base = parsedBase.data;

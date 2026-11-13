@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
-import { readdirSync, readFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { test } from "node:test";
 
@@ -26,22 +27,49 @@ const SKIPPED_DIRECTORIES = new Set([
 const TEXT_FILE =
   /\.(?:css|example|html|js|json|md|mjs|sql|ts|tsx|txt|yaml|yml)$/;
 
-function listTextFiles(directory: string): string[] {
+function walkTextFiles(directory: string): string[] {
   return readdirSync(directory, { withFileTypes: true }).flatMap((entry) => {
     const entryPath = path.join(directory, entry.name);
 
     if (entry.isDirectory()) {
       return SKIPPED_DIRECTORIES.has(entry.name)
         ? []
-        : listTextFiles(entryPath);
+        : walkTextFiles(entryPath);
     }
 
     return entry.isFile() && TEXT_FILE.test(entry.name) ? [entryPath] : [];
   });
 }
 
+/**
+ * The text files that are part of the repository. Git is asked for them,
+ * so a developer's own notes, editor folders and build output, which the
+ * project does not ship, cannot fail the test. A copy without Git (a
+ * downloaded archive) holds only the repository's files, and is walked.
+ */
+function listRepositoryTextFiles(): string[] {
+  let tracked: string[];
+
+  try {
+    tracked = execFileSync("git", ["ls-files", "-z"], {
+      cwd: repoRoot,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+    })
+      .split("\0")
+      .filter((file) => file.length > 0);
+  } catch {
+    return walkTextFiles(repoRoot);
+  }
+
+  return tracked
+    .filter((file) => TEXT_FILE.test(file))
+    .map((file) => path.join(repoRoot, file))
+    .filter((file) => existsSync(file));
+}
+
 test("nothing in the repository points at a site or a mailbox run by the project", () => {
-  const files = listTextFiles(repoRoot);
+  const files = listRepositoryTextFiles();
   const offenders = files
     .filter((file) =>
       readFileSync(file, "utf8").toLowerCase().includes(formerHostedDomain),

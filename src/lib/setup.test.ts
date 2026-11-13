@@ -129,3 +129,45 @@ test("setup refuses input it cannot use before touching the database", async () 
     },
   );
 });
+
+test("a new install's form is told about every field at once, the account's included", async () => {
+  const database = {} as DbPool;
+  const createAdminAccount = async () => {
+    throw new Error("must not be reached");
+  };
+  const refusedFields = async (input: Record<string, string>) => {
+    try {
+      await completeSetup(input, { createAdminAccount, database, env: {} });
+    } catch (error) {
+      assert.ok(error instanceof SetupError);
+      assert.equal(error.statusCode, 400);
+
+      return Object.keys(error.fieldErrors).sort();
+    }
+
+    return assert.fail("setup accepted input it should have refused");
+  };
+
+  // A support address that is not one, next to a password that is too
+  // short: both are named in the same answer.
+  assert.deepEqual(
+    await refusedFields({
+      email: "owner@acme.com",
+      fullName: "Olive Owner",
+      organizationName: "Acme Corp",
+      password: "too short",
+      supportAddress: "not an address",
+    }),
+    ["password", "supportAddress"],
+  );
+
+  // Claiming an older install sends no account fields, so none are judged.
+  assert.deepEqual(
+    await refusedFields({
+      organizationName: "Acme Corp",
+      setupToken: "a-secret-of-the-owner",
+      supportAddress: "not an address",
+    }),
+    ["supportAddress"],
+  );
+});
