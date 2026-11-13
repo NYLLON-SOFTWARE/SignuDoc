@@ -74,6 +74,13 @@ test("the button's demo card is complete and its picture is in the repository", 
     assert.ok(link.searchParams.get(parameter), parameter);
   }
 
+  // There is no hosted demo to send people to, so the card's link goes to
+  // the repository, where the README shows the product.
+  assert.equal(
+    link.searchParams.get("demo-url"),
+    "https://github.com/NYLLON-SOFTWARE/signudoc",
+  );
+
   const image = link.searchParams.get("demo-image") ?? "";
   const prefix =
     "https://raw.githubusercontent.com/NYLLON-SOFTWARE/signudoc/main/";
