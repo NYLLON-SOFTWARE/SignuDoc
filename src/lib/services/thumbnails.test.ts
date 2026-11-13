@@ -146,6 +146,22 @@ test("refuses a thumbnail that is empty, too heavy, or not a JPEG", () => {
   );
 });
 
+test("refuses a thumbnail that was cut short", () => {
+  // A frame header that says 16 by 16, and nothing after it.
+  const headerOnly = Uint8Array.from([
+    ...START_OF_IMAGE,
+    ...[0xff, 0xc0, 0x00, 0x07, 0x08, 0x00, 0x10, 0x00, 0x10],
+  ]);
+  const cutShort = buildJpeg().slice(0, -1);
+
+  assert.deepEqual(readJpegDimensions(headerOnly), { height: 16, width: 16 });
+  assert.throws(
+    () => assertThumbnailImage(headerOnly),
+    ThumbnailValidationError,
+  );
+  assert.throws(() => assertThumbnailImage(cutShort), ThumbnailValidationError);
+});
+
 test("refuses a thumbnail whose picture is too large or too small", () => {
   assert.throws(
     () =>

@@ -105,7 +105,12 @@ export function assertThumbnailImage(bytes: Uint8Array): JpegDimensions {
 
   const dimensions = readJpegDimensions(bytes);
 
-  if (!dimensions) {
+  // The frame header alone says nothing about the rest. A whole JPEG ends
+  // with its end-of-image marker, and one that was cut short does not.
+  const isWhole =
+    bytes[bytes.length - 2] === 0xff && bytes[bytes.length - 1] === 0xd9;
+
+  if (!dimensions || !isWhole) {
     throw new ThumbnailValidationError("The thumbnail must be a JPEG image.");
   }
 
