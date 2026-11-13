@@ -43,7 +43,7 @@ export const WHAT_IT_IS_NOT: UseSection = {
   heading: "What Signudoc is not",
   items: [
     "Not an advanced (AdES) or qualified (QES) electronic signature under eIDAS. The seal on finished PDFs is the install's own, not a qualified seal.",
-    "Not built for US FDA 21 CFR Part 11 records: it has no signature manifestation with meaning, no re-authentication at each signature, and no validated system documentation.",
+    "Not a validated FDA 21 CFR Part 11 system as it comes. An administrator can turn on Part 11 mode (signers sign with their own confirmed accounts and password, and each signature shows its meaning), but your organization still has to validate the install, write and follow its own procedures, and certify its electronic signatures to the FDA.",
     "Not a HIPAA-covered service. Do not send protected health information unless your organization has its own agreements and controls for every service the install uses.",
     "Not a consumer-disclosure system beyond the electronic-records agreement each signer gives. If a law requires you to deliver specific consumer notices electronically, check that its own rules are met.",
     "Not legal advice. Whoever runs this install decides which documents it may be used for.",

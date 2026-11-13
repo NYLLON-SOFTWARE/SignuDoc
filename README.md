@@ -138,7 +138,7 @@ DocuSign does more, and charges for it per user. SignuDoc does the everyday sign
 | **Languages**                                           | — signing pages in English     | ✅ signing in 44 languages                            |
 | **Single sign-on**                                      | — email and password           | ✅ SAML SSO on Enhanced                               |
 | **Advanced and qualified signatures (eIDAS)**           | — simple electronic signatures | ✅                                                    |
-| **HIPAA, 21 CFR Part 11, certifications**               | —                              | ✅ on Enhanced or as add-ons                          |
+| **HIPAA, 21 CFR Part 11, certifications**               | Part 11 mode; you validate     | ✅ on Enhanced or as add-ons                          |
 | **Support**                                             | GitHub issues                  | ✅ 24/7 on Enhanced                                   |
 
 If your agreements run through Salesforce, need SMS checks or qualified signatures, or go out by the thousand in bulk, DocuSign earns its price. If you want to send everyday agreements, keep the evidence, and own the whole thing, SignuDoc is built for you.
@@ -206,8 +206,10 @@ SignuDoc is not a law firm and does not give legal advice, and nothing here is a
 Every install has a page at `/electronic-signatures` that says what it is for, and senders confirm it before each send. It is meant for ordinary business agreements, such as contracts, NDAs, statements of work, offer letters, purchase orders and approvals. It is **not** built for:
 
 - documents that need an advanced or qualified electronic signature (AdES or QES) under eIDAS;
-- FDA 21 CFR Part 11 records, or protected health information under HIPAA;
+- protected health information under HIPAA;
 - documents that many laws keep out of electronic signature, such as wills, family-law matters, court orders, notices of foreclosure, eviction, utility shut-off or insurance cancellation, and in most EU countries real estate transfers and documents that need a notary.
+
+For FDA 21 CFR Part 11 records, an administrator can turn on **Part 11 mode** under Settings. Signers then sign with their own accounts, whose identity an administrator has confirmed, give their password again at each signature, and see the meaning of their signature (approval, review, responsibility or authorship) printed beside it with their name and the time. Audit trails export as CSV, and finished records are never deleted on a timer. That covers the software's part only: validating your install, writing and following your own procedures, training your people and certifying your electronic signatures to the FDA stay with your organization.
 
 Your install carries your organization's name, and your organization is responsible for how it is used: linking your own terms and privacy policy, keeping the support address pointed at a mailbox someone reads, choosing how long documents are kept, and answering signers' data requests. [Your responsibilities](docs/self-hosting.md#your-responsibilities) has the details.
 
