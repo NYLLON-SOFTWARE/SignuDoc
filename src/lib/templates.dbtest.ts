@@ -155,6 +155,60 @@ async function countEnvelopes(userId: string): Promise<number> {
   return result.rows[0]!.total;
 }
 
+type QueryFunction = (text: unknown, values?: unknown[]) => unknown;
+
+/**
+ * The same database, except that `then` runs right after one chosen
+ * statement has, whether it went to the pool or to a client taken from it.
+ */
+function afterStatement(
+  pool: pg.Pool,
+  isTheStatement: (text: string, values: unknown[]) => boolean,
+  then: () => Promise<void>,
+): pg.Pool {
+  function intercept<T extends object>(target: T): T {
+    return new Proxy(target, {
+      get(object, property) {
+        const value: unknown = Reflect.get(object, property);
+
+        if (property === "query") {
+          const query: QueryFunction = async (text, values) => {
+            const result = await (value as QueryFunction).call(
+              object,
+              text,
+              values,
+            );
+
+            if (
+              typeof text === "string" &&
+              isTheStatement(text, values ?? [])
+            ) {
+              await then();
+            }
+
+            return result;
+          };
+
+          return query;
+        }
+
+        if (property === "connect") {
+          return async () =>
+            intercept(
+              await (value as () => Promise<pg.PoolClient>).call(object),
+            );
+        }
+
+        return typeof value === "function"
+          ? (value.bind(object) as unknown)
+          : value;
+      },
+    });
+  }
+
+  return intercept(pool);
+}
+
 function assertTemplateError(statusCode: number) {
   return (error: unknown): true => {
     assert.ok(error instanceof TemplateError, String(error));
@@ -669,6 +723,68 @@ test("closing the account removes its templates and their documents", async () =
         userId,
       ])
     ).rowCount,
+    0,
+  );
+});
+
+test("a template saved while its account is being deleted leaves no document behind", async () => {
+  const userId = await createUser();
+  const { envelopeId } = await createPreparedDraft(userId);
+
+  await database.query(
+    `
+      insert into account_closure_requests
+        (user_id, requested_at, export_expires_at, purge_after_at, updated_at)
+      values ($1, 1, 1, 1, 1)
+    `,
+    [userId],
+  );
+
+  // The save starts when the deletion has just read which templates the
+  // account has, and the deletion then waits: for the save to finish, or
+  // long enough to show that the save is the one waiting.
+  let save: Promise<unknown> | undefined;
+  const summary = await runRetentionSweep({
+    database: afterStatement(
+      database,
+      (text, values) =>
+        text.includes("FROM templates WHERE user_id") && values[0] === userId,
+      async () => {
+        save = saveEnvelopeAsTemplate(
+          userId,
+          envelopeId,
+          { name: "Lease" },
+          { database, storageService },
+        );
+        await Promise.race([
+          save.catch(() => undefined),
+          new Promise((resolve) => setTimeout(resolve, 500)),
+        ]);
+      },
+    ),
+    storageService,
+  });
+
+  assert.ok(!summary.accountPurgeFailures.includes(userId));
+  assert.ok(save, "the deletion read the account's templates");
+
+  const refusal: unknown = await save.then(
+    () => null,
+    (error: unknown) => error,
+  );
+  const keptDocuments = (
+    await readdir(path.join(storageDir, "users", userId, "templates"), {
+      recursive: true,
+    }).catch(() => [])
+  ).filter((entry) => entry.endsWith("original.pdf"));
+
+  assert.deepEqual(keptDocuments, []);
+  // The deletion went first, so the save found no account to keep a
+  // template for, and took its copy of the document back.
+  assert.match(String(refusal), /foreign key/);
+  assert.equal(
+    (await database.query(`select 1 from "user" where id = $1`, [userId]))
+      .rowCount,
     0,
   );
 });

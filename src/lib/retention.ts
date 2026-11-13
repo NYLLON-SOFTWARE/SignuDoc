@@ -3,6 +3,7 @@ import {
   getDb,
   queryMany,
   queryOne,
+  withTransaction,
 } from "./db/connection.ts";
 import {
   buildEnvelopeThumbnailKey,
@@ -436,17 +437,35 @@ export class AccountPurgeDeferredError extends Error {
   }
 }
 
-async function purgeQueuedAccount(
+function isPool(database: DbExecutor): database is ReturnType<typeof getDb> {
+  return "connect" in database && "totalCount" in database;
+}
+
+/**
+ * Deletes the account with everything that hangs on it, and returns the
+ * files those rows pointed at. Returns null when the account is already
+ * gone.
+ *
+ * The account's row is locked before the files are listed. Saving a
+ * template or uploading a document writes a row that points at the account,
+ * and Postgres makes such a write wait for this lock. So a save that got in
+ * first has finished and its file is in the list, and one that comes after
+ * finds no account, fails, and takes its own file back. Without the lock a
+ * save could land between the list and the delete: its row went with the
+ * account and its file stayed, with nothing left that knew of it.
+ */
+async function deleteAccountRows(
   userId: string,
   database: DbExecutor,
-  storageService: StorageService,
-  env: EnvSource = process.env,
-): Promise<boolean> {
-  if (
-    !isHostedMode(env) &&
-    !(await handOverFinishedEnvelopes(userId, database))
-  ) {
-    throw new AccountPurgeDeferredError(userId);
+): Promise<string[] | null> {
+  const account = await queryOne<{ id: string }>(
+    database,
+    `SELECT id FROM "user" WHERE id = $1 FOR UPDATE`,
+    [userId],
+  );
+
+  if (!account) {
+    return null;
   }
 
   const envelopes = await listEnvelopeArtifactsForUser(userId, database);
@@ -477,7 +496,7 @@ async function purgeQueuedAccount(
     storageKeys.add(template.sourcePdfKey);
   }
 
-  const deleteResult = await database.query(
+  await database.query(
     `
       DELETE FROM "user"
       WHERE id = $1
@@ -485,11 +504,35 @@ async function purgeQueuedAccount(
     [userId],
   );
 
-  if (deleteResult.rowCount !== 1) {
+  return [...storageKeys];
+}
+
+async function purgeQueuedAccount(
+  userId: string,
+  database: DbExecutor,
+  storageService: StorageService,
+  env: EnvSource = process.env,
+): Promise<boolean> {
+  if (
+    !isHostedMode(env) &&
+    !(await handOverFinishedEnvelopes(userId, database))
+  ) {
+    throw new AccountPurgeDeferredError(userId);
+  }
+
+  // One transaction, so the lock on the account holds from the list of its
+  // files to the delete. A caller that hands in its own connection decides
+  // where its transaction ends.
+  const storageKeys = isPool(database)
+    ? await withTransaction((tx) => deleteAccountRows(userId, tx), database)
+    : await deleteAccountRows(userId, database);
+
+  if (!storageKeys) {
     return false;
   }
 
-  await deleteStorageKeys([...storageKeys], storageService).catch((error) => {
+  // Only once the rows are gone for good.
+  await deleteStorageKeys(storageKeys, storageService).catch((error) => {
     console.error(
       `Failed to delete storage artifacts for purged account ${userId}:`,
       error,
