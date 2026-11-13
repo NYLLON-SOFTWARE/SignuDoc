@@ -157,8 +157,10 @@ export function PeoplePanel() {
         <p className="max-w-2xl text-sm leading-6 text-(--secondary)">
           Everyone with an account here. Administrators can change these
           settings, answer signer data requests and receive the finished
-          documents of accounts that are closed. Keep at least two, so that one
-          person leaving does not lock everyone out.
+          documents of accounts that are closed. When someone stops being an
+          administrator, the documents they received that way move to an
+          administrator who stays. Keep at least two, so that one person leaving
+          does not lock everyone out.
         </p>
       </div>
 

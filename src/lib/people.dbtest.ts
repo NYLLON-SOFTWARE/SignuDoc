@@ -79,6 +79,60 @@ async function resetRoles() {
   );
 }
 
+function storage() {
+  return createStorageService({
+    env: { STORAGE_DRIVER: "local", STORAGE_LOCAL_DIR: storageDir },
+  });
+}
+
+/** A completed envelope sent by this account. */
+async function createFinishedEnvelope(userId: string) {
+  const id = randomUUID();
+
+  await database.query(
+    `
+      insert into envelopes (
+        id, user_id, title, status, source_pdf_key, source_pdf_filename,
+        source_pdf_size_bytes, page_count, source_pdf_hash, completed_at
+      ) values ($1, $2, 'Lease', 'completed', $3, 'lease.pdf', 10, 1, $4, 1)
+    `,
+    [id, userId, `test/${id}.pdf`, "a".repeat(64)],
+  );
+
+  return id;
+}
+
+async function envelopeRow(envelopeId: string) {
+  const result = await database.query<{
+    handed_over_at: number | null;
+    user_id: string;
+  }>(`select user_id, handed_over_at from envelopes where id = $1`, [
+    envelopeId,
+  ]);
+
+  return result.rows[0]!;
+}
+
+/** Asks for the account to be closed, with its notice already over. */
+async function closeAccount(userId: string) {
+  await database.query(
+    `
+      insert into account_closure_requests
+        (user_id, requested_at, export_expires_at, purge_after_at, updated_at)
+      values ($1, 1, 1, 1, 1)
+    `,
+    [userId],
+  );
+}
+
+/** Makes this account the one that has been here longest. */
+async function makeLongestStanding(userId: string) {
+  await database.query(
+    `update public."user" set "createdAt" = now() - interval '1 day' where id = $1`,
+    [userId],
+  );
+}
+
 /** Waits until this many sessions are held up behind a lock. */
 async function waitForLockWaiters(count: number) {
   for (let attempt = 0; attempt < 300; attempt += 1) {
@@ -222,29 +276,12 @@ test("a closed account's records do not go to someone whose role is being taken 
   const removed = await createUser({ role: "admin" });
   const staying = await createUser({ role: "admin" });
   const leaver = await createUser();
-  const envelopeId = randomUUID();
 
-  await database.query(
-    `update public."user" set "createdAt" = now() - interval '1 day' where id = $1`,
-    [removed],
-  );
-  await database.query(
-    `
-      insert into envelopes (
-        id, user_id, title, status, source_pdf_key, source_pdf_filename,
-        source_pdf_size_bytes, page_count, source_pdf_hash, completed_at
-      ) values ($1, $2, 'Lease', 'completed', $3, 'lease.pdf', 10, 1, $4, 1)
-    `,
-    [envelopeId, leaver, `test/${envelopeId}.pdf`, "a".repeat(64)],
-  );
-  await database.query(
-    `
-      insert into account_closure_requests
-        (user_id, requested_at, export_expires_at, purge_after_at, updated_at)
-      values ($1, 1, 1, 1, 1)
-    `,
-    [leaver],
-  );
+  await makeLongestStanding(removed);
+
+  const envelopeId = await createFinishedEnvelope(leaver);
+
+  await closeAccount(leaver);
 
   const holder = await database.connect();
 
@@ -256,12 +293,7 @@ test("a closed account's records do not go to someone whose role is being taken 
       removed,
     ]);
 
-    const sweep = runRetentionSweep({
-      database,
-      storageService: createStorageService({
-        env: { STORAGE_DRIVER: "local", STORAGE_LOCAL_DIR: storageDir },
-      }),
-    });
+    const sweep = runRetentionSweep({ database, storageService: storage() });
 
     sweep.catch(() => undefined);
     // The hand-over waits for the removal instead of going ahead of it.
@@ -274,13 +306,97 @@ test("a closed account's records do not go to someone whose role is being taken 
     holder.release();
   }
 
-  const owner = await database.query<{ user_id: string }>(
-    `select user_id from envelopes where id = $1`,
-    [envelopeId],
-  );
-
-  assert.equal(owner.rows[0]?.user_id, staying);
+  assert.equal((await envelopeRow(envelopeId)).user_id, staying);
   assert.equal(await roleOf(leaver), null);
+});
+
+test("records handed over from a closed account move on when their keeper stops being an administrator", async () => {
+  await resetRoles();
+
+  const keeper = await createUser({ role: "admin" });
+  const staying = await createUser({ role: "admin" });
+  const leaver = await createUser();
+
+  await makeLongestStanding(keeper);
+
+  const sentByKeeper = await createFinishedEnvelope(keeper);
+  const sentByLeaver = await createFinishedEnvelope(leaver);
+
+  await closeAccount(leaver);
+
+  const summary = await runRetentionSweep({
+    database,
+    storageService: storage(),
+  });
+
+  assert.ok(!summary.accountPurgeFailures.includes(leaver));
+
+  // Handed to the keeper, and marked as handed over. What the keeper sent
+  // is not.
+  const handedOver = await envelopeRow(sentByLeaver);
+
+  assert.equal(handedOver.user_id, keeper);
+  assert.ok(handedOver.handed_over_at);
+  assert.equal((await envelopeRow(sentByKeeper)).handed_over_at, null);
+
+  // The keeper gives the role up. The organization's record goes to the
+  // administrator who stays, and the keeper's own envelope stays theirs.
+  await setPersonRole(keeper, keeper, "user", database);
+
+  assert.deepEqual(await envelopeRow(sentByLeaver), {
+    handed_over_at: handedOver.handed_over_at,
+    user_id: staying,
+  });
+  assert.equal((await envelopeRow(sentByKeeper)).user_id, keeper);
+
+  // Getting the role back does not bring the record back.
+  await setPersonRole(staying, keeper, "admin", database);
+  assert.equal((await envelopeRow(sentByLeaver)).user_id, staying);
+});
+
+test("an administrator who closes their account passes on what they were handed", async () => {
+  await resetRoles();
+
+  const first = await createUser({ role: "admin" });
+  const second = await createUser({ role: "admin" });
+  const leaver = await createUser();
+  const firstRunAt = Math.floor(Date.now() / 1000);
+  const secondRunAt = firstRunAt + 24 * 60 * 60;
+
+  await makeLongestStanding(first);
+
+  const sentByFirst = await createFinishedEnvelope(first);
+  const sentByLeaver = await createFinishedEnvelope(leaver);
+
+  await closeAccount(leaver);
+  await runRetentionSweep({
+    database,
+    now: firstRunAt,
+    storageService: storage(),
+  });
+  assert.deepEqual(await envelopeRow(sentByLeaver), {
+    handed_over_at: firstRunAt,
+    user_id: first,
+  });
+
+  await closeAccount(first);
+  await runRetentionSweep({
+    database,
+    now: secondRunAt,
+    storageService: storage(),
+  });
+
+  // Both are with the second administrator now. The one that was handed
+  // over before keeps the day it first was.
+  assert.equal(await roleOf(first), null);
+  assert.deepEqual(await envelopeRow(sentByLeaver), {
+    handed_over_at: firstRunAt,
+    user_id: second,
+  });
+  assert.deepEqual(await envelopeRow(sentByFirst), {
+    handed_over_at: secondRunAt,
+    user_id: second,
+  });
 });
 
 test("an administrator whose account is closing does not count as the one that stays", async () => {
