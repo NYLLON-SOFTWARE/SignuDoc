@@ -35,6 +35,15 @@ function readPeopleList(payload: PeopleResponse): PeopleList | null {
 }
 
 export function PeoplePanel({ part11Mode = false }: { part11Mode?: boolean }) {
+  function showsPart11(person: Person) {
+    return (
+      part11Mode ||
+      person.hasOpenPart11Signing ||
+      person.identityVerifiedAt !== null ||
+      person.signingLockedAt !== null
+    );
+  }
+
   const [list, setList] = useState<PeopleList | null>(null);
   const [you, setYou] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -278,7 +287,7 @@ export function PeoplePanel({ part11Mode = false }: { part11Mode?: boolean }) {
                     {person.closing ? (
                       <span className="pill pill-warning">Closing</span>
                     ) : null}
-                    {part11Mode || person.identityVerifiedAt !== null ? (
+                    {showsPart11(person) ? (
                       person.identityVerifiedAt !== null ? (
                         <span
                           className="pill pill-success"
@@ -297,14 +306,12 @@ export function PeoplePanel({ part11Mode = false }: { part11Mode?: boolean }) {
                     ) : null}
                   </div>
                   {/* Envelopes sent in Part 11 mode keep its rules after it is
-                      turned off, so an existing confirmation or lock can
-                      still be changed then. */}
-                  {part11Mode ||
-                  person.identityVerifiedAt !== null ||
-                  person.signingLockedAt !== null ? (
+                      turned off, so the controls stay for anyone they still
+                      concern. */}
+                  {showsPart11(person) ? (
                     <div className="flex flex-wrap gap-2 pt-1">
                       {person.identityVerifiedAt === null ? (
-                        part11Mode ? (
+                        part11Mode || person.hasOpenPart11Signing ? (
                           <button
                             aria-label={`Confirm ${person.name}'s identity`}
                             className="btn-quiet"

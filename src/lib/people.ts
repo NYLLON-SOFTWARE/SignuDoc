@@ -29,6 +29,11 @@ export type Person = {
   email: string;
   emailVerified: boolean;
   id: string;
+  /**
+   * Named to sign a Part 11 envelope that is still out, so the Part 11
+   * controls stay offered after the mode is turned off.
+   */
+  hasOpenPart11Signing: boolean;
   /** When an administrator confirmed who this is, for Part 11 signing. */
   identityVerifiedAt: number | null;
   identityVerificationNote: string | null;
@@ -59,6 +64,7 @@ export class PeopleError extends Error {
 
 type PersonRow = {
   closing: boolean;
+  hasOpenPart11Signing: boolean;
   createdAt: Date;
   email: string;
   emailVerified: boolean;
@@ -82,7 +88,16 @@ const PERSON_COLUMNS = `
   u.signing_locked_at AS "signingLockedAt",
   EXISTS (
     SELECT 1 FROM account_closure_requests c WHERE c.user_id = u.id
-  ) AS closing
+  ) AS closing,
+  EXISTS (
+    SELECT 1
+    FROM signers s
+    JOIN envelopes e ON e.id = s.envelope_id
+    WHERE s.user_id = u.id
+      AND e.part11
+      AND e.status = 'sent'
+      AND s.status IN ('pending', 'notified')
+  ) AS "hasOpenPart11Signing"
 `;
 
 function mapPerson(row: PersonRow): Person {
@@ -91,6 +106,7 @@ function mapPerson(row: PersonRow): Person {
     createdAt: row.createdAt.toISOString(),
     email: row.email,
     emailVerified: row.emailVerified,
+    hasOpenPart11Signing: row.hasOpenPart11Signing,
     id: row.id,
     identityVerificationNote: row.identityVerificationNote ?? null,
     identityVerifiedAt: row.identityVerifiedAt ?? null,
