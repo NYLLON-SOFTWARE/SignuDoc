@@ -21,7 +21,7 @@
 
 ## Why SignuDoc
 
-**Pay for hosting, not for every person who sends.** SignuDoc is free and open source and runs on your own Vercel account. A 15-person company pays DocuSign $8,100 a year for Business Pro seats, or $5,400 for Standard. With SignuDoc the seats cost nothing, and the same company pays Vercel about $240 a year to host it.
+**Free, however many people send.** SignuDoc is open source, and the Deploy button sets it up on free plans from Vercel, Neon and Resend. A 15-person company pays DocuSign $8,100 a year for Business Pro seats, or $5,400 for Standard. With SignuDoc the same 15 people pay nothing.
 
 **No envelope allowance to watch.** DocuSign's Standard and Business Pro plans include 100 envelopes per user per year. SignuDoc has no limit of its own: you send as many documents as your email plan carries.
 
@@ -107,14 +107,14 @@ DocuSign does more, and charges for it per user. SignuDoc does the everyday sign
 
 ### Price and ownership
 
-|                                  | SignuDoc                                                                                  | DocuSign eSignature                                                                      |
-| -------------------------------- | ----------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------- |
-| **Price**                        | Free and open source. You pay Vercel, and Resend once you send more than 100 emails a day | $11 (Personal), $30 (Standard) or $45 (Business Pro) per user a month, on an annual plan |
-| **Envelopes**                    | No limit of its own                                                                       | 5 a month on Personal, 100 per user a year on Standard and Business Pro                  |
-| **Where it runs**                | Your Vercel account, with your Neon database and Blob store                               | DocuSign's cloud                                                                         |
-| **Where data is kept**           | The region you choose, the EU included                                                    | DocuSign's data centers, the EU included                                                 |
-| **Source code**                  | MIT license, on GitHub                                                                    | Closed                                                                                   |
-| **Your own domain and branding** | ✅ your domain, logo and color, in every install                                          | Logo and colors from Standard                                                            |
+|                                  | SignuDoc                                                         | DocuSign eSignature                                                                      |
+| -------------------------------- | ---------------------------------------------------------------- | ---------------------------------------------------------------------------------------- |
+| **Price**                        | Free and open source, on free plans from Vercel, Neon and Resend | $11 (Personal), $30 (Standard) or $45 (Business Pro) per user a month, on an annual plan |
+| **Envelopes**                    | No limit of its own                                              | 5 a month on Personal, 100 per user a year on Standard and Business Pro                  |
+| **Where it runs**                | Your Vercel account, with your Neon database and Blob store      | DocuSign's cloud                                                                         |
+| **Where data is kept**           | The region you choose, the EU included                           | DocuSign's data centers, the EU included                                                 |
+| **Source code**                  | MIT license, on GitHub                                           | Closed                                                                                   |
+| **Your own domain and branding** | ✅ your domain, logo and color, in every install                 | Logo and colors from Standard                                                            |
 
 ### The signing loop
 
@@ -153,28 +153,28 @@ If your agreements run through Salesforce, need SMS checks or qualified signatur
 
 ## What it costs
 
-SignuDoc is free. Vercel and its Marketplace partners run it, at their own prices:
+SignuDoc is free, and the Deploy button puts it on free plans from Vercel, Neon and Resend, so a new install costs $0. This is what each free plan carries, and what you would pay past it:
 
-|                                      | What you pay                                                                                                                                                                                                                                                                                       |
-| ------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Vercel**                           | $0 on Hobby, which Vercel [limits to personal, non-commercial use](https://vercel.com/docs/limits/fair-use-guidelines). An organization belongs on [Pro](https://vercel.com/docs/plans/pro-plan), $20 a month for the one person who deploys it. The people who send and sign need no Vercel seat. |
-| **Database**                         | $0 on [Neon's free plan](https://neon.com/faqs/free-plan-limits-and-quotas): 1 GB and 100 compute hours a month. Past that, Neon's Launch plan charges for use, with no monthly minimum.                                                                                                           |
-| **Files**                            | 1 GB of [Vercel Blob](https://vercel.com/docs/vercel-blob/usage-and-pricing) free on Hobby. On Pro, Blob is paid from the plan's $20 monthly credit, at $0.023 per GB a month.                                                                                                                     |
-| **Email**                            | $0 on [Resend's free plan](https://resend.com/pricing), up to 100 emails a day and 3,000 a month. Resend Pro is $20 a month for 50,000. Every invitation, code, reminder and finished copy is an email.                                                                                            |
-| **Your own domain, if you want one** | Whatever your registrar charges. Vercel Pro includes one free for the first year.                                                                                                                                                                                                                  |
+|                                      | What you pay                                                                                                                                                                                                                                                                                                                                                        |
+| ------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Vercel**                           | $0 on Hobby, which Vercel [limits to personal, non-commercial use](https://vercel.com/docs/limits/fair-use-guidelines). A company that Vercel counts as commercial use belongs on [Pro](https://vercel.com/docs/plans/pro-plan), at $20 a month for the one person who deploys it, whatever the size of the team. The people who send and sign need no Vercel seat. |
+| **Database**                         | $0 on [Neon's free plan](https://neon.com/faqs/free-plan-limits-and-quotas): 1 GB and 100 compute hours a month. Past that, Neon's Launch plan charges for use, with no monthly minimum.                                                                                                                                                                            |
+| **Files**                            | 1 GB of [Vercel Blob](https://vercel.com/docs/vercel-blob/usage-and-pricing) free on Hobby. On Pro, Blob is paid from the plan's $20 monthly credit, at $0.023 per GB a month.                                                                                                                                                                                      |
+| **Email**                            | $0 on [Resend's free plan](https://resend.com/pricing), up to 100 emails a day and 3,000 a month. Resend Pro is $20 a month for 50,000. Every invitation, code, reminder and finished copy is an email.                                                                                                                                                             |
+| **Your own domain, if you want one** | Whatever your registrar charges. Vercel Pro includes one free for the first year.                                                                                                                                                                                                                                                                                   |
 
 <p align="center">
-  <img src="docs/images/price.png" alt="15 people, one year. DocuSign Business Pro: 15 seats at $45 a month each is $8,100 a year, with 1,500 envelopes included, and person 16 adds $540 a year. On DocuSign Standard, at $30 a seat, the same team pays $5,400 a year and goes without dropdown and radio fields. SignuDoc: $0 a year in seat fees, no envelope allowance, and person 16 adds $0. Hosting is separate and not per person: a company pays Vercel about $20 a month. Even after $240 a year of hosting, that team keeps $7,860 a year.">
+  <img src="docs/images/price.png" alt="15 people, one year. DocuSign Business Pro: 15 seats at $45 a month each is $8,100 a year, with 1,500 envelopes included, and person 16 adds $540 a year. On DocuSign Standard, at $30 a seat, the same team pays $5,400 a year and goes without dropdown and radio fields. SignuDoc: $0 a year, no envelope allowance, and person 16 adds $0. It runs on the free plans of Vercel, Neon and Resend. Vercel keeps its free plan for personal, non-commercial use: a company on Vercel Pro pays $20 a month, whatever its size. That team keeps $8,100 a year, or $7,860 on Vercel Pro.">
 </p>
 
-| A year, on an annual plan | DocuSign Standard | DocuSign Business Pro | SignuDoc                                                     |
-| ------------------------- | ----------------- | --------------------- | ------------------------------------------------------------ |
-| **5 people**              | $1,800            | $2,700                | $240                                                         |
-| **15 people**             | $5,400            | $8,100                | $240                                                         |
-| **25 people**             | $9,000            | $13,500               | $480                                                         |
-| **50 people**             | $18,000           | $27,000               | $480, plus any database or file use past the free allowances |
+| A year, on an annual plan | DocuSign Standard | DocuSign Business Pro | SignuDoc |
+| ------------------------- | ----------------- | --------------------- | -------- |
+| **5 people**              | $1,800            | $2,700                | $0       |
+| **15 people**             | $5,400            | $8,100                | $0       |
+| **25 people**             | $9,000            | $13,500               | $0       |
+| **50 people**             | $18,000           | $27,000               | $0       |
 
-SignuDoc's figures are Vercel Pro at $20 a month, plus Resend Pro at $20 a month from 25 people up. A team that stays under Resend's free 100 emails a day and 3,000 a month pays only for Vercel. DocuSign's figures are its US list prices for annual plans, $30 a user a month on Standard and $45 on Business Pro, each with 100 envelopes per user a year. Those plans stop at 50 users, and larger ones are quoted. Prices change, so check them before you quote these.
+SignuDoc's $0 is an install inside the free plans' allowances, which is where the Deploy button starts you. A company on Vercel Pro adds $240 a year, and Resend Pro adds another $240 once you send more than 100 emails a day or 3,000 a month. Neither grows with the number of people. DocuSign's figures are its US list prices for annual plans, $30 a user a month on Standard and $45 on Business Pro, each with 100 envelopes per user a year. Those plans stop at 50 users, and larger ones are quoted. Prices change, so check them before you quote these.
 
 ## Get started
 
