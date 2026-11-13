@@ -2076,7 +2076,10 @@ function DialogFrame({
 }) {
   return (
     <Dialog open onOpenChange={(open) => !open && onClose()}>
-      <DialogContent className="max-w-[600px] p-0" showCloseButton={false}>
+      <DialogContent
+        className="max-h-[calc(100dvh-2rem)] max-w-[600px] overflow-y-auto p-0"
+        showCloseButton={false}
+      >
         <div>
           <DialogHeader className="space-y-2 px-6 pt-6 sm:px-8 sm:pt-8">
             <DialogTitle>{title}</DialogTitle>

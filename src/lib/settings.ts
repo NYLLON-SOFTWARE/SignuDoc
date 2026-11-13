@@ -1,5 +1,11 @@
 import { buildBranding, type Branding } from "./branding.ts";
-import { getDb, queryOne, type DbExecutor } from "./db/connection.ts";
+import {
+  type DbExecutor,
+  type DbPool,
+  getDb,
+  queryOne,
+  withTransaction,
+} from "./db/connection.ts";
 import {
   evaluateSignup,
   type SignupDecision,
@@ -320,6 +326,25 @@ export async function saveSettings(
   update: SettingsUpdate,
   database: DbExecutor = getDb(),
 ): Promise<AppSettings> {
+  // Read and write under the row's lock, so a save of some fields never
+  // writes back a stale value of another (Part 11 mode above all) that a
+  // different writer changed in between.
+  if ("connect" in database && "totalCount" in database) {
+    return withTransaction(
+      (client) => saveSettingsLocked(update, client),
+      database as DbPool,
+    );
+  }
+
+  return saveSettingsLocked(update, database);
+}
+
+async function saveSettingsLocked(
+  update: SettingsUpdate,
+  database: DbExecutor,
+): Promise<AppSettings> {
+  await database.query(`SELECT id FROM app_settings WHERE id FOR UPDATE`);
+
   const current = (await readStoredSettings(database)) ?? {
     ...UNSET_SETTINGS,
     // A row that is being created is a decision about this install, and the

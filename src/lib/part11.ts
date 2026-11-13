@@ -504,13 +504,18 @@ async function alertAdministrators(
       "If this was not them, someone may be trying to sign in their name. Check with them before unlocking.",
     ].join("\n");
 
+    // One failed delivery must not keep the alert from the others.
     for (const admin of admins) {
-      await service.send({
-        subject: `Signing locked for ${person.name}`,
-        template: "signing_lock_alert",
-        textBody,
-        to: admin.email,
-      });
+      try {
+        await service.send({
+          subject: `Signing locked for ${person.name}`,
+          template: "signing_lock_alert",
+          textBody,
+          to: admin.email,
+        });
+      } catch (error) {
+        console.error("Failed to send a signing lock alert:", error);
+      }
     }
   } catch (error) {
     // The lock is in place and in the audit trail; the email is a courtesy.

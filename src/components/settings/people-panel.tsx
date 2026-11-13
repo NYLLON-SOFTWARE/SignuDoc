@@ -296,25 +296,32 @@ export function PeoplePanel({ part11Mode = false }: { part11Mode?: boolean }) {
                       <span className="pill pill-danger">Signing locked</span>
                     ) : null}
                   </div>
-                  {part11Mode ? (
+                  {/* Envelopes sent in Part 11 mode keep its rules after it is
+                      turned off, so an existing confirmation or lock can
+                      still be changed then. */}
+                  {part11Mode ||
+                  person.identityVerifiedAt !== null ||
+                  person.signingLockedAt !== null ? (
                     <div className="flex flex-wrap gap-2 pt-1">
                       {person.identityVerifiedAt === null ? (
-                        <button
-                          aria-label={`Confirm ${person.name}'s identity`}
-                          className="btn-quiet"
-                          disabled={
-                            pendingId !== null ||
-                            !person.emailVerified ||
-                            verifyingId === person.id
-                          }
-                          onClick={() => {
-                            setVerifyingId(person.id);
-                            setVerificationNote("");
-                          }}
-                          type="button"
-                        >
-                          Confirm identity
-                        </button>
+                        part11Mode ? (
+                          <button
+                            aria-label={`Confirm ${person.name}'s identity`}
+                            className="btn-quiet"
+                            disabled={
+                              pendingId !== null ||
+                              !person.emailVerified ||
+                              verifyingId === person.id
+                            }
+                            onClick={() => {
+                              setVerifyingId(person.id);
+                              setVerificationNote("");
+                            }}
+                            type="button"
+                          >
+                            Confirm identity
+                          </button>
+                        ) : null
                       ) : (
                         <button
                           aria-label={`Take back ${person.name}'s identity confirmation`}
