@@ -1,5 +1,6 @@
 import { z } from "zod";
 
+import { signatureMeanings } from "../types/domain.ts";
 import { envelopePageSchema } from "./envelope.ts";
 import { fieldInputMethodSchema, fieldTypeSchema } from "./field.ts";
 import {
@@ -72,6 +73,18 @@ export const signingPayloadSchema = z.object({
   envelopeTitle: envelopeTitleSchema,
   pageCount: z.number().int().positive(),
   pages: z.array(envelopePageSchema),
+  /**
+   * Set for a Part 11 envelope: the signer gives their email address and
+   * password again to sign, and confirms what the signature means.
+   */
+  part11: z
+    .object({
+      meaning: z.enum(signatureMeanings),
+      meaningLabel: z.string().trim().min(1),
+      meaningStatement: z.string().trim().min(1),
+    })
+    .nullable()
+    .optional(),
   senderName: z.string().trim().min(1).max(320),
   signer: z.object({
     email: emailSchema,
@@ -111,10 +124,19 @@ export type SigningVisibleField = z.infer<typeof signingVisibleFieldSchema>;
 export type SigningPayload = z.infer<typeof signingPayloadSchema>;
 export type SigningDisclosure = z.infer<typeof signingDisclosureSchema>;
 
-export const signerCheckRequestSchema = z.object({
-  code: z.string().trim().min(1).max(64),
-  method: z.enum(["access_code", "email_code"]),
-});
+export const signerCheckRequestSchema = z.discriminatedUnion("method", [
+  z.object({
+    code: z.string().trim().min(1).max(64),
+    method: z.enum(["access_code", "email_code"]),
+  }),
+  // Part 11 envelopes: the signer's own account, by its email address and
+  // password.
+  z.object({
+    email: z.string().trim().min(1).max(320),
+    method: z.literal("account"),
+    password: z.string().min(1).max(128),
+  }),
+]);
 
 export const signerConsentRequestSchema = z.object({
   disclosureVersion: z.string().trim().min(1).max(40),
@@ -124,8 +146,8 @@ export type SigningVerificationState = {
   emailCodeSentAt: number | null;
   envelopeTitle: string;
   maskedEmail: string;
-  pending: Array<"access_code" | "email_code">;
-  required: Array<"access_code" | "email_code">;
+  pending: Array<"access_code" | "account" | "email_code">;
+  required: Array<"access_code" | "account" | "email_code">;
   senderName: string;
 };
 export type SigningDeclineResponse = z.infer<

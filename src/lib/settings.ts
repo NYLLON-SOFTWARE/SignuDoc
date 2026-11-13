@@ -27,6 +27,12 @@ export type AppSettings = {
    */
   logoVersion: string | null;
   organizationName: string | null;
+  /**
+   * Part 11 mode: signers sign with their own verified accounts, give the
+   * meaning of each signature, and records are never deleted on a timer.
+   * See part11.ts.
+   */
+  part11Mode: boolean;
   privacyUrl: string | null;
   /**
    * Days a finished envelope is kept before the nightly job deletes it, or
@@ -76,6 +82,7 @@ type AppSettingsRow = {
   email_ready_at: number | null;
   logo_hash: string | null;
   organization_name: string | null;
+  part11_mode: boolean;
   privacy_url: string | null;
   retention_days: number | null;
   sender_address: string | null;
@@ -106,6 +113,7 @@ const FIRST_SETTINGS_COLUMNS = [
 const LATER_SETTINGS_COLUMNS = [
   ["retention_days"], // 20261113090000_signature_evidence
   ["brand_color", "logo_hash"], // 20261114120000_branding
+  ["part11_mode"], // 20261115090000_part11_mode
 ] as const;
 
 type LaterSettingsColumn = (typeof LATER_SETTINGS_COLUMNS)[number][number];
@@ -133,6 +141,7 @@ const UNSET_SETTINGS: AppSettings = {
   emailReadyAt: null,
   logoVersion: null,
   organizationName: null,
+  part11Mode: false,
   privacyUrl: null,
   retentionDays: null,
   senderAddress: null,
@@ -198,6 +207,7 @@ function mapSettingsRow(row: StoredSettingsRow): AppSettings {
     emailReadyAt: row.email_ready_at,
     logoVersion: row.logo_hash ?? null,
     organizationName: row.organization_name,
+    part11Mode: row.part11_mode ?? false,
     privacyUrl: row.privacy_url,
     retentionDays: row.retention_days ?? null,
     senderAddress: row.sender_address,
@@ -343,10 +353,11 @@ export async function saveSettings(
         terms_url,
         retention_days,
         brand_color,
+        part11_mode,
         created_at,
         updated_at
       )
-      values (true, $1, $2, $3, $4, $5, $6, $7, $8, $9, $11, $12, $10, $10)
+      values (true, $1, $2, $3, $4, $5, $6, $7, $8, $9, $11, $12, $13, $10, $10)
       on conflict (id) do update set
         allowed_email_domains = excluded.allowed_email_domains,
         email_ready_at = excluded.email_ready_at,
@@ -359,6 +370,7 @@ export async function saveSettings(
         terms_url = excluded.terms_url,
         retention_days = excluded.retention_days,
         brand_color = excluded.brand_color,
+        part11_mode = excluded.part11_mode,
         updated_at = excluded.updated_at
       returning ${SETTINGS_COLUMNS}
     `,
@@ -375,6 +387,7 @@ export async function saveSettings(
       now,
       next.retentionDays,
       next.brandColor,
+      next.part11Mode,
     ],
   );
 

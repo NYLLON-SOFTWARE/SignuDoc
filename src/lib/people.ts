@@ -6,6 +6,7 @@ import {
   queryOne,
   withTransaction,
 } from "./db/connection.ts";
+import { recordSystemAuditEvent } from "./services/system-audit.ts";
 
 // The accounts on this install and who among them is an administrator.
 //
@@ -28,8 +29,13 @@ export type Person = {
   email: string;
   emailVerified: boolean;
   id: string;
+  /** When an administrator confirmed who this is, for Part 11 signing. */
+  identityVerifiedAt: number | null;
+  identityVerificationNote: string | null;
   name: string;
   role: PersonRole;
+  /** When wrong passwords at signing locked the account for signing. */
+  signingLockedAt: number | null;
 };
 
 export type PeopleList = {
@@ -57,8 +63,11 @@ type PersonRow = {
   email: string;
   emailVerified: boolean;
   id: string;
+  identityVerificationNote: string | null;
+  identityVerifiedAt: number | null;
   name: string;
   role: string;
+  signingLockedAt: number | null;
 };
 
 const PERSON_COLUMNS = `
@@ -68,6 +77,9 @@ const PERSON_COLUMNS = `
   u.role,
   u."emailVerified" AS "emailVerified",
   u."createdAt" AS "createdAt",
+  u.identity_verified_at AS "identityVerifiedAt",
+  u.identity_verification_note AS "identityVerificationNote",
+  u.signing_locked_at AS "signingLockedAt",
   EXISTS (
     SELECT 1 FROM account_closure_requests c WHERE c.user_id = u.id
   ) AS closing
@@ -80,8 +92,11 @@ function mapPerson(row: PersonRow): Person {
     email: row.email,
     emailVerified: row.emailVerified,
     id: row.id,
+    identityVerificationNote: row.identityVerificationNote ?? null,
+    identityVerifiedAt: row.identityVerifiedAt ?? null,
     name: row.name,
     role: row.role === "admin" ? "admin" : "user",
+    signingLockedAt: row.signingLockedAt ?? null,
   };
 }
 
@@ -190,9 +205,9 @@ export async function setPersonRole(
   return withTransaction(async (tx) => {
     await tx.query("SELECT pg_advisory_xact_lock($1)", [ROLE_CHANGE_LOCK_ID]);
 
-    const actor = await queryOne<{ role: string }>(
+    const actor = await queryOne<{ email: string; role: string }>(
       tx,
-      `SELECT u.role FROM "user" u WHERE u.id = $1`,
+      `SELECT u.role, u.email FROM "user" u WHERE u.id = $1`,
       [actingUserId],
     );
 
@@ -245,6 +260,21 @@ export async function setPersonRole(
     await tx.query(
       `UPDATE "user" SET role = $1, "updatedAt" = now() WHERE id = $2`,
       [role, targetUserId],
+    );
+    await recordSystemAuditEvent(
+      {
+        actorEmail: actor.email,
+        actorUserId: actingUserId,
+        event: "role_changed",
+        metadata: {
+          from: target.role,
+          targetEmail: target.email,
+          targetName: target.name,
+          to: role,
+        },
+        targetUserId,
+      },
+      tx,
     );
 
     if (keeperId) {

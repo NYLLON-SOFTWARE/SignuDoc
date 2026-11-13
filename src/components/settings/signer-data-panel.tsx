@@ -10,6 +10,7 @@ import { FieldShell, ShellButton } from "@/components/shared/form-shell";
 type ErasureResult = {
   deletedEnvelopes: number;
   removedFromDrafts: number;
+  keptPart11?: { id: string; title: string }[];
   skippedInProgress: { id: string; title: string }[];
 };
 
@@ -48,9 +49,12 @@ export function SignerDataPanel() {
       const skipped = payload.skippedInProgress.length
         ? ` ${String(payload.skippedInProgress.length)} envelope(s) still out for signature were left alone: void them first, then erase again.`
         : "";
+      const kept = payload.keptPart11?.length
+        ? ` ${String(payload.keptPart11.length)} Part 11 record(s) were kept: they are deleted by hand only, once the rules that apply to them allow it.`
+        : "";
 
       setMessage({
-        text: `Deleted ${String(payload.deletedEnvelopes)} finished envelope(s) and removed the signer from ${String(payload.removedFromDrafts)} draft(s).${skipped}`,
+        text: `Deleted ${String(payload.deletedEnvelopes)} finished envelope(s) and removed the signer from ${String(payload.removedFromDrafts)} draft(s).${skipped}${kept}`,
         tone: "success",
       });
       setConfirmation("");

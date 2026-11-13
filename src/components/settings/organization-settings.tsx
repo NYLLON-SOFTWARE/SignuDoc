@@ -5,6 +5,7 @@ import { useEffect, useState, type ChangeEvent, type FormEvent } from "react";
 
 import { FieldShell, ShellButton } from "@/components/shared/form-shell";
 import { BrandingPanel } from "@/components/settings/branding-panel";
+import { Part11Panel } from "@/components/settings/part11-panel";
 import { PeoplePanel } from "@/components/settings/people-panel";
 import { SignerDataPanel } from "@/components/settings/signer-data-panel";
 import type { EmailDnsRecord, EmailStatus } from "@/lib/email-status";
@@ -370,8 +371,13 @@ export function OrganizationSettings({
             </div>
             <div className="max-w-xs">
               <FieldShell
-                disabled={isSaving}
+                disabled={isSaving || values.part11Mode}
                 error={errors.retentionDays}
+                helper={
+                  values.part11Mode
+                    ? "Off while Part 11 mode is on: those records are deleted by hand only."
+                    : undefined
+                }
                 label="Days to keep"
                 name="retention-days"
                 onChange={handleChange("retentionDays")}
@@ -391,7 +397,11 @@ export function OrganizationSettings({
 
         {/* The hosted service's accounts are strangers to each other, not
             one organization, so it has no list of them here. */}
-        {!values.hosted ? <PeoplePanel /> : null}
+        {!values.hosted ? <PeoplePanel part11Mode={values.part11Mode} /> : null}
+
+        {!values.hosted ? (
+          <Part11Panel initialEnabled={values.part11Mode} />
+        ) : null}
 
         <SignerDataPanel />
       </div>

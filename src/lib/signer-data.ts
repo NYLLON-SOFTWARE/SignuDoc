@@ -32,6 +32,8 @@ type SignerEnvelopeRow = {
   envelopeId: string;
   envelopeStatus: string;
   envelopeTitle: string;
+  /** Sent in Part 11 mode: never erased here. */
+  part11: boolean;
   signedAt: number | null;
   signerEmail: string;
   signerId: string;
@@ -70,6 +72,7 @@ async function listSignerEnvelopes(
         e.id AS "envelopeId",
         e.title AS "envelopeTitle",
         e.status AS "envelopeStatus",
+        e.part11,
         e.created_at AS "envelopeCreatedAt"
       FROM signers s
       JOIN envelopes e ON e.id = s.envelope_id
@@ -150,6 +153,8 @@ export async function exportSignerData(
 
 export type SignerErasureResult = {
   deletedEnvelopes: number;
+  /** Part 11 records, which an erasure request does not delete. */
+  keptPart11: { id: string; title: string }[];
   removedFromDrafts: number;
   skippedInProgress: { id: string; title: string }[];
 };
@@ -177,9 +182,13 @@ export async function eraseSignerData(
 
   const envelopes = await listSignerEnvelopes(email, database);
   const drafts = envelopes.filter((row) => row.envelopeStatus === "draft");
-  const finished = envelopes.filter((row) =>
+  const allFinished = envelopes.filter((row) =>
     ["completed", "declined", "voided"].includes(row.envelopeStatus),
   );
+  // Part 11 records are kept for as long as their own rules require, which
+  // an erasure request does not override. They are reported instead.
+  const keptPart11 = allFinished.filter((row) => row.part11);
+  const finished = allFinished.filter((row) => !row.part11);
   const inProgress = envelopes.filter((row) => row.envelopeStatus === "sent");
 
   // Lock the drafts and look again, at their status and at who is on them.
@@ -233,6 +242,10 @@ export async function eraseSignerData(
 
   return {
     deletedEnvelopes,
+    keptPart11: keptPart11.map((row) => ({
+      id: row.envelopeId,
+      title: row.envelopeTitle,
+    })),
     removedFromDrafts: erasedFromDrafts.removed,
     skippedInProgress: [...inProgress, ...raced].map((row) => ({
       id: row.envelopeId,

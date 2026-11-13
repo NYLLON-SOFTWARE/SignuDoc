@@ -261,6 +261,7 @@ test("erasing a signer leaves a row that was given someone else's address meanwh
   ]);
   assert.deepEqual(result, {
     deletedEnvelopes: 0,
+    keptPart11: [],
     removedFromDrafts: 0,
     skippedInProgress: [],
   });

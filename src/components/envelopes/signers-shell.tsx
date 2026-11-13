@@ -16,9 +16,12 @@ import {
   duplicateSignerEmailMessage,
   type ReplaceSignersResponse,
 } from "@/lib/schemas/signer";
+import { SIGNATURE_MEANING_DETAILS } from "@/lib/signature-meanings";
 import {
   MAX_COPY_RECIPIENTS_PER_ENVELOPE,
   MAX_SIGNERS_PER_ENVELOPE,
+  signatureMeanings,
+  type SignatureMeaning,
 } from "@/lib/types/domain";
 import { getSignerPalette } from "./signer-palette";
 
@@ -41,6 +44,8 @@ type SignerChecks = {
   hasAccessCode: boolean;
   removeAccessCode: boolean;
   requireEmailCode: boolean;
+  /** Part 11 mode: what this signature means (21 CFR 11.50). */
+  signatureMeaning: SignatureMeaning | null;
 };
 
 type ShellSigner = SignerChecks & {
@@ -86,6 +91,7 @@ function createSigner(
     removeAccessCode: false,
     requireEmailCode: overrides?.requireEmailCode ?? false,
     name: overrides?.name ?? "",
+    signatureMeaning: overrides?.signatureMeaning ?? null,
     signerId: overrides?.signerId,
     touched: {
       email: overrides?.touched?.email ?? false,
@@ -105,6 +111,7 @@ function buildInitialModel(record?: DraftSignerStepData): InitialModel {
           hasAccessCode: signer.hasAccessCode,
           name: signer.name,
           requireEmailCode: signer.requireEmailCode,
+          signatureMeaning: signer.signatureMeaning ?? null,
           signerId: signer.id,
           touched: { email: true, name: true },
         }),
@@ -257,6 +264,7 @@ function buildSignerRequest(
       id: signer.signerId,
       name: signer.name,
       requireEmailCode: signer.requireEmailCode,
+      signatureMeaning: signer.signatureMeaning,
       signOrder: index + 1,
     })),
   };
@@ -301,9 +309,11 @@ function SignerCard({
   onMove,
   onRemove,
   accessCodeError,
+  part11Mode = false,
   signer,
 }: {
   accessCodeError?: string;
+  part11Mode?: boolean;
   onChecksChange: (patch: Partial<SignerChecks>) => void;
   canMoveEarlier: boolean;
   canMoveLater: boolean;
@@ -439,6 +449,48 @@ function SignerCard({
             </span>
           </label>
         </div>
+
+        {part11Mode ? (
+          <label className="grid gap-2 rounded-2xl bg-white p-4 text-sm text-(--fg) sm:p-5">
+            <span className="font-bold text-(--fg)">
+              What this signature means
+            </span>
+            <span className="text-[0.8125rem] leading-5 text-(--secondary)">
+              Part 11 mode is on. The meaning is printed beside the signature
+              with the signer&apos;s name and the time. The signer needs an
+              account here with a confirmed email address, and an administrator
+              must have confirmed who they are.
+            </span>
+            <select
+              aria-invalid={!signer.signatureMeaning ? true : undefined}
+              aria-label={`Signer ${order} signature meaning`}
+              className="field-input"
+              disabled={disabled}
+              onChange={(event: ChangeEvent<HTMLSelectElement>) =>
+                onChecksChange({
+                  signatureMeaning: (
+                    signatureMeanings as readonly string[]
+                  ).includes(event.target.value)
+                    ? (event.target.value as SignatureMeaning)
+                    : null,
+                })
+              }
+              value={signer.signatureMeaning ?? ""}
+            >
+              <option value="">Choose a meaning</option>
+              {signatureMeanings.map((meaning) => (
+                <option key={meaning} value={meaning}>
+                  {SIGNATURE_MEANING_DETAILS[meaning].label}
+                </option>
+              ))}
+            </select>
+            {signer.signatureMeaning ? (
+              <span className="text-[0.8125rem] leading-5 text-(--secondary)">
+                {SIGNATURE_MEANING_DETAILS[signer.signatureMeaning].statement}
+              </span>
+            ) : null}
+          </label>
+        ) : null}
 
         <fieldset className="grid gap-3 rounded-2xl bg-white p-4 text-sm text-(--fg) sm:p-5">
           <legend className="sr-only">Extra check before signing</legend>
@@ -655,7 +707,9 @@ export function SignersShell({
     copyRecipients.every(
       (recipient) =>
         !hasSignerErrors(errorsByCopyRecipientId[recipient.localId] ?? {}),
-    );
+    ) &&
+    (!record?.part11Mode ||
+      signers.every((signer) => signer.signatureMeaning !== null));
 
   function clearSubmitError() {
     setSubmissionError(null);
@@ -920,6 +974,7 @@ export function SignersShell({
                     handleMoveSigner(signer.localId, direction)
                   }
                   onRemove={() => handleRemoveSigner(signer.localId)}
+                  part11Mode={record?.part11Mode ?? false}
                   signer={signer}
                 />
               );

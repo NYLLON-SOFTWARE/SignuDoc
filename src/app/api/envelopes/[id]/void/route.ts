@@ -4,7 +4,10 @@ import { requireVerifiedSenderSession } from "@/lib/auth/route-session";
 import { getDb } from "@/lib/db/connection";
 import { EnvelopeMutationError, voidSentEnvelope } from "@/lib/envelopes";
 import { logRouteError } from "@/lib/security/logging";
-import { applyRateLimit, buildRateLimitKey } from "@/lib/security/route-controls";
+import {
+  applyRateLimit,
+  buildRateLimitKey,
+} from "@/lib/security/route-controls";
 import {
   getClientIpAddress,
   getRequestPathname,
@@ -44,12 +47,17 @@ export async function POST(
     return rateLimitResponse;
   }
 
+  const body = (await request.json().catch(() => null)) as {
+    reason?: unknown;
+  } | null;
+
   try {
     const result = await voidSentEnvelope(
       session.user.id,
       id,
       {
         ipAddress,
+        reason: typeof body?.reason === "string" ? body.reason : null,
         senderEmail: session.user.email,
         senderName:
           typeof session.user.name === "string" && session.user.name.trim()

@@ -1,7 +1,9 @@
 import { NextResponse } from "next/server";
 
 import { requireAdminSession } from "@/lib/auth/admin";
+import { getDb, withTransaction } from "@/lib/db/connection";
 import {
+  diffSettings,
   OrganizationSettingsError,
   toOrganizationSettingsView,
   updateOrganizationSettings,
@@ -11,7 +13,12 @@ import {
   applyRateLimit,
   buildRateLimitKey,
 } from "@/lib/security/route-controls";
-import { getClientIpAddress, getRequestPathname } from "@/lib/security/request";
+import {
+  getClientIpAddress,
+  getRequestPathname,
+  getRequestUserAgent,
+} from "@/lib/security/request";
+import { recordSystemAuditEvent } from "@/lib/services/system-audit";
 import {
   getSettings,
   readStoredSettings,
@@ -44,7 +51,28 @@ export async function PUT(request: Request) {
   const body: unknown = await request.json().catch(() => null);
 
   try {
-    await updateOrganizationSettings(body ?? {}, await getSettings());
+    const current = await getSettings();
+
+    // The change and its line in the install's audit trail land together.
+    await withTransaction(async (tx) => {
+      const before = await readStoredSettings(tx);
+      const after = await updateOrganizationSettings(body ?? {}, current, tx);
+      const changes = diffSettings(before, after);
+
+      if (Object.keys(changes).length > 0) {
+        await recordSystemAuditEvent(
+          {
+            actorEmail: session.user.email,
+            actorUserId: session.user.id,
+            event: "settings_changed",
+            ipAddress: getClientIpAddress(request.headers),
+            metadata: { changes },
+            userAgent: getRequestUserAgent(request.headers),
+          },
+          tx,
+        );
+      }
+    }, getDb());
 
     // Read back rather than trusting the cache, so the form shows exactly
     // what is stored.
