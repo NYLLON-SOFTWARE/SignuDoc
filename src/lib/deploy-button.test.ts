@@ -90,9 +90,10 @@ test("the button's demo card is complete and its picture is in the repository", 
 });
 
 test("every picture and page the README and the guides link to is in the repository", () => {
-  // Markdown pictures and links, and the <img> tags the README centres.
+  // Markdown pictures and links, and the <img> and <a> tags the README
+  // centres.
   const localTarget =
-    /!?\[[^\]]*\]\((?!https?:|#|mailto:)([^)\s#]+)[^)]*\)|<img[^>]*\ssrc="(?!https?:)([^"]+)"/g;
+    /!?\[[^\]]*\]\((?!https?:|#|mailto:)([^)\s#]+)[^)]*\)|<(?:img[^>]*\ssrc|a[^>]*\shref)="(?!https?:|#|mailto:)([^"#]+)[^"]*"/g;
 
   for (const document of [
     "README.md",
