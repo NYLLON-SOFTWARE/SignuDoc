@@ -3,6 +3,8 @@ import { test } from "node:test";
 
 import {
   assertThumbnailImage,
+  buildThumbnailEtag,
+  matchesEtag,
   readJpegDimensions,
   THUMBNAIL_MAX_BYTES,
   THUMBNAIL_MAX_DIMENSION,
@@ -177,4 +179,35 @@ test("refuses a thumbnail whose picture is too large or too small", () => {
     () => assertThumbnailImage(buildJpeg({ height: 4, width: 4 })),
     ThumbnailValidationError,
   );
+});
+
+test("a thumbnail's name is the same every time, and its own", () => {
+  const etag = buildThumbnailEtag("6f1c2d0e-0000-4000-8000-000000000001");
+
+  assert.equal(
+    etag,
+    buildThumbnailEtag("6f1c2d0e-0000-4000-8000-000000000001"),
+  );
+  assert.notEqual(
+    etag,
+    buildThumbnailEtag("6f1c2d0e-0000-4000-8000-000000000002"),
+  );
+  // An ETag is a quoted string.
+  assert.match(etag, /^"[^"]+"$/);
+});
+
+test("a name the browser quotes back is recognized", () => {
+  const etag = buildThumbnailEtag("6f1c2d0e-0000-4000-8000-000000000001");
+  const other = buildThumbnailEtag("6f1c2d0e-0000-4000-8000-000000000002");
+
+  assert.equal(matchesEtag(etag, etag), true);
+  assert.equal(matchesEtag(`W/${etag}`, etag), true);
+  assert.equal(matchesEtag(`${other}, ${etag}`, etag), true);
+  assert.equal(matchesEtag("*", etag), true);
+
+  assert.equal(matchesEtag(other, etag), false);
+  assert.equal(matchesEtag(etag.replaceAll('"', ""), etag), false);
+  assert.equal(matchesEtag("", etag), false);
+  assert.equal(matchesEtag(null, etag), false);
+  assert.equal(matchesEtag(undefined, etag), false);
 });

@@ -10,6 +10,38 @@ export const THUMBNAIL_MAX_BYTES = 256 * 1024;
 export const THUMBNAIL_MAX_DIMENSION = 1200;
 const THUMBNAIL_MIN_DIMENSION = 16;
 
+/**
+ * The name a browser quotes back to ask whether its copy of a thumbnail is
+ * still good (an ETag).
+ *
+ * A document never changes once it is uploaded, so neither does the picture
+ * of its first page, and the name is made from the envelope alone. That lets
+ * "your copy is still good" be answered without reading the picture from
+ * file storage, where every read counts against the store's allowance. The
+ * version is here to be raised if thumbnails are ever drawn differently.
+ */
+export function buildThumbnailEtag(envelopeId: string): string {
+  return `"thumbnail-v1-${envelopeId}"`;
+}
+
+/** Whether an If-None-Match header names this ETag. */
+export function matchesEtag(
+  ifNoneMatch: string | null | undefined,
+  etag: string,
+): boolean {
+  if (!ifNoneMatch) {
+    return false;
+  }
+
+  return ifNoneMatch.split(",").some((candidate) => {
+    const name = candidate.trim();
+
+    // A cache in between may have marked the name as weak. For "do I
+    // already have this?" the two forms mean the same.
+    return name === "*" || name.replace(/^W\//, "") === etag;
+  });
+}
+
 export class ThumbnailValidationError extends Error {
   constructor(message: string) {
     super(message);

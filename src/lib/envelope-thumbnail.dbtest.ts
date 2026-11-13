@@ -16,6 +16,7 @@ import {
 } from "./envelopes.ts";
 import { deleteEnvelopesAndFiles } from "./retention.ts";
 import { buildEnvelopeThumbnailKey } from "./services/storage-keys.ts";
+import { buildThumbnailEtag } from "./services/thumbnails.ts";
 import {
   createStorageService,
   type StorageService,
@@ -120,6 +121,85 @@ test("a picture is kept for an envelope that exists", async () => {
   assert.equal(await thumbnailExists(draft), true);
 });
 
+test("a browser that already holds the picture is answered without a read from file storage", async () => {
+  const draft = await insertDraft();
+
+  await saveEnvelopeThumbnailForUser(
+    draft.userId,
+    draft.envelopeId,
+    THUMBNAIL,
+    { database, storageService },
+  );
+
+  const first = await getEnvelopeThumbnailForUser(
+    draft.userId,
+    draft.envelopeId,
+    { database, storageService },
+  );
+
+  assert.equal(first.isNotModified, false);
+
+  if (!first.isNotModified) {
+    await first.picture.stream.cancel();
+  }
+
+  // From here on, any read of a file fails the test.
+  const noReads: StorageService = {
+    ...storageService,
+    getObject: () => assert.fail("read a file"),
+    getObjectStream: () => assert.fail("read a file"),
+    headObject: () => assert.fail("read a file"),
+  };
+  const again = await getEnvelopeThumbnailForUser(
+    draft.userId,
+    draft.envelopeId,
+    { database, ifNoneMatch: first.etag, storageService: noReads },
+  );
+
+  assert.deepEqual(again, { etag: first.etag, isNotModified: true });
+
+  // The name of another envelope's picture is not this one's.
+  const other = await insertDraft();
+  const otherEtag = buildThumbnailEtag(other.envelopeId);
+
+  assert.notEqual(otherEtag, first.etag);
+
+  const mismatched = await getEnvelopeThumbnailForUser(
+    draft.userId,
+    draft.envelopeId,
+    { database, ifNoneMatch: otherEtag, storageService },
+  );
+
+  assert.equal(mismatched.isNotModified, false);
+
+  if (!mismatched.isNotModified) {
+    await mismatched.picture.stream.cancel();
+  }
+});
+
+test("quoting a picture's name does not show it to another account", async () => {
+  const draft = await insertDraft();
+  const stranger = await insertDraft();
+
+  await saveEnvelopeThumbnailForUser(
+    draft.userId,
+    draft.envelopeId,
+    THUMBNAIL,
+    { database, storageService },
+  );
+
+  // The account is checked before the name is: someone who knows the
+  // envelope's id, and so its picture's name, learns nothing from asking.
+  await assert.rejects(
+    getEnvelopeThumbnailForUser(stranger.userId, draft.envelopeId, {
+      database,
+      ifNoneMatch: buildThumbnailEtag(draft.envelopeId),
+      storageService,
+    }),
+    assertNotFound,
+  );
+});
+
 test("nobody else can store a picture for the envelope", async () => {
   const draft = await insertDraft();
   const stranger = await insertDraft();
@@ -217,13 +297,17 @@ test("a picture stays with an envelope that is handed to another account", async
     [keeper.userId, draft.envelopeId],
   );
 
-  const picture = await getEnvelopeThumbnailForUser(
+  const thumbnail = await getEnvelopeThumbnailForUser(
     keeper.userId,
     draft.envelopeId,
     { database, storageService },
   );
 
-  await picture.stream.cancel();
+  assert.equal(thumbnail.isNotModified, false);
+
+  if (!thumbnail.isNotModified) {
+    await thumbnail.picture.stream.cancel();
+  }
   await assert.rejects(
     getEnvelopeThumbnailForUser(draft.userId, draft.envelopeId, {
       database,
