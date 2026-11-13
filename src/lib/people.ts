@@ -132,6 +132,35 @@ export async function listPeople(
   };
 }
 
+/**
+ * The administrator who keeps the organization's records: the one who has
+ * been here longest and whose own account is not on its way to being
+ * closed. `exceptUserId` is the account that is giving the records up.
+ * Returns null when there is no such administrator.
+ */
+export async function findRecordKeeper(
+  exceptUserId: string,
+  database: DbExecutor,
+): Promise<string | null> {
+  const keeper = await queryOne<{ id: string }>(
+    database,
+    `
+      SELECT u.id
+      FROM "user" u
+      WHERE u.id <> $1
+        AND u.role = 'admin'
+        AND NOT EXISTS (
+          SELECT 1 FROM account_closure_requests c WHERE c.user_id = u.id
+        )
+      ORDER BY u."createdAt" ASC, u.id ASC
+      LIMIT 1
+    `,
+    [exceptUserId],
+  );
+
+  return keeper?.id ?? null;
+}
+
 export function parsePersonRole(value: unknown): PersonRole | null {
   return value === "admin" || value === "user" ? value : null;
 }
@@ -146,6 +175,11 @@ export function parsePersonRole(value: unknown): PersonRole | null {
  * looked at again here, where no role can change underneath it. Without
  * that, a request already under way would let someone who has just been
  * removed put themselves back.
+ *
+ * Taking the role away also takes away the finished envelopes the account
+ * was handed from closed accounts. Those were given to an administrator to
+ * keep for the organization, so they go to one who stays. The envelopes
+ * the account sent itself are its own and stay where they are.
  */
 export async function setPersonRole(
   actingUserId: string,
@@ -180,6 +214,8 @@ export async function setPersonRole(
       return mapPerson(target);
     }
 
+    let keeperId: string | null = null;
+
     if (role === "admin") {
       if (!target.emailVerified) {
         throw new PeopleError(
@@ -195,21 +231,10 @@ export async function setPersonRole(
         );
       }
     } else {
-      const others = await queryOne<{ count: number }>(
-        tx,
-        `
-          SELECT count(*)::int AS count
-          FROM "user" u
-          WHERE u.role = 'admin'
-            AND u.id <> $1
-            AND NOT EXISTS (
-              SELECT 1 FROM account_closure_requests c WHERE c.user_id = u.id
-            )
-        `,
-        [targetUserId],
-      );
+      // The administrator who stays, and who takes over the records.
+      keeperId = await findRecordKeeper(targetUserId, tx);
 
-      if ((others?.count ?? 0) === 0) {
+      if (!keeperId) {
         throw new PeopleError(
           "There has to be at least one administrator. Make someone else an administrator first.",
           409,
@@ -221,6 +246,26 @@ export async function setPersonRole(
       `UPDATE "user" SET role = $1, "updatedAt" = now() WHERE id = $2`,
       [role, targetUserId],
     );
+
+    if (keeperId) {
+      // The account's row has been held since it was read above. A closed
+      // account's envelopes are handed over only while holding the
+      // keeper's row too, so none can arrive here after this has looked.
+      const moved = await tx.query(
+        `
+          UPDATE envelopes
+          SET user_id = $1
+          WHERE user_id = $2 AND handed_over_at IS NOT NULL
+        `,
+        [keeperId, targetUserId],
+      );
+
+      if ((moved.rowCount ?? 0) > 0) {
+        console.info(
+          `Moved ${moved.rowCount} handed-over envelopes from ${targetUserId}, no longer an administrator, to ${keeperId}.`,
+        );
+      }
+    }
 
     return mapPerson({ ...target, role });
   }, database);

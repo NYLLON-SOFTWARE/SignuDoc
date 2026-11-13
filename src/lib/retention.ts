@@ -5,6 +5,7 @@ import {
   queryOne,
   withTransaction,
 } from "./db/connection.ts";
+import { findRecordKeeper } from "./people.ts";
 import {
   buildEnvelopeThumbnailKey,
   getRecipientCertificateKey,
@@ -347,12 +348,14 @@ const MAX_KEEPER_ATTEMPTS = 5;
  * person leaving must not take them along. Finished envelopes move to an
  * administrator before the
  * account is deleted. Only an administrator may receive them: anyone else
- * would gain documents they were never party to. Returns false when there
- * is no administrator to keep them, which leaves the account for the next
- * run.
+ * would gain documents they were never party to. Each envelope is marked
+ * as handed over, so that it moves on again if its keeper stops being an
+ * administrator. Returns false when there is no administrator to keep
+ * them, which leaves the account for the next run.
  */
 async function handOverFinishedEnvelopes(
   userId: string,
+  now: number,
   database: DbExecutor,
 ): Promise<boolean> {
   for (let attempt = 0; attempt < MAX_KEEPER_ATTEMPTS; attempt += 1) {
@@ -370,23 +373,9 @@ async function handOverFinishedEnvelopes(
       return true;
     }
 
-    const keeper = await queryOne<{ id: string }>(
-      database,
-      `
-        SELECT u.id
-        FROM "user" u
-        WHERE u.id <> $1
-          AND u.role = 'admin'
-          AND NOT EXISTS (
-            SELECT 1 FROM account_closure_requests c WHERE c.user_id = u.id
-          )
-        ORDER BY u."createdAt" ASC, u.id ASC
-        LIMIT 1
-      `,
-      [userId],
-    );
+    const keeperId = await findRecordKeeper(userId, database);
 
-    if (!keeper) {
+    if (!keeperId) {
       return false;
     }
 
@@ -395,10 +384,12 @@ async function handOverFinishedEnvelopes(
     // it holds their row: a removal already under way finishes first and is
     // seen here, and one that starts now waits until the records have
     // moved. Nothing moves to someone who is no longer an administrator.
+    // An envelope that was handed over before keeps the day it first was.
     const moved = await database.query(
       `
         UPDATE envelopes e
-        SET user_id = k.id
+        SET user_id = k.id,
+            handed_over_at = COALESCE(e.handed_over_at, $4)
         FROM (
           SELECT u.id
           FROM "user" u
@@ -411,12 +402,12 @@ async function handOverFinishedEnvelopes(
         ) k
         WHERE e.user_id = $2 AND e.status = ANY($3::text[])
       `,
-      [keeper.id, userId, FINISHED_ENVELOPE_STATUSES],
+      [keeperId, userId, FINISHED_ENVELOPE_STATUSES, now],
     );
 
     if ((moved.rowCount ?? 0) > 0) {
       console.info(
-        `Moved finished envelopes from closed account ${userId} to ${keeper.id}.`,
+        `Moved finished envelopes from closed account ${userId} to ${keeperId}.`,
       );
 
       return true;
@@ -509,13 +500,14 @@ async function deleteAccountRows(
 
 async function purgeQueuedAccount(
   userId: string,
+  now: number,
   database: DbExecutor,
   storageService: StorageService,
   env: EnvSource = process.env,
 ): Promise<boolean> {
   if (
     !isHostedMode(env) &&
-    !(await handOverFinishedEnvelopes(userId, database))
+    !(await handOverFinishedEnvelopes(userId, now, database))
   ) {
     throw new AccountPurgeDeferredError(userId);
   }
@@ -862,6 +854,7 @@ export async function runRetentionSweep({
     try {
       const deleted = await purgeQueuedAccount(
         closureRequest.userId,
+        now,
         database,
         storageService,
       );
