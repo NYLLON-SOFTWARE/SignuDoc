@@ -207,6 +207,38 @@ test("a sign-up rule changed a moment ago applies at once", async () => {
   assert.equal((await signUp("anyone@anywhere.example")).allowed, false);
 });
 
+test("a database that is behind this version still applies its sign-up rule", async () => {
+  await insertUser("owner@acme.com", "admin");
+  await saveSettings(
+    {
+      organizationName: "Acme Corp",
+      setupCompletedAt: 1,
+      signupMode: "closed",
+    },
+    database,
+  );
+
+  // The settings table as it was before an install could have its own
+  // color: a column this version reads is not there. Whatever happens
+  // below, the column is put back.
+  await database.query(
+    "alter table public.app_settings rename column brand_color to brand_color_later",
+  );
+
+  try {
+    const stored = await readStoredSettings(database);
+
+    assert.equal(stored?.signupMode, "closed");
+    assert.equal(stored?.organizationName, "Acme Corp");
+    assert.equal(stored?.brandColor, null);
+    assert.equal((await signUp("anyone@anywhere.example")).allowed, false);
+  } finally {
+    await database.query(
+      "alter table public.app_settings rename column brand_color_later to brand_color",
+    );
+  }
+});
+
 test("an email check only vouches for the sender address it was made with", async () => {
   const readyAt = async () =>
     (await readStoredSettings(database))?.emailReadyAt ?? null;

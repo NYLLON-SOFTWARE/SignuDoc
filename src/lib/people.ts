@@ -17,6 +17,7 @@ import {
 /** Serializes role changes, so two removals cannot both leave "one more". */
 const ROLE_CHANGE_LOCK_ID = 746108324;
 const MAX_LISTED_PEOPLE = 500;
+const MAX_SEARCH_LENGTH = 100;
 
 export type PersonRole = "admin" | "user";
 
@@ -29,6 +30,15 @@ export type Person = {
   id: string;
   name: string;
   role: PersonRole;
+};
+
+export type PeopleList = {
+  /** Administrators among every account, not only the ones listed. */
+  administratorCount: number;
+  /** The first accounts that match, at most five hundred of them. */
+  people: Person[];
+  /** How many accounts match. More than `people` holds when it was cut. */
+  total: number;
 };
 
 export class PeopleError extends Error {
@@ -75,21 +85,51 @@ function mapPerson(row: PersonRow): Person {
   };
 }
 
-/** Every account, administrators first, then by name. */
+// Part of a name or of an email address, whatever its case. Nothing typed
+// matches everyone.
+const MATCHES_SEARCH = `(
+  position($1 in lower(u.name)) > 0 OR position($1 in lower(u.email)) > 0
+)`;
+
+/**
+ * The accounts, administrators first, then by name. The list stops at five
+ * hundred, so the search is done here and not on what a page was sent: an
+ * account further down has to be findable, or it could never be made an
+ * administrator.
+ */
 export async function listPeople(
+  { search = "" }: { search?: string } = {},
   database: DbExecutor = getDb(),
-): Promise<Person[]> {
+): Promise<PeopleList> {
+  const needle = search.trim().toLowerCase().slice(0, MAX_SEARCH_LENGTH);
   const rows = await queryMany<PersonRow>(
     database,
     `
       SELECT ${PERSON_COLUMNS}
       FROM "user" u
+      WHERE ${MATCHES_SEARCH}
       ORDER BY (u.role = 'admin') DESC, lower(u.name) ASC, u.id ASC
       LIMIT ${MAX_LISTED_PEOPLE}
     `,
+    [needle],
+  );
+  const counts = await queryOne<{ administratorCount: number; total: number }>(
+    database,
+    `
+      SELECT
+        count(*) FILTER (WHERE ${MATCHES_SEARCH})::int AS total,
+        count(*) FILTER (WHERE u.role = 'admin')::int AS "administratorCount"
+      FROM "user" u
+    `,
+    [needle],
   );
 
-  return rows.map(mapPerson);
+  return {
+    administratorCount: counts?.administratorCount ?? 0,
+    people: rows.map(mapPerson),
+    // Never fewer than are listed, should an account arrive in between.
+    total: Math.max(counts?.total ?? 0, rows.length),
+  };
 }
 
 export function parsePersonRole(value: unknown): PersonRole | null {

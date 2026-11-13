@@ -23,7 +23,8 @@ type PersonRouteContext = {
 const noStore = { "cache-control": "private, no-store" };
 
 // Makes an account an administrator or an ordinary account again.
-// Administrators only. Answers with the whole list as it now stands.
+// Administrators only. Answers with the list as it now stands, narrowed by
+// the same `search` the page is showing.
 export async function PATCH(request: Request, context: PersonRouteContext) {
   const sessionResult = await requireAdminSession(request);
 
@@ -49,8 +50,10 @@ export async function PATCH(request: Request, context: PersonRouteContext) {
 
   const body = (await request.json().catch(() => null)) as {
     role?: unknown;
+    search?: unknown;
   } | null;
   const role = parsePersonRole(body?.role);
+  const search = typeof body?.search === "string" ? body.search : "";
 
   if (!role) {
     return NextResponse.json(
@@ -72,7 +75,7 @@ export async function PATCH(request: Request, context: PersonRouteContext) {
     });
 
     return NextResponse.json(
-      { people: await listPeople(), you: session.user.id },
+      { ...(await listPeople({ search })), you: session.user.id },
       { headers: noStore },
     );
   } catch (error) {

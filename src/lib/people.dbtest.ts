@@ -100,8 +100,10 @@ test("an administrator can be added and removed, but never the last one", async 
   // Asking for the role an account already has changes nothing.
   assert.equal((await setPersonRole(second, "admin", database)).role, "admin");
 
-  const listed = await listPeople(database);
-  const mine = listed.filter((person) => createdUsers.includes(person.id));
+  const listed = await listPeople({}, database);
+  const mine = listed.people.filter((person) =>
+    createdUsers.includes(person.id),
+  );
 
   // Administrators come first.
   assert.equal(mine[0]?.id, second);
@@ -148,7 +150,7 @@ test("an administrator whose account is closing does not count as the one that s
     refusedWith(409, /at least one administrator/),
   );
 
-  const person = (await listPeople(database)).find(
+  const person = (await listPeople({}, database)).people.find(
     (entry) => entry.id === leaving,
   );
 
@@ -183,4 +185,74 @@ test("only a confirmed account that is staying can become an administrator", asy
     setPersonRole(randomUUID(), "admin", database),
     refusedWith(404, /no longer exists/),
   );
+});
+
+test("an account past the end of the list can still be found and made an administrator", async () => {
+  await resetRoles();
+
+  const administrator = await createUser({ role: "admin" });
+  // More accounts than the list holds, all of them sorting ahead of the one
+  // looked for below.
+  const crowd = await database.query<{ id: string }>(
+    `
+      insert into public."user" (id, name, email, role, "emailVerified")
+      select
+        gen_random_uuid()::text,
+        'Crowd ' || n,
+        'crowd-' || n || '-' || $1 || '@example.test',
+        'user',
+        true
+      from generate_series(1, 510) as n
+      returning id
+    `,
+    [randomUUID()],
+  );
+
+  createdUsers.push(...crowd.rows.map((row) => row.id));
+
+  const last = randomUUID();
+
+  createdUsers.push(last);
+  await database.query(
+    `
+      insert into public."user" (id, name, email, role, "emailVerified")
+      values ($1, 'Zofia Zzzlast', $2, 'user', true)
+    `,
+    [last, `Zofia.${last}@Example.test`],
+  );
+
+  const everyone = await listPeople({}, database);
+
+  assert.equal(everyone.people.length, 500);
+  assert.ok(everyone.total > 500);
+  assert.equal(everyone.people[0]?.id, administrator);
+  assert.equal(
+    everyone.people.some((person) => person.id === last),
+    false,
+  );
+
+  // By part of the name, whatever its case and the spaces around it.
+  const byName = await listPeople({ search: "  zofia ZZZ " }, database);
+
+  assert.deepEqual(
+    byName.people.map((person) => person.id),
+    [last],
+  );
+  assert.equal(byName.total, 1);
+  // Counted among every account, not only the ones found.
+  assert.equal(byName.administratorCount, 1);
+
+  // By part of the email address.
+  const byEmail = await listPeople({ search: `zofia.${last}@` }, database);
+
+  assert.deepEqual(
+    byEmail.people.map((person) => person.id),
+    [last],
+  );
+
+  assert.equal(
+    (await listPeople({ search: "nobody at all" }, database)).total,
+    0,
+  );
+  assert.equal((await setPersonRole(last, "admin", database)).role, "admin");
 });

@@ -2593,20 +2593,35 @@ export async function replaceDraftEnvelopeSigners(
   const existingCopyRecipientIds = new Set(
     existingCopyRecipients.map((recipient) => recipient.id),
   );
+  const usedCopyRecipientIds = new Set<string>();
   // Left out of the request means "leave them as they are".
   const nextCopyRecipients = (
     parsedInput.copyRecipients ?? existingCopyRecipients
-  ).map((recipient, index) => ({
-    email: recipient.email,
-    id:
+  ).map((recipient, index) => {
+    const persistedId =
       recipient.id && existingCopyRecipientIds.has(recipient.id)
         ? recipient.id
-        : randomUUID(),
-    name: recipient.name,
-    // After every signer, and clear of the numbers the rewrite below
-    // parks rows on.
-    signOrder: COPY_RECIPIENT_SIGN_ORDER_BASE + index + 1,
-  }));
+        : randomUUID();
+
+    // Two rows of one request claiming to be the same saved recipient.
+    if (usedCopyRecipientIds.has(persistedId)) {
+      throw new EnvelopeMutationError(
+        "Each copy recipient must be unique.",
+        400,
+      );
+    }
+
+    usedCopyRecipientIds.add(persistedId);
+
+    return {
+      email: recipient.email,
+      id: persistedId,
+      name: recipient.name,
+      // After every signer, and clear of the numbers the rewrite below
+      // parks rows on.
+      signOrder: COPY_RECIPIENT_SIGN_ORDER_BASE + index + 1,
+    };
+  });
   const signerEmails = new Set(
     parsedInput.signers.map((signer) => signer.email.toLowerCase()),
   );

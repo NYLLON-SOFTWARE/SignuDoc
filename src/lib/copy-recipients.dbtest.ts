@@ -246,6 +246,42 @@ test("one address cannot be both a signer and a copy recipient", async () => {
   );
 });
 
+test("one saved copy recipient named twice is refused, and nothing is lost", async () => {
+  const { envelopeId, userId } = await createDraft();
+  const first = await replaceDraftEnvelopeSigners(
+    userId,
+    envelopeId,
+    { copyRecipients: [zofia], signers: [riley] },
+    database,
+  );
+  const zofiaId = first.copyRecipients[0]!.id;
+
+  // Two rows of the request claim to be the same saved recipient. Their
+  // addresses differ, so the check on addresses does not catch it.
+  await assert.rejects(
+    replaceDraftEnvelopeSigners(
+      userId,
+      envelopeId,
+      {
+        copyRecipients: [
+          { ...zofia, id: zofiaId },
+          { ...omar, id: zofiaId },
+        ],
+        signers: [riley],
+      },
+      database,
+    ),
+    (error: unknown) =>
+      error instanceof EnvelopeMutationError &&
+      error.statusCode === 400 &&
+      /copy recipient/i.test(error.message),
+  );
+  assert.deepEqual(
+    await listCopyRecipientsForEnvelopeId(envelopeId, database),
+    [{ ...zofia, id: zofiaId }],
+  );
+});
+
 test("the database refuses to put a copy recipient into the signing order", async () => {
   const { envelopeId, userId } = await createDraft();
 

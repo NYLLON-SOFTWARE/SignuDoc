@@ -6,7 +6,8 @@ import { logRouteError } from "@/lib/security/logging";
 import { getClientIpAddress, getRequestPathname } from "@/lib/security/request";
 
 // The accounts on this install, for the People list in Settings.
-// Administrators only.
+// Administrators only. `search` narrows the list to the accounts whose name
+// or email address contains it.
 
 export async function GET(request: Request) {
   const sessionResult = await requireAdminSession(request);
@@ -16,8 +17,10 @@ export async function GET(request: Request) {
   }
 
   try {
+    const search = new URL(request.url).searchParams.get("search") ?? "";
+
     return NextResponse.json(
-      { people: await listPeople(), you: sessionResult.user.id },
+      { ...(await listPeople({ search })), you: sessionResult.user.id },
       { headers: { "cache-control": "private, no-store" } },
     );
   } catch (error) {

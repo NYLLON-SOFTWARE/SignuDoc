@@ -2,45 +2,80 @@
 
 import { useEffect, useState } from "react";
 
-import type { Person, PersonRole } from "@/lib/people";
+import type { PeopleList, Person, PersonRole } from "@/lib/people";
 
 // Who has an account on this install, and which of them are administrators.
 // Administrators only.
+//
+// The list that arrives stops at five hundred accounts, so finding a person
+// is the server's job: what is typed is sent along, and the list on screen
+// is the answer to it.
 
 const GENERIC_ERROR_MESSAGE = "Something went wrong. Please try again.";
+/** How long typing has to pause before the list is asked for again. */
+const SEARCH_DELAY_MS = 250;
+/** With fewer accounts than this, nobody needs to search. */
+const SEARCH_FROM_TOTAL = 9;
 
-type PeopleResponse = {
-  error?: string;
-  people?: Person[];
-  you?: string;
-} | null;
+type PeopleResponse =
+  (Partial<PeopleList> & { error?: string; you?: string }) | null;
+
+function readPeopleList(payload: PeopleResponse): PeopleList | null {
+  if (!payload || !Array.isArray(payload.people)) {
+    return null;
+  }
+
+  return {
+    administratorCount:
+      payload.administratorCount ??
+      payload.people.filter((person) => person.role === "admin").length,
+    people: payload.people,
+    total: payload.total ?? payload.people.length,
+  };
+}
 
 export function PeoplePanel() {
-  const [people, setPeople] = useState<Person[] | null>(null);
+  const [list, setList] = useState<PeopleList | null>(null);
   const [you, setYou] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [pendingId, setPendingId] = useState<string | null>(null);
   const [filter, setFilter] = useState("");
+  // What the list on screen was asked for: `filter`, once typing has paused.
+  const [search, setSearch] = useState("");
+
+  useEffect(() => {
+    const timer = window.setTimeout(
+      () => setSearch(filter.trim()),
+      SEARCH_DELAY_MS,
+    );
+
+    return () => window.clearTimeout(timer);
+  }, [filter]);
 
   useEffect(() => {
     const controller = new AbortController();
 
-    fetch("/api/admin/people", { signal: controller.signal })
+    fetch(`/api/admin/people?search=${encodeURIComponent(search)}`, {
+      signal: controller.signal,
+    })
       .then(async (response) => {
         const payload = (await response
           .json()
           .catch(() => null)) as PeopleResponse;
+        const loaded = readPeopleList(payload);
 
-        if (!response.ok || !payload?.people) {
+        if (!response.ok || !loaded) {
           setError(payload?.error ?? GENERIC_ERROR_MESSAGE);
           return;
         }
 
-        setPeople(payload.people);
-        setYou(payload.you ?? null);
+        setList(loaded);
+        setYou(payload?.you ?? null);
+        setError(null);
       })
       .catch((loadError: unknown) => {
-        // Leaving the page cancels the request; that is not a failure.
+        // Leaving the page, or typing on, cancels the request; that is not
+        // a failure.
         if (!(
           loadError instanceof DOMException && loadError.name === "AbortError"
         )) {
@@ -49,7 +84,7 @@ export function PeoplePanel() {
       });
 
     return () => controller.abort();
-  }, []);
+  }, [search]);
 
   async function changeRole(person: Person, role: PersonRole) {
     if (pendingId) {
@@ -63,7 +98,7 @@ export function PeoplePanel() {
       const response = await fetch(
         `/api/admin/people/${encodeURIComponent(person.id)}`,
         {
-          body: JSON.stringify({ role }),
+          body: JSON.stringify({ role, search }),
           headers: { "content-type": "application/json" },
           method: "PATCH",
         },
@@ -71,8 +106,9 @@ export function PeoplePanel() {
       const payload = (await response
         .json()
         .catch(() => null)) as PeopleResponse;
+      const changed = readPeopleList(payload);
 
-      if (!response.ok || !payload?.people) {
+      if (!response.ok || !changed) {
         setError(payload?.error ?? GENERIC_ERROR_MESSAGE);
         return;
       }
@@ -83,7 +119,7 @@ export function PeoplePanel() {
         return;
       }
 
-      setPeople(payload.people);
+      setList(changed);
     } catch {
       setError(GENERIC_ERROR_MESSAGE);
     } finally {
@@ -91,16 +127,11 @@ export function PeoplePanel() {
     }
   }
 
-  const needle = filter.trim().toLowerCase();
-  const shown = (people ?? []).filter(
-    (person) =>
-      needle.length === 0 ||
-      person.name.toLowerCase().includes(needle) ||
-      person.email.toLowerCase().includes(needle),
-  );
-  const administratorCount = (people ?? []).filter(
-    (person) => person.role === "admin",
-  ).length;
+  const people = list?.people ?? null;
+  const administratorCount = list?.administratorCount ?? 0;
+  const searching = filter.trim().length > 0 || search.length > 0;
+  const canSearch =
+    list !== null && (searching || list.total >= SEARCH_FROM_TOTAL);
 
   return (
     <div className="space-y-5 border-t border-(--border) pt-8">
@@ -126,7 +157,7 @@ export function PeoplePanel() {
         <p className="text-sm text-(--secondary)">Loading people...</p>
       ) : null}
 
-      {people && people.length > 8 ? (
+      {canSearch ? (
         <label className="grid max-w-sm gap-1.5">
           <span className="text-[0.8125rem] font-semibold text-(--secondary)">
             Find a person
@@ -143,7 +174,7 @@ export function PeoplePanel() {
 
       {people ? (
         <ul aria-label="People" className="space-y-3">
-          {shown.map((person) => {
+          {people.map((person) => {
             const isAdmin = person.role === "admin";
             const isYou = person.id === you;
             const isLastAdmin = isAdmin && administratorCount === 1;
@@ -220,13 +251,14 @@ export function PeoplePanel() {
         </ul>
       ) : null}
 
-      {people && shown.length === 0 ? (
+      {people && people.length === 0 ? (
         <p className="text-sm text-(--secondary)">Nobody matches that.</p>
       ) : null}
 
-      {people && people.length >= 500 ? (
+      {list && list.total > list.people.length ? (
         <p className="text-sm text-(--secondary)">
-          Showing the first 500 accounts.
+          Showing the first {list.people.length} of {list.total}. Type part of a
+          name or an email address above to find the others.
         </p>
       ) : null}
     </div>

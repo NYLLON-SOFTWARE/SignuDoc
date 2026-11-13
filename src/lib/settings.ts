@@ -100,6 +100,25 @@ const SETTINGS_COLUMNS = `
   terms_url
 `;
 
+// The columns the settings table was created with, who may sign up among
+// them. A database that is behind this version is still read for these.
+const FIRST_SETTINGS_COLUMNS = `
+  allowed_email_domains,
+  email_ready_at,
+  organization_name,
+  privacy_url,
+  sender_address,
+  setup_completed_at,
+  signup_mode,
+  support_address,
+  terms_url
+`;
+
+type FirstSettingsRow = Omit<
+  AppSettingsRow,
+  "brand_color" | "logo_hash" | "retention_days"
+>;
+
 // How an install behaves before it has a settings row. This is what the app
 // did before settings existed, so an upgraded deployment does not change
 // until someone decides otherwise.
@@ -151,12 +170,20 @@ export function invalidateSettingsCache() {
  * database was connected.
  */
 export function isMissingSchemaError(error: unknown): boolean {
-  const code =
-    typeof error === "object" && error !== null && "code" in error
-      ? (error as { code?: unknown }).code
-      : undefined;
+  const code = readErrorCode(error);
 
   return code === "42P01" || code === "42703";
+}
+
+/** The table is there, but a column this version reads is not. */
+function isMissingColumnError(error: unknown): boolean {
+  return readErrorCode(error) === "42703";
+}
+
+function readErrorCode(error: unknown): unknown {
+  return typeof error === "object" && error !== null && "code" in error
+    ? (error as { code?: unknown }).code
+    : undefined;
 }
 
 function mapSettingsRow(row: AppSettingsRow): AppSettings {
@@ -176,7 +203,14 @@ function mapSettingsRow(row: AppSettingsRow): AppSettings {
   };
 }
 
-/** Reads the stored row. Null when there is none (or no table for it yet). */
+/**
+ * Reads the stored row. Null when there is none (or no table for it yet).
+ *
+ * A table that is there but behind this version, because a migration has
+ * not run, is still read for the columns it has always had. Taking it for
+ * "no row" would swap the sign-up rule an administrator chose for the open
+ * default of an install that never had settings.
+ */
 export async function readStoredSettings(
   database: DbExecutor = getDb(),
 ): Promise<AppSettings | null> {
@@ -188,12 +222,37 @@ export async function readStoredSettings(
 
     return row ? mapSettingsRow(row) : null;
   } catch (error) {
+    if (isMissingColumnError(error)) {
+      return readFirstSettings(database);
+    }
+
     if (isMissingSchemaError(error)) {
       return null;
     }
 
     throw error;
   }
+}
+
+// Nothing is caught here. If even this cannot be read (inside a
+// transaction the failed query above has already ended it), the caller
+// gets the error, and nobody is let in on the strength of a guess.
+async function readFirstSettings(
+  database: DbExecutor,
+): Promise<AppSettings | null> {
+  const row = await queryOne<FirstSettingsRow>(
+    database,
+    `select ${FIRST_SETTINGS_COLUMNS} from public.app_settings where id`,
+  );
+
+  return row
+    ? mapSettingsRow({
+        ...row,
+        brand_color: null,
+        logo_hash: null,
+        retention_days: null,
+      })
+    : null;
 }
 
 async function getStoredSettings(): Promise<AppSettings | null> {
