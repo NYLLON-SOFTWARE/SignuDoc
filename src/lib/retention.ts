@@ -435,7 +435,9 @@ function isPool(database: DbExecutor): database is ReturnType<typeof getDb> {
 /**
  * Deletes the account with everything that hangs on it, and returns the
  * files those rows pointed at. Returns null when the account is already
- * gone.
+ * gone. With `keepFinishedEnvelopes`, finished envelopes are handed to an
+ * administrator first, and the account stays (AccountPurgeDeferredError)
+ * when there is none to take them.
  *
  * The account's row is locked before the files are listed. Saving a
  * template or uploading a document writes a row that points at the account,
@@ -447,6 +449,8 @@ function isPool(database: DbExecutor): database is ReturnType<typeof getDb> {
  */
 async function deleteAccountRows(
   userId: string,
+  now: number,
+  keepFinishedEnvelopes: boolean,
   database: DbExecutor,
 ): Promise<string[] | null> {
   const account = await queryOne<{ id: string }>(
@@ -457,6 +461,28 @@ async function deleteAccountRows(
 
   if (!account) {
     return null;
+  }
+
+  if (keepFinishedEnvelopes) {
+    // The account's envelopes are locked before the finished ones are
+    // handed over, and stay locked until the account is gone. Signing,
+    // declining and voiding all change the envelope's row, so one that got
+    // in first has finished and its envelope is handed over here, and one
+    // that comes after waits and then finds no envelope. Without the lock
+    // an envelope could be completed between the hand-over and the delete,
+    // and its signed record would go with the account.
+    //
+    // The lock an UPDATE takes, not FOR UPDATE: a signer's audit event
+    // needs a share of this row for its foreign key, and FOR UPDATE would
+    // make it wait.
+    await database.query(
+      `SELECT id FROM envelopes WHERE user_id = $1 FOR NO KEY UPDATE`,
+      [userId],
+    );
+
+    if (!(await handOverFinishedEnvelopes(userId, now, database))) {
+      throw new AccountPurgeDeferredError(userId);
+    }
   }
 
   const envelopes = await listEnvelopeArtifactsForUser(userId, database);
@@ -505,19 +531,19 @@ async function purgeQueuedAccount(
   storageService: StorageService,
   env: EnvSource = process.env,
 ): Promise<boolean> {
-  if (
-    !isHostedMode(env) &&
-    !(await handOverFinishedEnvelopes(userId, now, database))
-  ) {
-    throw new AccountPurgeDeferredError(userId);
-  }
+  // On a self-hosted install the finished envelopes stay with the
+  // organization. Hosted mode keeps nothing of a closed account.
+  const keepFinishedEnvelopes = !isHostedMode(env);
 
-  // One transaction, so the lock on the account holds from the list of its
-  // files to the delete. A caller that hands in its own connection decides
-  // where its transaction ends.
+  // One transaction, so the locks on the account and its envelopes hold
+  // from the hand-over and the list of its files to the delete. A caller
+  // that hands in its own connection decides where its transaction ends.
   const storageKeys = isPool(database)
-    ? await withTransaction((tx) => deleteAccountRows(userId, tx), database)
-    : await deleteAccountRows(userId, database);
+    ? await withTransaction(
+        (tx) => deleteAccountRows(userId, now, keepFinishedEnvelopes, tx),
+        database,
+      )
+    : await deleteAccountRows(userId, now, keepFinishedEnvelopes, database);
 
   if (!storageKeys) {
     return false;

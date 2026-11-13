@@ -60,6 +60,60 @@ export async function openTestDatabase(): Promise<pg.Pool> {
   return new pg.Pool({ connectionString, max: 12 });
 }
 
+type QueryFunction = (text: unknown, values?: unknown[]) => unknown;
+
+/**
+ * The same database, except that `then` runs right after one chosen
+ * statement has, whether it went to the pool or to a client taken from it.
+ */
+export function afterStatement(
+  pool: pg.Pool,
+  isTheStatement: (text: string, values: unknown[]) => boolean,
+  then: () => Promise<void>,
+): pg.Pool {
+  function intercept<T extends object>(target: T): T {
+    return new Proxy(target, {
+      get(object, property) {
+        const value: unknown = Reflect.get(object, property);
+
+        if (property === "query") {
+          const query: QueryFunction = async (text, values) => {
+            const result = await (value as QueryFunction).call(
+              object,
+              text,
+              values,
+            );
+
+            if (
+              typeof text === "string" &&
+              isTheStatement(text, values ?? [])
+            ) {
+              await then();
+            }
+
+            return result;
+          };
+
+          return query;
+        }
+
+        if (property === "connect") {
+          return async () =>
+            intercept(
+              await (value as () => Promise<pg.PoolClient>).call(object),
+            );
+        }
+
+        return typeof value === "function"
+          ? (value.bind(object) as unknown)
+          : value;
+      },
+    });
+  }
+
+  return intercept(pool);
+}
+
 /**
  * Records an audit event the way a signer opening the signing page does,
  * timed against something else that writes to the same envelope: the

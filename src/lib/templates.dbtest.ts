@@ -9,7 +9,7 @@ import { PDFDocument } from "pdf-lib";
 import type pg from "pg";
 import { ZodError } from "zod";
 
-import { openTestDatabase } from "./db/test-database.ts";
+import { afterStatement, openTestDatabase } from "./db/test-database.ts";
 import {
   createDraftEnvelope,
   EnvelopeMutationError,
@@ -153,60 +153,6 @@ async function countEnvelopes(userId: string): Promise<number> {
   );
 
   return result.rows[0]!.total;
-}
-
-type QueryFunction = (text: unknown, values?: unknown[]) => unknown;
-
-/**
- * The same database, except that `then` runs right after one chosen
- * statement has, whether it went to the pool or to a client taken from it.
- */
-function afterStatement(
-  pool: pg.Pool,
-  isTheStatement: (text: string, values: unknown[]) => boolean,
-  then: () => Promise<void>,
-): pg.Pool {
-  function intercept<T extends object>(target: T): T {
-    return new Proxy(target, {
-      get(object, property) {
-        const value: unknown = Reflect.get(object, property);
-
-        if (property === "query") {
-          const query: QueryFunction = async (text, values) => {
-            const result = await (value as QueryFunction).call(
-              object,
-              text,
-              values,
-            );
-
-            if (
-              typeof text === "string" &&
-              isTheStatement(text, values ?? [])
-            ) {
-              await then();
-            }
-
-            return result;
-          };
-
-          return query;
-        }
-
-        if (property === "connect") {
-          return async () =>
-            intercept(
-              await (value as () => Promise<pg.PoolClient>).call(object),
-            );
-        }
-
-        return typeof value === "function"
-          ? (value.bind(object) as unknown)
-          : value;
-      },
-    });
-  }
-
-  return intercept(pool);
 }
 
 function assertTemplateError(statusCode: number) {
