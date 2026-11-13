@@ -63,7 +63,7 @@ export async function PATCH(request: Request, context: PersonRouteContext) {
   }
 
   try {
-    const person = await setPersonRole(id, role);
+    const person = await setPersonRole(session.user.id, id, role);
 
     logSecurityEvent("info", {
       category: "people_role_changed",

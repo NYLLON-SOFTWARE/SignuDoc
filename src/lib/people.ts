@@ -137,16 +137,34 @@ export function parsePersonRole(value: unknown): PersonRole | null {
 }
 
 /**
- * Makes an account an administrator, or an ordinary account again.
- * Returns the account as it now is.
+ * Makes an account an administrator, or an ordinary account again, for the
+ * administrator `actingUserId`. Returns the account as it now is.
+ *
+ * Whoever calls this has already checked that the acting account is an
+ * administrator, but that was before this waited its turn. Another
+ * administrator may have taken the role away in the meantime, so it is
+ * looked at again here, where no role can change underneath it. Without
+ * that, a request already under way would let someone who has just been
+ * removed put themselves back.
  */
 export async function setPersonRole(
+  actingUserId: string,
   targetUserId: string,
   role: PersonRole,
   database: DbPool = getDb(),
 ): Promise<Person> {
   return withTransaction(async (tx) => {
     await tx.query("SELECT pg_advisory_xact_lock($1)", [ROLE_CHANGE_LOCK_ID]);
+
+    const actor = await queryOne<{ role: string }>(
+      tx,
+      `SELECT u.role FROM "user" u WHERE u.id = $1`,
+      [actingUserId],
+    );
+
+    if (actor?.role !== "admin") {
+      throw new PeopleError("Only an administrator can do this.", 403);
+    }
 
     const target = await queryOne<PersonRow>(
       tx,

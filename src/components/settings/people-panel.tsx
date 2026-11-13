@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import type { PeopleList, Person, PersonRole } from "@/lib/people";
 
@@ -42,6 +42,14 @@ export function PeoplePanel() {
   const [filter, setFilter] = useState("");
   // What the list on screen was asked for: `filter`, once typing has paused.
   const [search, setSearch] = useState("");
+  // Counts up to have the list asked for again with the same search.
+  const [reloads, setReloads] = useState(0);
+  // The search as it stands now, for an answer that arrives after it moved.
+  const latestSearch = useRef(search);
+
+  useEffect(() => {
+    latestSearch.current = search;
+  }, [search]);
 
   useEffect(() => {
     const timer = window.setTimeout(
@@ -84,7 +92,7 @@ export function PeoplePanel() {
       });
 
     return () => controller.abort();
-  }, [search]);
+  }, [search, reloads]);
 
   async function changeRole(person: Person, role: PersonRole) {
     if (pendingId) {
@@ -116,6 +124,13 @@ export function PeoplePanel() {
       // Having given up the role, this page is no longer theirs to see.
       if (person.id === you && role === "user") {
         window.location.reload();
+        return;
+      }
+
+      // The search moved on while this was being saved. The list that came
+      // back answers the old one, so the list is asked for again.
+      if (latestSearch.current !== search) {
+        setReloads((count) => count + 1);
         return;
       }
 

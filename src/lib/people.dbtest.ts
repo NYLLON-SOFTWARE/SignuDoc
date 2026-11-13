@@ -71,6 +71,27 @@ async function resetRoles() {
   );
 }
 
+/** Waits until this many sessions are held up behind a lock. */
+async function waitForLockWaiters(count: number) {
+  for (let attempt = 0; attempt < 300; attempt += 1) {
+    const result = await database.query<{ waiting: number }>(
+      `
+        select count(*)::int as waiting
+        from pg_stat_activity
+        where datname = current_database() and wait_event_type = 'Lock'
+      `,
+    );
+
+    if ((result.rows[0]?.waiting ?? 0) >= count) {
+      return;
+    }
+
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+
+  throw new Error(`Expected ${count} sessions to be waiting behind a lock.`);
+}
+
 function refusedWith(statusCode: number, pattern: RegExp) {
   return (error: unknown) => {
     assert.ok(error instanceof PeopleError);
@@ -87,18 +108,34 @@ test("an administrator can be added and removed, but never the last one", async 
   const second = await createUser();
 
   await assert.rejects(
-    setPersonRole(first, "user", database),
+    setPersonRole(first, first, "user", database),
     refusedWith(409, /at least one administrator/),
   );
   assert.equal(await roleOf(first), "admin");
 
-  assert.equal((await setPersonRole(second, "admin", database)).role, "admin");
-  assert.equal((await setPersonRole(first, "user", database)).role, "user");
+  assert.equal(
+    (await setPersonRole(first, second, "admin", database)).role,
+    "admin",
+  );
+  assert.equal(
+    (await setPersonRole(first, first, "user", database)).role,
+    "user",
+  );
   assert.equal(await roleOf(first), "user");
   assert.equal(await roleOf(second), "admin");
 
   // Asking for the role an account already has changes nothing.
-  assert.equal((await setPersonRole(second, "admin", database)).role, "admin");
+  assert.equal(
+    (await setPersonRole(second, second, "admin", database)).role,
+    "admin",
+  );
+
+  // Having given the role up, the first account can no longer hand it out.
+  await assert.rejects(
+    setPersonRole(first, first, "admin", database),
+    refusedWith(403, /Only an administrator/),
+  );
+  assert.equal(await roleOf(first), "user");
 
   const listed = await listPeople({}, database);
   const mine = listed.people.filter((person) =>
@@ -116,8 +153,8 @@ test("two administrators removing each other at once leaves one", async () => {
   const left = await createUser({ role: "admin" });
   const right = await createUser({ role: "admin" });
   const results = await Promise.allSettled([
-    setPersonRole(left, "user", database),
-    setPersonRole(right, "user", database),
+    setPersonRole(right, left, "user", database),
+    setPersonRole(left, right, "user", database),
   ]);
 
   assert.deepEqual(results.map((result) => result.status).sort(), [
@@ -128,6 +165,45 @@ test("two administrators removing each other at once leaves one", async () => {
     "admin",
     "user",
   ]);
+});
+
+test("a request already under way does not outlive its administrator's role", async () => {
+  await resetRoles();
+
+  const staying = await createUser({ role: "admin" });
+  const removed = await createUser({ role: "admin" });
+  const holder = await database.connect();
+
+  try {
+    // Holds the removal up at the account it is about to change, which is
+    // after it has taken its turn among role changes.
+    await holder.query("begin");
+    await holder.query(`select 1 from public."user" where id = $1 for update`, [
+      removed,
+    ]);
+
+    const removal = setPersonRole(staying, removed, "user", database);
+
+    removal.catch(() => undefined);
+    await waitForLockWaiters(1);
+
+    // Sent while still an administrator, as the route had checked. It now
+    // waits its turn behind the removal.
+    const late = setPersonRole(removed, removed, "admin", database);
+
+    late.catch(() => undefined);
+    await waitForLockWaiters(2);
+    await holder.query("commit");
+
+    assert.equal((await removal).role, "user");
+    await assert.rejects(late, refusedWith(403, /Only an administrator/));
+  } finally {
+    await holder.query("rollback").catch(() => undefined);
+    holder.release();
+  }
+
+  assert.equal(await roleOf(removed), "user");
+  assert.equal(await roleOf(staying), "admin");
 });
 
 test("an administrator whose account is closing does not count as the one that stays", async () => {
@@ -146,7 +222,7 @@ test("an administrator whose account is closing does not count as the one that s
   );
 
   await assert.rejects(
-    setPersonRole(staying, "user", database),
+    setPersonRole(staying, staying, "user", database),
     refusedWith(409, /at least one administrator/),
   );
 
@@ -159,7 +235,8 @@ test("an administrator whose account is closing does not count as the one that s
 
 test("only a confirmed account that is staying can become an administrator", async () => {
   await resetRoles();
-  await createUser({ role: "admin" });
+
+  const administrator = await createUser({ role: "admin" });
 
   const unverified = await createUser({ verified: false });
   const closing = await createUser();
@@ -174,15 +251,15 @@ test("only a confirmed account that is staying can become an administrator", asy
   );
 
   await assert.rejects(
-    setPersonRole(unverified, "admin", database),
+    setPersonRole(administrator, unverified, "admin", database),
     refusedWith(409, /not confirmed their email/),
   );
   await assert.rejects(
-    setPersonRole(closing, "admin", database),
+    setPersonRole(administrator, closing, "admin", database),
     refusedWith(409, /being closed/),
   );
   await assert.rejects(
-    setPersonRole(randomUUID(), "admin", database),
+    setPersonRole(administrator, randomUUID(), "admin", database),
     refusedWith(404, /no longer exists/),
   );
 });
@@ -254,5 +331,8 @@ test("an account past the end of the list can still be found and made an adminis
     (await listPeople({ search: "nobody at all" }, database)).total,
     0,
   );
-  assert.equal((await setPersonRole(last, "admin", database)).role, "admin");
+  assert.equal(
+    (await setPersonRole(administrator, last, "admin", database)).role,
+    "admin",
+  );
 });

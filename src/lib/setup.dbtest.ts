@@ -212,30 +212,50 @@ test("a database that is behind this version still applies its sign-up rule", as
   await saveSettings(
     {
       organizationName: "Acme Corp",
+      retentionDays: 365,
       setupCompletedAt: 1,
       signupMode: "closed",
     },
     database,
   );
 
-  // The settings table as it was before an install could have its own
-  // color: a column this version reads is not there. Whatever happens
-  // below, the column is put back.
-  await database.query(
-    "alter table public.app_settings rename column brand_color to brand_color_later",
-  );
+  // Takes a column this version reads out of the table, as if its
+  // migration had not run. Whatever happens below, it is put back.
+  const hidden: string[] = [];
+  const hide = async (column: string) => {
+    await database.query(
+      `alter table public.app_settings rename column ${column} to ${column}_later`,
+    );
+    hidden.push(column);
+  };
 
   try {
-    const stored = await readStoredSettings(database);
+    // The table as it was before an install could have its own color.
+    await hide("brand_color");
 
-    assert.equal(stored?.signupMode, "closed");
-    assert.equal(stored?.organizationName, "Acme Corp");
-    assert.equal(stored?.brandColor, null);
+    const beforeBranding = await readStoredSettings(database);
+
+    assert.equal(beforeBranding?.signupMode, "closed");
+    assert.equal(beforeBranding?.organizationName, "Acme Corp");
+    assert.equal(beforeBranding?.brandColor, null);
+    // What that table does hold still counts.
+    assert.equal(beforeBranding?.retentionDays, 365);
+    assert.equal((await signUp("anyone@anywhere.example")).allowed, false);
+
+    // And as it was created, before a retention period could be set.
+    await hide("retention_days");
+
+    const asCreated = await readStoredSettings(database);
+
+    assert.equal(asCreated?.signupMode, "closed");
+    assert.equal(asCreated?.retentionDays, null);
     assert.equal((await signUp("anyone@anywhere.example")).allowed, false);
   } finally {
-    await database.query(
-      "alter table public.app_settings rename column brand_color_later to brand_color",
-    );
+    for (const column of hidden.reverse()) {
+      await database.query(
+        `alter table public.app_settings rename column ${column}_later to ${column}`,
+      );
+    }
   }
 });
 
