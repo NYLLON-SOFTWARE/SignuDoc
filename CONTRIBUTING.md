@@ -9,7 +9,7 @@ Issues and pull requests are welcome.
 3. Copy the environment file: `cp .env.example .env`
 4. Start the dev server: `npm run dev`
 
-See the [README](./README.md) for full setup details.
+See [Development](./docs/development.md) for full setup details.
 
 ## Development workflow
 
@@ -21,7 +21,7 @@ npm run lint
 npm run format:check
 ```
 
-If your change touches auth, email, storage, or production-only configuration, verify the related env-backed flow against the setup notes in [README.md](./README.md).
+If your change touches auth, email, storage, or production-only configuration, verify the related env-backed flow against the [self-hosting guide](./docs/self-hosting.md).
 
 If your change touches Better Auth tables or plugins, run `npm run auth:generate` and update the committed migration as needed.
 
