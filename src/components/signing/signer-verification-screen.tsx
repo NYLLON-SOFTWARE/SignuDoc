@@ -15,6 +15,11 @@ const METHOD_COPY: Record<Method, { helper: string; label: string }> = {
     helper: "The sender gave you this code separately, for example by phone.",
     label: "Access code",
   },
+  account: {
+    helper:
+      "This document is signed with your own account here. Enter the password you sign in with.",
+    label: "Password",
+  },
   email_code: {
     helper: "We email a 6-digit code to the address this document was sent to.",
     label: "Code from your email",
@@ -30,6 +35,7 @@ export function SignerVerificationScreen({
 }) {
   const method = state.pending[0]!;
   const [code, setCode] = useState("");
+  const [email, setEmail] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(
     state.emailCodeSentAt && method === "email_code"
@@ -75,7 +81,11 @@ export function SignerVerificationScreen({
 
     try {
       const response = await fetch(`${base}/verify`, {
-        body: JSON.stringify({ code, method }),
+        body: JSON.stringify(
+          method === "account"
+            ? { email, method, password: code }
+            : { code, method },
+        ),
         headers: { "content-type": "application/json" },
         method: "POST",
       });
@@ -130,13 +140,28 @@ export function SignerVerificationScreen({
               : ""}
           </p>
           <form className="mt-8 grid gap-5" onSubmit={handleSubmit}>
+            {method === "account" ? (
+              <FieldShell
+                autoComplete="username"
+                helper={`The address this document was sent to (${state.maskedEmail}).`}
+                label="Email address"
+                name="signer-email"
+                onChange={(event) => setEmail(event.target.value)}
+                readOnly={false}
+                type="email"
+                value={email}
+              />
+            ) : null}
             <FieldShell
-              autoComplete="one-time-code"
+              autoComplete={
+                method === "account" ? "current-password" : "one-time-code"
+              }
               helper={copy.helper}
               label={copy.label}
               name="signer-code"
               onChange={(event) => setCode(event.target.value)}
               readOnly={false}
+              type={method === "account" ? "password" : "text"}
               value={code}
             />
             {notice ? (
@@ -151,7 +176,10 @@ export function SignerVerificationScreen({
             ) : null}
             <div className="flex flex-col gap-3 sm:flex-row">
               <ShellButton
-                disabled={code.trim().length === 0}
+                disabled={
+                  code.trim().length === 0 ||
+                  (method === "account" && email.trim().length === 0)
+                }
                 loading={isChecking}
                 type="submit"
               >

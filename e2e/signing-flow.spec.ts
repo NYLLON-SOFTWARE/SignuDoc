@@ -767,3 +767,240 @@ test("a new install is set up, a sender sends a PDF and a recipient signs it", a
 
   expect(cspViolations).toEqual([]);
 });
+
+// Runs after the test above, on the install it left behind: one
+// administrator, sign-up open to anyone, no retention period.
+test("in Part 11 mode a verified account signs, with its password and a stated meaning", async ({
+  browser,
+  page,
+}, testInfo) => {
+  const runId = String(Date.now());
+  const signerEmail = `part11+${runId}@example.com`;
+  const signerName = "Pat Part";
+  const database = new pg.Client({ connectionString: e2eDatabaseUrl });
+  let adminEmail = "";
+
+  await database.connect();
+
+  try {
+    const admin = await database.query<{ email: string }>(
+      `select email from public."user" where role = 'admin' limit 1`,
+    );
+
+    adminEmail = admin.rows[0]?.email ?? "";
+  } finally {
+    await database.end();
+  }
+
+  expect(adminEmail).not.toBe("");
+
+  await test.step("the administrator turns Part 11 mode on", async () => {
+    await page.goto("/login");
+    await page.getByLabel("Email").fill(adminEmail);
+    await page.getByLabel("Password").fill(PASSWORD);
+    await page.getByRole("button", { name: "Log in" }).click();
+    await expect(page).toHaveURL(/\/dashboard$/);
+    await page.goto("/settings");
+    await page.getByRole("button", { name: "Turn on Part 11 mode" }).click();
+    await expect(
+      page.getByRole("button", { name: "Turn off Part 11 mode" }),
+    ).toBeVisible();
+    // A retention period would delete regulated records on a timer.
+    await expect(page.getByLabel("Days to keep")).toBeDisabled();
+  });
+
+  await test.step("the signer makes an account and confirms their email", async () => {
+    const signerContext = await browser.newContext();
+    const signerPage = await signerContext.newPage();
+
+    await signerPage.goto("/signup");
+    await signerPage.getByLabel("Full name").fill(signerName);
+    await signerPage.getByLabel("Email").fill(signerEmail);
+    await signerPage.getByLabel("Password").fill(PASSWORD);
+    await signerPage.getByRole("button", { name: "Sign up" }).click();
+
+    const verificationEmail = await waitForEmail({
+      template: "email_verification",
+      to: signerEmail,
+    });
+
+    await signerPage.goto(
+      extractLink(verificationEmail.text, "/api/auth/verify-email"),
+    );
+    await expect(signerPage).toHaveURL(/\/login/);
+    await signerContext.close();
+  });
+
+  let envelopeId = "";
+
+  await test.step("a draft names the signer and what their signature means", async () => {
+    const pdfPath = await writeSamplePdf(testInfo.outputPath("batch.pdf"));
+
+    await page.goto("/envelopes/new");
+    await page.getByLabel("Envelope title").fill("Batch record 42");
+    await page.getByLabel("Upload PDF").setInputFiles(pdfPath);
+    await page.getByRole("button", { name: "Next ->" }).click();
+    await expect(page).toHaveURL(/\/envelopes\/[^/]+\/signers$/);
+    envelopeId = /\/envelopes\/([^/]+)\/signers$/.exec(page.url())?.[1] ?? "";
+
+    await page.getByLabel("Signer 1 name").fill(signerName);
+    await page.getByLabel("Signer 1 email").fill(signerEmail);
+    // No meaning, no way on.
+    await expect(page.getByRole("button", { name: "Next →" })).toBeDisabled();
+    await page
+      .getByLabel("Signer 1 signature meaning")
+      .selectOption("approval");
+    await expect(page.getByText("I approve this document.")).toBeVisible();
+    await page.getByRole("button", { name: "Next →" }).click();
+    await expect(page).toHaveURL(/\/prepare$/);
+
+    await page.getByRole("button", { exact: true, name: "Signature" }).click();
+
+    const placementTarget = page.getByLabel("Place Signature on page 1");
+    const box = await placementTarget.boundingBox();
+
+    await placementTarget.click({
+      position: { x: box!.width * 0.3, y: box!.height * 0.6 },
+    });
+    await expect(page.getByRole("status")).toHaveText("Saved");
+    await page.getByRole("button", { name: "Next →" }).click();
+    await expect(page).toHaveURL(/\/review$/);
+  });
+
+  async function trySend() {
+    await page.getByRole("button", { name: "Send envelope" }).click();
+
+    const confirmation = page.getByRole("dialog", {
+      name: "Send this envelope?",
+    });
+
+    await confirmation.getByRole("checkbox").check();
+    await confirmation.getByRole("button", { name: "Send now" }).click();
+  }
+
+  await test.step("it is not sent until an administrator confirms who the signer is", async () => {
+    await trySend();
+    await expect(
+      page.getByText(
+        `An administrator has to confirm ${signerName}'s identity under Settings, People before they can sign.`,
+      ),
+    ).toBeVisible();
+
+    await page.goto("/settings");
+    await page
+      .getByRole("button", { name: `Confirm ${signerName}'s identity` })
+      .click();
+    await page
+      .getByLabel("How did you check who this is?")
+      .fill("Badge checked in person");
+    await page.getByRole("button", { exact: true, name: "Save" }).click();
+    await expect(
+      page.getByRole("button", {
+        name: `Take back ${signerName}'s identity confirmation`,
+      }),
+    ).toBeVisible();
+
+    await page.goto(`/envelopes/${envelopeId}/review`);
+    await trySend();
+    await expect(page).toHaveURL(new RegExp(`/envelopes/${envelopeId}$`));
+  });
+
+  await test.step("the signer gives their password to open it and again to sign", async () => {
+    const invitation = await waitForEmail({
+      template: "signing_invitation",
+      to: signerEmail,
+    });
+    const signerContext = await browser.newContext({
+      viewport: { height: 900, width: 1440 },
+    });
+    const signerPage = await signerContext.newPage();
+
+    await signerPage.goto(extractLink(invitation.text, "/sign/"));
+    await expect(
+      signerPage.getByRole("heading", { name: "Confirm it's you" }),
+    ).toBeVisible();
+    await signerPage.getByLabel("Email address").fill(signerEmail);
+    await signerPage.getByLabel("Password").fill(PASSWORD);
+    await signerPage.getByRole("button", { name: "Continue" }).click();
+
+    const consent = signerPage.getByRole("dialog", { name: "Before you sign" });
+
+    await consent
+      .getByRole("checkbox", {
+        name: "I agree to use electronic records and signatures",
+      })
+      .check();
+    await consent.getByRole("button", { name: "Agree and continue" }).click();
+    await signerPage
+      .getByRole("button", { exact: true, name: "Signature" })
+      .click();
+    await signerPage
+      .getByRole("dialog", { name: "Add your signature" })
+      .getByRole("button", { name: "Apply signature" })
+      .click();
+    await signerPage.getByRole("button", { name: "Finish" }).click();
+
+    const finish = signerPage.getByRole("dialog", { name: "Finish signing?" });
+    const finishButton = finish.getByRole("button", { name: "Finish signing" });
+
+    await expect(
+      finish.getByText("Approval: I approve this document."),
+    ).toBeVisible();
+    await expect(finishButton).toBeDisabled();
+    await finish
+      .getByRole("checkbox", { name: "I confirm the meaning of my signature" })
+      .check();
+    await finish.getByLabel("Email address").fill(signerEmail);
+    await finish.getByLabel("Password").fill("not my password");
+    await finishButton.click();
+    await expect(finish.getByRole("alert")).toBeVisible();
+
+    await finish.getByLabel("Password").fill(PASSWORD);
+    await finishButton.click();
+    await expect(signerPage).toHaveURL(/\/sign\/[^/]+\/done/);
+    await signerContext.close();
+  });
+
+  await test.step("the audit trails record it and export as CSV", async () => {
+    await waitForEmail({ template: "completion_notification", to: adminEmail });
+
+    const envelopeCsv = await (
+      await page.request.get(`/api/envelopes/${envelopeId}/audit`)
+    ).text();
+
+    expect(envelopeCsv).toContain("Part 11 envelope,yes");
+    expect(envelopeCsv).toMatch(/Hash chain check,intact/);
+    expect(envelopeCsv).toContain("reauthentication_failed");
+    expect(envelopeCsv).toMatch(/,signed,/);
+    expect(envelopeCsv).toContain("approval");
+
+    const siteAudit = (await (
+      await page.request.get("/api/admin/audit")
+    ).json()) as { chain: { ok: boolean }; events: { event: string }[] };
+
+    expect(siteAudit.chain.ok).toBe(true);
+
+    const events = siteAudit.events.map((event) => event.event);
+
+    expect(events).toContain("part11_mode_changed");
+    expect(events).toContain("identity_verified");
+    expect(events).toContain("reauthentication_failed");
+
+    // The signed PDF still downloads, with the manifestation stamped on it.
+    const signed = await page.request.get(
+      `/api/envelopes/${envelopeId}/download?type=signed`,
+    );
+
+    expect(signed.status()).toBe(200);
+  });
+
+  await test.step("the mode can be turned off again", async () => {
+    expect(
+      (
+        await page.request.put("/api/admin/part11", {
+          data: { enabled: false },
+        })
+      ).status(),
+    ).toBe(200);
+  });
+});

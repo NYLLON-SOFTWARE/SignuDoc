@@ -63,6 +63,18 @@ export const auditEventTypes = [
   "deadline_changed",
   "expired",
   "reminded_auto",
+  "reauthentication_failed",
+] as const;
+
+/**
+ * What a signature means, for Part 11 envelopes (21 CFR 11.50(a)(3)). The
+ * sender picks one for each signer, and it is printed beside the signature.
+ */
+export const signatureMeanings = [
+  "approval",
+  "review",
+  "responsibility",
+  "authorship",
 ] as const;
 
 export const auditActorTypes = ["sender", "signer", "system"] as const;
@@ -86,6 +98,7 @@ export const emailTemplateKinds = [
   "retention_notice",
   "expiry_notice",
   "test_email",
+  "signing_lock_alert",
 ] as const;
 
 export type EnvelopeStatus = (typeof envelopeStatuses)[number];
@@ -95,4 +108,5 @@ export type FieldInputMethod = (typeof fieldInputMethods)[number];
 export type AuditEventType = (typeof auditEventTypes)[number];
 export type AuditActorType = (typeof auditActorTypes)[number];
 export type DownloadFileType = (typeof downloadFileTypes)[number];
+export type SignatureMeaning = (typeof signatureMeanings)[number];
 export type EmailTemplateKind = (typeof emailTemplateKinds)[number];

@@ -44,6 +44,12 @@ import {
 } from "./schemas/signer.ts";
 import { getBranding } from "./settings.ts";
 import {
+  checkSigningCredentials,
+  MAX_SIGNING_PASSWORD_ATTEMPTS,
+  type PasswordVerifier,
+  SIGNATURE_MEANING_DETAILS,
+} from "./part11.ts";
+import {
   listAuditEventsForEnvelope,
   recordAuditEvent,
   recordEmailSent,
@@ -128,6 +134,7 @@ type SigningEnvelopeRow = {
   expiresAt: number | null;
   id: string;
   pageCount: number;
+  part11: boolean;
   sentAt: number | null;
   signedPdfKey: string | null;
   sourcePdfFilename: string;
@@ -152,10 +159,13 @@ type SigningSignerRow = {
   lastNudgedAt: number | null;
   name: string;
   signOrder: number;
+  signatureMeaning:
+    "approval" | "authorship" | "responsibility" | "review" | null;
   signedAt: number | null;
   signingTokenExpiresAt: number | null;
   signingTokenHash: string | null;
   status: "declined" | "notified" | "pending" | "signed";
+  userId: string | null;
   turnStartedAt: number | null;
   updatedAt: number;
 };
@@ -212,6 +222,8 @@ type SubmitSigningOptions = {
   storageService?: StorageService;
   /** The extra checks this browser has passed for the link (from its cookie). */
   verifiedMethods?: readonly SignerCheckMethod[];
+  /** Replaced in tests: checks a Part 11 signer's password. */
+  verifyPassword?: PasswordVerifier;
 };
 
 const signingUnavailableStatusCodeMap: Record<
@@ -500,6 +512,7 @@ async function getEnvelopeRow(
           evidence_key AS "evidenceKey",
           source_pdf_hash AS "sourcePdfHash",
           page_count AS "pageCount",
+          part11,
           sent_at AS "sentAt",
           completed_at AS "completedAt",
           declined_at AS "declinedAt",
@@ -537,6 +550,8 @@ async function listSignerRows(
         signed_at AS "signedAt",
         declined_at AS "declinedAt",
         decline_reason AS "declineReason",
+        signature_meaning AS "signatureMeaning",
+        user_id AS "userId",
         created_at AS "createdAt",
         updated_at AS "updatedAt"
       FROM signers
@@ -878,9 +893,19 @@ function assertRadioGroupsAnswered(
   }
 }
 
+type Part11SignatureRecord = {
+  /** How the signer gave both parts of their signature again. */
+  credential: "account_password";
+  meaning: NonNullable<SigningSignerRow["signatureMeaning"]>;
+  meaningStatement: string;
+  reauthenticatedAt: number;
+  userId: string;
+};
+
 function buildSignedAuditEvent(input: {
   authMethods: readonly SignerCheckMethod[];
   envelopeId: string;
+  part11?: Part11SignatureRecord | null;
   signatureMethods: readonly string[];
   requestMeta: SigningRequestMeta;
   signer: ReturnType<typeof signerRecordSchema.parse>;
@@ -903,6 +928,7 @@ function buildSignedAuditEvent(input: {
       authMethods: [...input.authMethods],
       signatureMethods: [...input.signatureMethods],
       timezoneOffsetMinutes: input.timezoneOffsetMinutes,
+      ...(input.part11 ? { part11: input.part11 } : {}),
     },
     userAgent: input.requestMeta.userAgent ?? null,
   };
@@ -1332,13 +1358,31 @@ export async function sendSignerEmailCode(
  * Checks an access code or emailed code. Returns every check this browser
  * has now passed, for the caller to store in the link's cookie.
  */
+function describeCredentialFailure(result: {
+  attemptsLeft: number;
+  identityNotConfirmed?: true;
+  locked: boolean;
+}): string {
+  if (result.identityNotConfirmed) {
+    return "Your account cannot sign this document right now: an administrator has to confirm your identity, and your email address must be confirmed. Ask the sender or an administrator.";
+  }
+
+  if (result.locked) {
+    return `This account is locked for signing after ${MAX_SIGNING_PASSWORD_ATTEMPTS} wrong passwords. Ask an administrator to unlock it.`;
+  }
+
+  return `That email address or password is not right. ${result.attemptsLeft} ${result.attemptsLeft === 1 ? "try is" : "tries are"} left before the account is locked for signing.`;
+}
+
 export async function verifySignerCheck(
   token: string,
   input: unknown,
   {
     database = getDb(),
+    emailService,
     requestMeta = {},
     verifiedMethods = [],
+    verifyPassword,
   }: SubmitSigningOptions = {},
 ): Promise<SignerCheckMethod[]> {
   const parsed = signerCheckRequestSchema.parse(input);
@@ -1351,7 +1395,41 @@ export async function verifySignerCheck(
     throw new SigningMutationError("This check is not needed.", 400);
   }
 
-  if (parsed.method === "access_code") {
+  if (parsed.method === "account") {
+    const result = await checkSigningCredentials(
+      {
+        email: parsed.email,
+        ipAddress: requestMeta.ipAddress ?? null,
+        password: parsed.password,
+        userAgent: requestMeta.userAgent ?? null,
+        userId: state.accountUserId!,
+      },
+      { database, emailService, verifyPassword },
+    );
+
+    passed = result.ok;
+
+    if (!result.ok) {
+      await recordAuditEvent(
+        {
+          actorEmail: context.signer.email,
+          actorType: "signer",
+          envelopeId: context.envelope.id,
+          event: "verification_failed",
+          ipAddress: requestMeta.ipAddress ?? null,
+          metadata: {
+            ...signerAuditMetadata(context),
+            locked: result.locked,
+            method: parsed.method,
+          },
+          userAgent: requestMeta.userAgent ?? null,
+        },
+        database,
+      );
+
+      throw new SigningMutationError(describeCredentialFailure(result), 400);
+    }
+  } else if (parsed.method === "access_code") {
     passed = checkAccessCode(parsed.code, state.accessCodeHash!);
   } else {
     // Count the attempt and read the code in one statement, so parallel
@@ -1670,6 +1748,17 @@ export async function getSigningPayloadForToken(
     envelopeTitle: context.envelope.title,
     pageCount: context.envelope.pageCount,
     pages: context.pages,
+    part11:
+      context.envelope.part11 && context.signer.signatureMeaning
+        ? {
+            meaning: context.signer.signatureMeaning,
+            meaningLabel:
+              SIGNATURE_MEANING_DETAILS[context.signer.signatureMeaning].label,
+            meaningStatement:
+              SIGNATURE_MEANING_DETAILS[context.signer.signatureMeaning]
+                .statement,
+          }
+        : null,
     senderName: normalizeSenderName(context.sender),
     signer: {
       email: context.signer.email,
@@ -1683,6 +1772,85 @@ export async function getSigningPayloadForToken(
   });
 }
 
+/**
+ * For a Part 11 envelope: checks the signer's email address and password
+ * again for this signature, and that they confirmed what it means. Returns
+ * what goes in the "signed" audit event, or null for other envelopes.
+ */
+async function reauthenticatePart11Signer(
+  context: ResolvedSigningContext,
+  state: SignerCheckState,
+  reauthentication:
+    { email: string; meaningConfirmed: true; password: string } | undefined,
+  {
+    database,
+    emailService,
+    requestMeta,
+    verifyPassword,
+  }: {
+    database: DbPool;
+    emailService: EmailService;
+    requestMeta: SigningRequestMeta;
+    verifyPassword?: PasswordVerifier;
+  },
+): Promise<Part11SignatureRecord | null> {
+  if (!context.envelope.part11 && !state.accountUserId) {
+    return null;
+  }
+
+  const meaning = context.signer.signatureMeaning;
+
+  if (!state.accountUserId || !meaning) {
+    throw new SigningMutationError(
+      "This document was sent for Part 11 signatures but has no account or meaning for you. Ask the sender to send it again.",
+      409,
+    );
+  }
+
+  if (!reauthentication) {
+    throw new SigningMutationError(
+      "Enter your email address and password to sign.",
+      400,
+    );
+  }
+
+  const result = await checkSigningCredentials(
+    {
+      email: reauthentication.email,
+      ipAddress: requestMeta.ipAddress ?? null,
+      password: reauthentication.password,
+      userAgent: requestMeta.userAgent ?? null,
+      userId: state.accountUserId,
+    },
+    { database, emailService, verifyPassword },
+  );
+
+  if (!result.ok) {
+    await recordAuditEvent(
+      {
+        actorEmail: context.signer.email,
+        actorType: "signer",
+        envelopeId: context.envelope.id,
+        event: "reauthentication_failed",
+        ipAddress: requestMeta.ipAddress ?? null,
+        metadata: { ...signerAuditMetadata(context), locked: result.locked },
+        userAgent: requestMeta.userAgent ?? null,
+      },
+      database,
+    );
+
+    throw new SigningMutationError(describeCredentialFailure(result), 400);
+  }
+
+  return {
+    credential: "account_password",
+    meaning,
+    meaningStatement: SIGNATURE_MEANING_DETAILS[meaning].statement,
+    reauthenticatedAt: Math.floor(Date.now() / 1000),
+    userId: state.accountUserId,
+  };
+}
+
 export async function submitSigningForToken(
   token: string,
   input: unknown,
@@ -1692,6 +1860,7 @@ export async function submitSigningForToken(
     requestMeta = {},
     storageService: givenStorageService,
     verifiedMethods = [],
+    verifyPassword,
   }: SubmitSigningOptions = {},
 ): Promise<SigningSubmitResponse> {
   const parsedInput = signingSubmissionSchema.parse(input);
@@ -1710,6 +1879,12 @@ export async function submitSigningForToken(
   }
 
   const emailService = givenEmailService ?? createEmailService();
+  const part11Signature = await reauthenticatePart11Signer(
+    context,
+    signerChecks.state,
+    parsedInput.reauthentication,
+    { database, emailService, requestMeta, verifyPassword },
+  );
   const storageService = givenStorageService ?? createStorageService();
   const currentSignerId = context.signer.id;
 
@@ -1934,6 +2109,7 @@ export async function submitSigningForToken(
     const signedAuditEvent = buildSignedAuditEvent({
       authMethods: signerChecks.passed,
       envelopeId: context.envelope.id,
+      part11: part11Signature,
       signatureMethods: [
         ...new Set(
           [...fieldUpdates.values()]

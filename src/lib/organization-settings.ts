@@ -40,6 +40,8 @@ export type OrganizationSettingsView = {
   /** "#rrggbb", or empty for the default color. */
   brandColor: string;
   hosted: boolean;
+  /** Part 11 mode is on: the retention period cannot be set. */
+  part11Mode: boolean;
   /** Where the logo is served, or null when there is none. */
   logoUrl: string | null;
   organizationName: string;
@@ -66,6 +68,7 @@ export function toOrganizationSettingsView(
         ? null
         : buildBrandLogoPath(settings.logoVersion),
     organizationName: settings.organizationName ?? "",
+    part11Mode: settings.part11Mode,
     privacyUrl: settings.privacyUrl ?? "",
     retentionDays:
       settings.retentionDays === null ? "" : String(settings.retentionDays),
@@ -234,6 +237,12 @@ export async function updateOrganizationSettings(
     fieldErrors.supportAddress = FIELD_MESSAGES.supportAddress;
   }
 
+  // Part 11 records are never deleted on a timer.
+  if (current.part11Mode && input.retentionDays !== null) {
+    fieldErrors.retentionDays =
+      "Part 11 mode is on, so finished envelopes are kept until you delete them. Leave this empty.";
+  }
+
   if (Object.keys(fieldErrors).length > 0) {
     throw new OrganizationSettingsError(fieldErrors);
   }
@@ -260,4 +269,35 @@ export async function updateOrganizationSettings(
     },
     database,
   );
+}
+
+const AUDITED_SETTINGS = [
+  "allowedEmailDomains",
+  "brandColor",
+  "organizationName",
+  "privacyUrl",
+  "retentionDays",
+  "senderAddress",
+  "signupMode",
+  "supportAddress",
+  "termsUrl",
+] as const satisfies readonly (keyof AppSettings)[];
+
+/** What changed between two versions of the settings, for the audit trail. */
+export function diffSettings(
+  before: AppSettings | null,
+  after: AppSettings,
+): Record<string, { from: unknown; to: unknown }> {
+  const changes: Record<string, { from: unknown; to: unknown }> = {};
+
+  for (const key of AUDITED_SETTINGS) {
+    const from = before ? before[key] : null;
+    const to = after[key];
+
+    if (JSON.stringify(from) !== JSON.stringify(to)) {
+      changes[key] = { from, to };
+    }
+  }
+
+  return changes;
 }

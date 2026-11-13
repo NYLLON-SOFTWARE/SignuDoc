@@ -3,6 +3,7 @@ import { z } from "zod";
 import {
   MAX_COPY_RECIPIENTS_PER_ENVELOPE,
   MAX_SIGNERS_PER_ENVELOPE,
+  signatureMeanings,
   signerStatuses,
 } from "../types/domain.ts";
 import {
@@ -36,6 +37,9 @@ export const draftSignerSchema = z.object({
   // it, and leaving it out keeps the code already saved.
   accessCode: z.string().trim().min(4).max(64).nullable().optional(),
   requireEmailCode: z.boolean().optional(),
+  // What the signature means, for Part 11 envelopes. Null clears it, and
+  // leaving it out keeps the one already saved.
+  signatureMeaning: z.enum(signatureMeanings).nullable().optional(),
 });
 
 export const signerListSchema = z
@@ -117,6 +121,7 @@ export const replaceSignersResponseSchema = z.object({
       hasAccessCode: z.boolean(),
       name: nameSchema,
       requireEmailCode: z.boolean(),
+      signatureMeaning: z.enum(signatureMeanings).nullable(),
       signOrder: z.number().int().positive(),
     }),
   ),

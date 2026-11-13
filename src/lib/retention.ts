@@ -364,7 +364,8 @@ async function handOverFinishedEnvelopes(
       `
         SELECT count(*)::text AS count
         FROM envelopes
-        WHERE user_id = $1 AND status = ANY($2::text[])
+        WHERE user_id = $1
+          AND (status = ANY($2::text[]) OR (part11 AND status <> 'draft'))
       `,
       [userId, FINISHED_ENVELOPE_STATUSES],
     );
@@ -400,7 +401,9 @@ async function handOverFinishedEnvelopes(
             )
           FOR SHARE OF u
         ) k
-        WHERE e.user_id = $2 AND e.status = ANY($3::text[])
+        WHERE e.user_id = $2
+          -- A Part 11 envelope still out for signature is a record too.
+          AND (e.status = ANY($3::text[]) OR (e.part11 AND e.status <> 'draft'))
       `,
       [keeperId, userId, FINISHED_ENVELOPE_STATUSES, now],
     );
@@ -633,6 +636,9 @@ async function listFinishedEnvelopesToHandle(
       FROM envelopes e
       JOIN "user" u ON u.id = e.user_id
       WHERE e.status IN ('completed', 'declined', 'voided')
+        -- Part 11 records are kept for as long as the rules that apply to
+        -- them say, never by this timer.
+        AND NOT e.part11
         AND (
           (
             e.retention_warned_at IS NULL

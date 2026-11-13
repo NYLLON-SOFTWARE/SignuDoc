@@ -148,6 +148,8 @@ export const envelopeRecordSchema = z.object({
   expiresAt: unixTimestampSchema.nullable().optional(),
   /** Days between automatic reminders, or null for none. */
   reminderIntervalDays: reminderIntervalDaysSchema.optional(),
+  /** Sent in Part 11 mode. See part11.ts. */
+  part11: z.boolean().optional(),
   createdAt: unixTimestampSchema,
   updatedAt: unixTimestampSchema,
 });

@@ -55,7 +55,14 @@ import {
   type ReplaceSignersResponse,
   type SignerRecord,
 } from "./schemas/signer.ts";
-import { getBranding } from "./settings.ts";
+import {
+  describePart11SignerProblem,
+  findSignerAccounts,
+  parseSignatureMeaning,
+  signatureMeaningLabel,
+} from "./part11.ts";
+import { getBranding, readStoredSettings } from "./settings.ts";
+import { type SignatureMeaning } from "./types/domain.ts";
 import { importPdfDocument } from "./services/document-import.ts";
 import {
   listAuditEventsForEnvelope,
@@ -122,6 +129,8 @@ type SendDraftEnvelopeInput = {
 
 type VoidEnvelopeInput = {
   ipAddress?: string | null;
+  /** Why it is voided. Required for a Part 11 envelope. */
+  reason?: string | null;
   senderEmail: string;
   senderName: string;
   userAgent?: string | null;
@@ -144,6 +153,7 @@ type EnvelopeRow = {
   id: string;
   reminderIntervalDays: number | null;
   pageCount: number;
+  part11: boolean;
   sentAt: number | null;
   signedPdfKey: string | null;
   sourcePdfFilename: string;
@@ -167,6 +177,7 @@ type SignerRow = {
   lastNotifiedAt: number | null;
   lastNudgedAt: number | null;
   name: string;
+  signatureMeaning: SignatureMeaning | null;
   signedAt: number | null;
   signOrder: number;
   signingTokenExpiresAt: number | null;
@@ -294,11 +305,15 @@ export type DraftSignerStepSigner = {
   name: string;
   order: number;
   requireEmailCode?: boolean;
+  /** Set on the signers step only. */
+  signatureMeaning?: SignatureMeaning | null;
 };
 
 export type DraftSignerStepData = {
   copyRecipients: readonly CopyRecipientRecord[];
   envelopeId: string;
+  /** Part 11 mode is on, so each signer needs a meaning and an account. */
+  part11Mode?: boolean;
   signers: readonly DraftSignerStepSigner[];
   status: EnvelopeRecord["status"];
 };
@@ -353,6 +368,8 @@ export type EnvelopeDetailData = {
   reminderIntervalDays: number | null;
   envelopeId: string;
   manualReminder: EnvelopeDetailManualReminderState | null;
+  /** Sent in Part 11 mode: a void needs a reason. */
+  part11: boolean;
   signers: readonly EnvelopeDetailSignerView[];
   status: EnvelopeRecord["status"];
   timeline: readonly EnvelopeDetailTimelineItem[];
@@ -438,6 +455,7 @@ const TIMELINE_TONE_MAP: Record<
   declined: "danger",
   email_sent: "neutral",
   expired: "danger",
+  reauthentication_failed: "danger",
   reminded_auto: "neutral",
   reminded_manual: "neutral",
   sent: "neutral",
@@ -730,6 +748,7 @@ async function getEnvelopeByIdForUser(
         voided_at AS "voidedAt",
         expires_at AS "expiresAt",
         reminder_interval_days AS "reminderIntervalDays",
+        part11,
         created_at AS "createdAt",
         updated_at AS "updatedAt"
       FROM envelopes
@@ -768,6 +787,7 @@ async function listSignersForEnvelopeIds(
         signed_at AS "signedAt",
         declined_at AS "declinedAt",
         decline_reason AS "declineReason",
+        signature_meaning AS "signatureMeaning",
         created_at AS "createdAt",
         updated_at AS "updatedAt"
       FROM signers
@@ -859,18 +879,29 @@ export async function listCopyRecipientsForEnvelopeId(
 async function listSignerCheckSettings(
   envelopeId: string,
   database: DbExecutor,
-): Promise<Map<string, { hasAccessCode: boolean; requireEmailCode: boolean }>> {
+): Promise<
+  Map<
+    string,
+    {
+      hasAccessCode: boolean;
+      requireEmailCode: boolean;
+      signatureMeaning: SignatureMeaning | null;
+    }
+  >
+> {
   const rows = await queryMany<{
     hasAccessCode: boolean;
     id: string;
     requireEmailCode: boolean;
+    signatureMeaning: string | null;
   }>(
     database,
     `
       SELECT
         id,
         access_code_hash IS NOT NULL AS "hasAccessCode",
-        require_email_code AS "requireEmailCode"
+        require_email_code AS "requireEmailCode",
+        signature_meaning AS "signatureMeaning"
       FROM signers
       WHERE envelope_id = $1
     `,
@@ -883,6 +914,7 @@ async function listSignerCheckSettings(
       {
         hasAccessCode: Boolean(row.hasAccessCode),
         requireEmailCode: Boolean(row.requireEmailCode),
+        signatureMeaning: parseSignatureMeaning(row.signatureMeaning),
       },
     ]),
   );
@@ -1161,7 +1193,12 @@ function buildTimelineDescription(event: AuditEventRecord): string {
     case "viewed":
       return `Viewed by ${targetLabel}`;
     case "signed":
-      return `Signed by ${targetLabel}`;
+      return typeof event.metadata?.part11 === "object" &&
+        event.metadata.part11 !== null &&
+        "meaning" in event.metadata.part11 &&
+        typeof event.metadata.part11.meaning === "string"
+        ? `Signed by ${targetLabel} (${signatureMeaningLabel(parseSignatureMeaning(event.metadata.part11.meaning)) ?? event.metadata.part11.meaning}, password given again)`
+        : `Signed by ${targetLabel}`;
     case "declined":
       return declineReason
         ? `Declined by ${targetLabel} — ${declineReason}`
@@ -1183,7 +1220,11 @@ function buildTimelineDescription(event: AuditEventRecord): string {
     case "completed":
       return "Final signed PDF and certificate generated";
     case "voided":
-      return "Envelope voided by sender";
+      return declineReason
+        ? `Envelope voided by sender — ${declineReason}`
+        : "Envelope voided by sender";
+    case "reauthentication_failed":
+      return `Wrong password given while signing for ${targetLabel}`;
     case "deadline_changed":
       return typeof event.metadata?.expiresAt === "number"
         ? `Deadline set to ${formatDeadline(event.metadata.expiresAt)}`
@@ -1320,6 +1361,7 @@ export async function listEnvelopesForUser(
         voided_at AS "voidedAt",
         expires_at AS "expiresAt",
         reminder_interval_days AS "reminderIntervalDays",
+        part11,
         created_at AS "createdAt",
         updated_at AS "updatedAt"
       FROM envelopes
@@ -1466,6 +1508,7 @@ export async function getEnvelopeDetailDataForUser(
         ? (envelope.reminderIntervalDays ?? null)
         : null,
     manualReminder,
+    part11: Boolean(envelope.part11),
     signers: signerViews,
     status: envelope.status,
     timeline,
@@ -1489,6 +1532,7 @@ export async function getDraftSignerStepDataForUser(
   return {
     copyRecipients: await listCopyRecipientsForEnvelopeId(envelopeId, database),
     envelopeId,
+    part11Mode: (await readStoredSettings(database))?.part11Mode ?? false,
     signers: (await listSignersForEnvelopeId(envelopeId, database)).map(
       (signer) => ({
         email: signer.email,
@@ -1497,6 +1541,7 @@ export async function getDraftSignerStepDataForUser(
         name: signer.name,
         order: signer.signOrder,
         requireEmailCode: checks.get(signer.id)?.requireEmailCode ?? false,
+        signatureMeaning: checks.get(signer.id)?.signatureMeaning ?? null,
       }),
     ),
     status: envelope.status,
@@ -1829,6 +1874,40 @@ export async function sendDraftEnvelope(
     throw new EnvelopeMutationError(choiceProblem, 400);
   }
 
+  // In Part 11 mode each signer signs with their own verified account, and
+  // the envelope keeps that rule even if the mode is turned off later.
+  const part11 = (await readStoredSettings(database))?.part11Mode ?? false;
+  const part11SignerAccounts = new Map<string, string>();
+
+  if (part11) {
+    const checks = await listSignerCheckSettings(envelopeId, database);
+    const accounts = await findSignerAccounts(
+      signers.map((signer) => signer.email),
+      database,
+    );
+
+    for (const signer of signers) {
+      const account = accounts.get(signer.email.toLowerCase());
+      const problem = describePart11SignerProblem(
+        {
+          email: signer.email,
+          name: signer.name,
+          signatureMeaning: checks.get(signer.id)?.signatureMeaning ?? null,
+        },
+        account,
+      );
+
+      if (problem || !account) {
+        throw new EnvelopeMutationError(
+          problem ?? "A signer cannot sign in Part 11 mode.",
+          400,
+        );
+      }
+
+      part11SignerAccounts.set(signer.id, account.userId);
+    }
+  }
+
   const firstSigner = signers[0];
 
   if (!firstSigner) {
@@ -1919,11 +1998,38 @@ export async function sendDraftEnvelope(
             signed_at = NULL,
             declined_at = NULL,
             decline_reason = NULL,
+            user_id = NULL,
             updated_at = $1
           WHERE envelope_id = $2
         `,
         [sentAt, envelopeId],
       );
+
+      if (part11) {
+        await tx.query(`UPDATE envelopes SET part11 = true WHERE id = $1`, [
+          envelopeId,
+        ]);
+
+        for (const [signerId, accountId] of part11SignerAccounts) {
+          const bound = await tx.query(
+            `
+              UPDATE signers
+              SET user_id = $1
+              WHERE id = $2
+                AND envelope_id = $3
+                AND signature_meaning IS NOT NULL
+            `,
+            [accountId, signerId, envelopeId],
+          );
+
+          if (bound.rowCount !== 1) {
+            throw new EnvelopeMutationError(
+              "This envelope was changed while it was being sent. Check it and send it again.",
+              409,
+            );
+          }
+        }
+      }
 
       const updatedSigner = await tx.query(
         `
@@ -1970,6 +2076,7 @@ export async function sendDraftEnvelope(
             reminderIntervalDays: input.reminderIntervalDays ?? null,
             permittedUseConfirmed: true,
             permittedUseVersion: PERMITTED_USE_VERSION,
+            ...(part11 ? { part11: true } : {}),
             signerEmail: firstSigner.email,
             signerId: firstSigner.id,
             signerName: firstSigner.name,
@@ -2009,6 +2116,7 @@ export async function sendDraftEnvelope(
             sent_at = NULL,
             expires_at = NULL,
             reminder_interval_days = NULL,
+            part11 = false,
             updated_at = $1
           WHERE id = $2
             AND user_id = $3
@@ -2030,6 +2138,7 @@ export async function sendDraftEnvelope(
             signed_at = NULL,
             declined_at = NULL,
             decline_reason = NULL,
+            user_id = NULL,
             updated_at = $1
           WHERE envelope_id = $2
         `,
@@ -2231,6 +2340,15 @@ export async function voidSentEnvelope(
     throw new EnvelopeMutationError("Only sent envelopes can be voided.", 409);
   }
 
+  const reason = input.reason?.trim().slice(0, 1000) || null;
+
+  if (envelope.part11 && !reason) {
+    throw new EnvelopeMutationError(
+      "Give a reason for voiding. Part 11 records keep it in the audit trail.",
+      400,
+    );
+  }
+
   const signers = await listSignersForEnvelopeId(envelopeId, database);
   const notifiedSigners = signers.filter(
     (signer) => signer.status === "notified",
@@ -2256,14 +2374,20 @@ export async function voidSentEnvelope(
     event: "voided",
     id: randomUUID(),
     ipAddress: input.ipAddress ?? null,
-    metadata: currentSigner
-      ? {
-          signerEmail: currentSigner.email,
-          signerId: currentSigner.id,
-          signerName: currentSigner.name,
-          signerOrder: currentSigner.signOrder,
-        }
-      : null,
+    metadata:
+      currentSigner || reason
+        ? {
+            ...(currentSigner
+              ? {
+                  signerEmail: currentSigner.email,
+                  signerId: currentSigner.id,
+                  signerName: currentSigner.name,
+                  signerOrder: currentSigner.signOrder,
+                }
+              : {}),
+            ...(reason ? { reason } : {}),
+          }
+        : null,
     userAgent: input.userAgent ?? null,
   };
   const storageIdentity = {
@@ -2723,6 +2847,7 @@ export async function replaceDraftEnvelopeSigners(
       id: persistedSignerId,
       name: signer.name,
       requireEmailCode: signer.requireEmailCode,
+      signatureMeaning: signer.signatureMeaning,
       signOrder: index + 1,
     };
   });
@@ -2762,7 +2887,8 @@ export async function replaceDraftEnvelopeSigners(
               sign_order = $3,
               updated_at = $4,
               access_code_hash = CASE WHEN $7::boolean THEN $8 ELSE access_code_hash END,
-              require_email_code = COALESCE($9, require_email_code)
+              require_email_code = COALESCE($9, require_email_code),
+              signature_meaning = CASE WHEN $10::boolean THEN $11 ELSE signature_meaning END
             WHERE id = $5 AND envelope_id = $6
           `,
           [
@@ -2775,6 +2901,8 @@ export async function replaceDraftEnvelopeSigners(
             signer.accessCodeHash !== undefined,
             signer.accessCodeHash ?? null,
             signer.requireEmailCode ?? null,
+            signer.signatureMeaning !== undefined,
+            signer.signatureMeaning ?? null,
           ],
         );
       } else {
@@ -2798,9 +2926,10 @@ export async function replaceDraftEnvelopeSigners(
               created_at,
               updated_at,
               access_code_hash,
-              require_email_code
+              require_email_code,
+              signature_meaning
             ) VALUES (
-              $1, $2, $3, $4, $5, 'pending', NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, $6, $7, $8, $9
+              $1, $2, $3, $4, $5, 'pending', NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, $6, $7, $8, $9, $10
             )
           `,
           [
@@ -2813,6 +2942,7 @@ export async function replaceDraftEnvelopeSigners(
             updatedAt,
             signer.accessCodeHash ?? null,
             signer.requireEmailCode ?? false,
+            signer.signatureMeaning ?? null,
           ],
         );
       }
@@ -2873,6 +3003,7 @@ export async function replaceDraftEnvelopeSigners(
         id: signer.id,
         name: signer.name,
         requireEmailCode: checks.get(signer.id)?.requireEmailCode ?? false,
+        signatureMeaning: checks.get(signer.id)?.signatureMeaning ?? null,
         signOrder: signer.signOrder,
       }),
     ),

@@ -30,7 +30,7 @@ import {
   type DocumentPanGesture,
   DOCUMENT_ZOOM_STEP,
 } from "@/components/shared/document-viewport";
-import { ShellButton } from "@/components/shared/form-shell";
+import { FieldShell, ShellButton } from "@/components/shared/form-shell";
 import {
   Dialog,
   DialogContent,
@@ -449,6 +449,17 @@ export function SigningLiveShell({ record }: { record: SigningPayload }) {
   const [isFinishDialogOpen, setIsFinishDialogOpen] = useState(false);
   const [isDocumentPanning, setIsDocumentPanning] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  // Part 11 envelopes: the signer's email address and password, given again
+  // for this signature, and their confirmation of what it means.
+  const [reauthEmail, setReauthEmail] = useState("");
+  const [reauthPassword, setReauthPassword] = useState("");
+  const [isMeaningConfirmed, setIsMeaningConfirmed] = useState(false);
+  const part11 = record.part11 ?? null;
+  const isReauthReady =
+    part11 === null ||
+    (isMeaningConfirmed &&
+      reauthEmail.trim().length > 0 &&
+      reauthPassword.length > 0);
   const [pdfRenderState, setPdfRenderState] =
     useState<PdfPageRenderState>("loading");
   const [signatureValues, setSignatureValues] = useState<
@@ -573,7 +584,7 @@ export function SigningLiveShell({ record }: { record: SigningPayload }) {
   }
 
   async function handleFinishSigning() {
-    if (!canFinish || isSubmitting) {
+    if (!canFinish || isSubmitting || !isReauthReady) {
       return;
     }
 
@@ -582,9 +593,18 @@ export function SigningLiveShell({ record }: { record: SigningPayload }) {
 
     try {
       const response = await fetch(record.submitUrl, {
-        body: JSON.stringify(
-          buildSigningSubmissionPayload(record, enteredValues),
-        ),
+        body: JSON.stringify({
+          ...buildSigningSubmissionPayload(record, enteredValues),
+          ...(part11
+            ? {
+                reauthentication: {
+                  email: reauthEmail,
+                  meaningConfirmed: true,
+                  password: reauthPassword,
+                },
+              }
+            : {}),
+        }),
         headers: {
           "content-type": "application/json",
         },
@@ -603,6 +623,7 @@ export function SigningLiveShell({ record }: { record: SigningPayload }) {
         }
 
         setSubmitError(payload?.error ?? defaultSubmitErrorMessage);
+        setReauthPassword("");
         setIsSubmitting(false);
         return;
       }
@@ -1094,6 +1115,56 @@ export function SigningLiveShell({ record }: { record: SigningPayload }) {
             By clicking Finish, you confirm that your electronic signature is
             intended to be binding for this document.
           </p>
+          {part11 ? (
+            <div className="grid gap-4">
+              <div className="well rounded-xl px-3.5 py-3">
+                <p className="text-xs font-semibold text-(--tertiary)">
+                  Meaning of your signature
+                </p>
+                <p className="mt-0.5 text-sm font-semibold text-(--fg)">
+                  {part11.meaningLabel}: {part11.meaningStatement}
+                </p>
+              </div>
+              <label className="flex items-start gap-3 text-sm leading-6 text-(--secondary)">
+                <Checkbox
+                  aria-label="I confirm the meaning of my signature"
+                  checked={isMeaningConfirmed}
+                  className="mt-1"
+                  disabled={isSubmitting}
+                  onCheckedChange={(checked) =>
+                    setIsMeaningConfirmed(checked === true)
+                  }
+                />
+                <span>
+                  I confirm this meaning. My name, the date and time, and this
+                  meaning will be printed with my signature.
+                </span>
+              </label>
+              <p className="text-sm leading-6 text-(--secondary)">
+                Enter your account&apos;s email address and password to sign.
+              </p>
+              <FieldShell
+                autoComplete="username"
+                disabled={isSubmitting}
+                label="Email address"
+                name="reauth-email"
+                onChange={(event) => setReauthEmail(event.target.value)}
+                readOnly={false}
+                type="email"
+                value={reauthEmail}
+              />
+              <FieldShell
+                autoComplete="current-password"
+                disabled={isSubmitting}
+                label="Password"
+                name="reauth-password"
+                onChange={(event) => setReauthPassword(event.target.value)}
+                readOnly={false}
+                type="password"
+                value={reauthPassword}
+              />
+            </div>
+          ) : null}
           {submitError ? (
             <div className="notice notice-danger" role="alert">
               {submitError}
@@ -1110,7 +1181,11 @@ export function SigningLiveShell({ record }: { record: SigningPayload }) {
             >
               Back
             </ShellButton>
-            <ShellButton loading={isSubmitting} onClick={handleFinishSigning}>
+            <ShellButton
+              disabled={!isReauthReady}
+              loading={isSubmitting}
+              onClick={handleFinishSigning}
+            >
               {isSubmitting ? "Finishing..." : "Finish signing"}
             </ShellButton>
           </div>
@@ -2001,7 +2076,10 @@ function DialogFrame({
 }) {
   return (
     <Dialog open onOpenChange={(open) => !open && onClose()}>
-      <DialogContent className="max-w-[600px] p-0" showCloseButton={false}>
+      <DialogContent
+        className="max-h-[calc(100dvh-2rem)] max-w-[600px] overflow-y-auto p-0"
+        showCloseButton={false}
+      >
         <div>
           <DialogHeader className="space-y-2 px-6 pt-6 sm:px-8 sm:pt-8">
             <DialogTitle>{title}</DialogTitle>

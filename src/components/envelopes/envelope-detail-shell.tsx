@@ -9,10 +9,11 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import Link from "next/link";
-import { useState } from "react";
+import { type ReactNode, useState } from "react";
 
 import { DocumentThumbnail } from "@/components/shared/document-thumbnail";
 import { ShellButton } from "@/components/shared/form-shell";
+import { Textarea } from "@/components/ui/textarea";
 import { StatusPanel } from "@/components/shared/status-panel";
 import { SaveTemplateDialog } from "@/components/templates/save-template-dialog";
 import {
@@ -131,6 +132,7 @@ export function EnvelopeDetailShell({
   const [isDeletingDraft, setIsDeletingDraft] = useState(false);
   const [isSendingReminder, setIsSendingReminder] = useState(false);
   const [isVoidingEnvelope, setIsVoidingEnvelope] = useState(false);
+  const [voidReason, setVoidReason] = useState("");
   const [savedTemplateName, setSavedTemplateName] = useState<string | null>(
     null,
   );
@@ -340,6 +342,8 @@ export function EnvelopeDetailShell({
 
     try {
       const response = await fetch(`/api/envelopes/${envelopeId}/void`, {
+        body: JSON.stringify({ reason: voidReason }),
+        headers: { "content-type": "application/json" },
         method: "POST",
       });
       const payload = (await response.json().catch(() => null)) as {
@@ -470,6 +474,21 @@ export function EnvelopeDetailShell({
                 variant="secondary"
               >
                 Download certificate
+              </ShellButton>
+            ) : null}
+
+            {activeRecord.status !== "draft" ? (
+              <ShellButton
+                onClick={() =>
+                  // A file download from an API route, not a page navigation.
+                  // eslint-disable-next-line @next/next/no-location-assign-relative-destination
+                  window.location.assign(
+                    `/api/envelopes/${encodeURIComponent(envelopeId)}/audit`,
+                  )
+                }
+                variant="secondary"
+              >
+                Export audit trail
               </ShellButton>
             ) : null}
           </div>
@@ -762,12 +781,29 @@ export function EnvelopeDetailShell({
             "Notified signers will be informed that the envelope has been voided.",
             "This action cannot be undone.",
           ]}
+          confirmDisabled={record.part11 && voidReason.trim().length === 0}
           errorMessage={actionError}
           onCancel={() => setActiveModal(null)}
           onConfirm={handleConfirmVoidEnvelope}
           processing={isVoidingEnvelope}
           title="Void this envelope?"
-        />
+        >
+          <label className="grid gap-2 text-sm">
+            <span className="text-[0.8125rem] font-semibold text-(--secondary)">
+              {record.part11 ? "Reason (required)" : "Reason (optional)"}
+            </span>
+            <Textarea
+              disabled={isVoidingEnvelope}
+              maxLength={1000}
+              onChange={(event) => setVoidReason(event.target.value)}
+              rows={3}
+              value={voidReason}
+            />
+            <span className="text-xs leading-5 text-(--tertiary)">
+              Kept in the envelope&apos;s audit trail.
+            </span>
+          </label>
+        </ConfirmationDialog>
       ) : null}
     </div>
   );
@@ -964,6 +1000,8 @@ function RemindersDialog({
 }
 
 type ConfirmationDialogProps = {
+  children?: ReactNode;
+  confirmDisabled?: boolean;
   confirmLabel: string;
   description: readonly string[];
   errorMessage?: string | null;
@@ -974,6 +1012,8 @@ type ConfirmationDialogProps = {
 };
 
 function ConfirmationDialog({
+  children,
+  confirmDisabled = false,
   confirmLabel,
   description,
   errorMessage,
@@ -1004,6 +1044,8 @@ function ConfirmationDialog({
             </DialogDescription>
           </DialogHeader>
 
+          {children}
+
           {errorMessage ? (
             <div className="notice notice-danger" role="alert">
               <p>{errorMessage}</p>
@@ -1019,6 +1061,7 @@ function ConfirmationDialog({
               Cancel
             </ShellButton>
             <ShellButton
+              disabled={confirmDisabled}
               loading={processing}
               onClick={onConfirm}
               variant="danger"

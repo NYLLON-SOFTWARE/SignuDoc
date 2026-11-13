@@ -9,6 +9,7 @@ import {
 } from "../schemas/envelope.ts";
 import type { FieldRecord } from "../schemas/field.ts";
 import type { SignerRecord } from "../schemas/signer.ts";
+import { buildSignatureManifestation } from "../signature-meanings.ts";
 import { canonicalJson } from "../utils/canonical-json.ts";
 import { normalizedRectToPdfRect } from "../utils/pdf-coords.ts";
 import { embedTextFaces, type TextFace } from "./pdf-fonts.ts";
@@ -524,6 +525,65 @@ async function stampFieldValue(
   }
 }
 
+/**
+ * Prints a Part 11 signature's manifestation just under the signature, or
+ * just above it when the field sits at the foot of the page.
+ */
+function stampSignatureManifestation(
+  field: FieldRecord,
+  page: PDFPage,
+  font: TextFace,
+  text: string,
+): void {
+  const pageWidth = page.getWidth();
+  const rect = normalizedRectToPdfRect(field, {
+    heightPt: page.getHeight(),
+    widthPt: pageWidth,
+  });
+  const margin = 2;
+  const fullWidth = pageWidth - margin * 2;
+  const minimumSize = 5;
+  // One line when it fits at a readable size, otherwise one line per part
+  // (name, time, meaning), so nothing is shrunk away or runs off the page.
+  const oneLineSize = fitTextSize(font, text, fullWidth, 7, 6.5);
+  const lines =
+    font.widthOfTextAtSize(text, oneLineSize) <= fullWidth &&
+    oneLineSize >= minimumSize
+      ? [text]
+      : text.split(" | ");
+  const size = Math.max(
+    minimumSize,
+    Math.min(
+      ...lines.map((line) => fitTextSize(font, line, fullWidth, 7, 6.5)),
+    ),
+  );
+  const lineHeight = size + 1.5;
+  const blockHeight = lineHeight * lines.length;
+  const below = rect.yPt - blockHeight;
+  // The top line's baseline. Below the field when there is room, above it
+  // at the foot of the page.
+  const top =
+    below >= margin
+      ? rect.yPt - lineHeight
+      : Math.min(
+          rect.yPt + rect.heightPt + blockHeight - size,
+          page.getHeight() - size - margin,
+        );
+
+  lines.forEach((line, index) => {
+    const width = font.widthOfTextAtSize(line, size);
+    // Starts under the field, moved left if it would run off the page.
+    const x = Math.max(margin, Math.min(rect.xPt, pageWidth - width - margin));
+
+    font.drawText(page, line, {
+      color: rgb(0.2, 0.2, 0.24),
+      size,
+      x,
+      y: top - index * lineHeight,
+    });
+  });
+}
+
 function buildAuditLines(input: {
   auditEvents: AuditEventRecord[];
   auditFingerprint?: string | null;
@@ -721,6 +781,7 @@ function buildAuditLines(input: {
 
 const AUTHENTICATION_LABELS: Record<string, string> = {
   access_code: "access code from the sender",
+  account: "own account, with email address and password to open it",
   email_code: "one-time code sent by email",
 };
 
@@ -749,8 +810,29 @@ function describeSignerEvidence(
     ),
   ];
 
+  const part11 =
+    signed?.metadata?.part11 && typeof signed.metadata.part11 === "object"
+      ? (signed.metadata.part11 as Record<string, unknown>)
+      : null;
+
+  if (part11) {
+    checks.push("email address and password given again to sign");
+  }
+
   if (signed || signer.status === "declined") {
     details.push(`Identified by: ${checks.join(", ")}`);
+  }
+
+  const manifestation = buildSignatureManifestation(signer);
+
+  if (part11 && manifestation) {
+    details.push(manifestation);
+
+    if (typeof part11.meaningStatement === "string") {
+      details.push(
+        `Meaning confirmed by the signer: "${part11.meaningStatement}"`,
+      );
+    }
   }
 
   if (consented) {
@@ -1091,12 +1173,26 @@ export async function renderFinalizedEnvelopePdf(
   const stampedFields = input.fields
     .filter(shouldStampField)
     .sort((left, right) => left.page - right.page || left.y - right.y);
+  // Part 11: the signer's name, the time and the meaning, printed beside
+  // each of their signatures (21 CFR 11.50).
+  const manifestations = new Map<string, string>();
+
+  if (input.envelope.part11) {
+    for (const signer of input.signers) {
+      const text = signer.id ? buildSignatureManifestation(signer) : null;
+
+      if (text && signer.id) {
+        manifestations.set(signer.id, text);
+      }
+    }
+  }
   // The signed document embeds glyphs for the stamped values only. The
   // certificate's wording is added when the audit trail is appended to it.
   const faces = await embedTextFaces(
     pdfDocument,
     [
       stampedFields.map((field) => field.value),
+      [...manifestations.values()],
       input.includeAuditTrail
         ? [
             input.envelope,
@@ -1135,6 +1231,13 @@ export async function renderFinalizedEnvelopePdf(
       pdfDocument,
       storageService,
     );
+
+    const manifestation =
+      field.type === "signature" ? manifestations.get(field.signerId) : null;
+
+    if (manifestation) {
+      stampSignatureManifestation(field, page, faces.regular, manifestation);
+    }
   }
 
   try {

@@ -17,10 +17,17 @@ import { isProduction, resolveAuthSecret } from "./utils/env.ts";
 // - email_code: a one-time code emailed when the signer opens the link.
 //   Proves the person signing controls the mailbox at that moment, not just
 //   that they hold a forwarded link.
+// - account: Part 11 envelopes only. The signer gives the email address and
+//   password of their own account on this install, which was bound to them
+//   when the envelope was sent.
 //
 // Passing a check sets a cookie for this link only, valid for a few hours.
 
-export const signerCheckMethods = ["access_code", "email_code"] as const;
+export const signerCheckMethods = [
+  "access_code",
+  "account",
+  "email_code",
+] as const;
 export type SignerCheckMethod = (typeof signerCheckMethods)[number];
 
 export const EMAIL_CODE_TTL_SECONDS = 10 * 60;
@@ -31,6 +38,8 @@ const COOKIE_CONTEXT = "signudoc/signer-verification/v1";
 
 export type SignerCheckState = {
   accessCodeHash: string | null;
+  /** The account that must sign, for a Part 11 envelope. */
+  accountUserId: string | null;
   consentedAt: number | null;
   emailCodeAttempts: number;
   emailCodeExpiresAt: number | null;
@@ -48,6 +57,7 @@ export async function getSignerCheckState(
     `
       SELECT
         access_code_hash AS "accessCodeHash",
+        user_id AS "accountUserId",
         consented_at AS "consentedAt",
         email_code_attempts AS "emailCodeAttempts",
         email_code_expires_at AS "emailCodeExpiresAt",
@@ -63,6 +73,7 @@ export async function getSignerCheckState(
   return (
     row ?? {
       accessCodeHash: null,
+      accountUserId: null,
       consentedAt: null,
       emailCodeAttempts: 0,
       emailCodeExpiresAt: null,
@@ -74,10 +85,12 @@ export async function getSignerCheckState(
 }
 
 export function requiredSignerChecks(
-  state: Pick<SignerCheckState, "accessCodeHash" | "requireEmailCode">,
+  state: Pick<SignerCheckState, "accessCodeHash" | "requireEmailCode"> &
+    Partial<Pick<SignerCheckState, "accountUserId">>,
 ): SignerCheckMethod[] {
   return [
     ...(state.accessCodeHash ? (["access_code"] as const) : []),
+    ...(state.accountUserId ? (["account"] as const) : []),
     ...(state.requireEmailCode ? (["email_code"] as const) : []),
   ];
 }

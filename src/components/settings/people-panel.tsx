@@ -34,7 +34,16 @@ function readPeopleList(payload: PeopleResponse): PeopleList | null {
   };
 }
 
-export function PeoplePanel() {
+export function PeoplePanel({ part11Mode = false }: { part11Mode?: boolean }) {
+  function showsPart11(person: Person) {
+    return (
+      part11Mode ||
+      person.hasOpenPart11Signing ||
+      person.identityVerifiedAt !== null ||
+      person.signingLockedAt !== null
+    );
+  }
+
   const [list, setList] = useState<PeopleList | null>(null);
   const [you, setYou] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -46,6 +55,9 @@ export function PeoplePanel() {
   const [reloads, setReloads] = useState(0);
   // The search as it stands now, for an answer that arrives after it moved.
   const latestSearch = useRef(search);
+  // Part 11: the person whose identity is being confirmed, and how.
+  const [verifyingId, setVerifyingId] = useState<string | null>(null);
+  const [verificationNote, setVerificationNote] = useState("");
 
   useEffect(() => {
     latestSearch.current = search;
@@ -142,6 +154,56 @@ export function PeoplePanel() {
     }
   }
 
+  async function changePart11(
+    person: Person,
+    action: "revoke" | "unlock" | "verify",
+  ) {
+    if (pendingId) {
+      return;
+    }
+
+    setPendingId(person.id);
+    setError(null);
+
+    try {
+      const response = await fetch(
+        `/api/admin/people/${encodeURIComponent(person.id)}/part11`,
+        {
+          body: JSON.stringify({
+            action,
+            note: action === "verify" ? verificationNote : undefined,
+            search,
+          }),
+          headers: { "content-type": "application/json" },
+          method: "POST",
+        },
+      );
+      const payload = (await response
+        .json()
+        .catch(() => null)) as PeopleResponse;
+      const changed = readPeopleList(payload);
+
+      if (!response.ok || !changed) {
+        setError(payload?.error ?? GENERIC_ERROR_MESSAGE);
+        return;
+      }
+
+      setVerifyingId(null);
+      setVerificationNote("");
+
+      if (latestSearch.current !== search) {
+        setReloads((count) => count + 1);
+        return;
+      }
+
+      setList(changed);
+    } catch {
+      setError(GENERIC_ERROR_MESSAGE);
+    } finally {
+      setPendingId(null);
+    }
+  }
+
   const people = list?.people ?? null;
   const administratorCount = list?.administratorCount ?? 0;
   const searching = filter.trim().length > 0 || search.length > 0;
@@ -225,7 +287,111 @@ export function PeoplePanel() {
                     {person.closing ? (
                       <span className="pill pill-warning">Closing</span>
                     ) : null}
+                    {showsPart11(person) ? (
+                      person.identityVerifiedAt !== null ? (
+                        <span
+                          className="pill pill-success"
+                          title={person.identityVerificationNote ?? undefined}
+                        >
+                          Identity confirmed
+                        </span>
+                      ) : (
+                        <span className="pill pill-neutral">
+                          Identity not confirmed
+                        </span>
+                      )
+                    ) : null}
+                    {person.signingLockedAt !== null ? (
+                      <span className="pill pill-danger">Signing locked</span>
+                    ) : null}
                   </div>
+                  {/* Envelopes sent in Part 11 mode keep its rules after it is
+                      turned off, so the controls stay for anyone they still
+                      concern. */}
+                  {showsPart11(person) ? (
+                    <div className="flex flex-wrap gap-2 pt-1">
+                      {person.identityVerifiedAt === null ? (
+                        part11Mode || person.hasOpenPart11Signing ? (
+                          <button
+                            aria-label={`Confirm ${person.name}'s identity`}
+                            className="btn-quiet"
+                            disabled={
+                              pendingId !== null ||
+                              !person.emailVerified ||
+                              verifyingId === person.id
+                            }
+                            onClick={() => {
+                              setVerifyingId(person.id);
+                              setVerificationNote("");
+                            }}
+                            type="button"
+                          >
+                            Confirm identity
+                          </button>
+                        ) : null
+                      ) : (
+                        <button
+                          aria-label={`Take back ${person.name}'s identity confirmation`}
+                          className="btn-quiet btn-quiet-danger"
+                          disabled={pendingId !== null}
+                          onClick={() => void changePart11(person, "revoke")}
+                          type="button"
+                        >
+                          Take back confirmation
+                        </button>
+                      )}
+                      {person.signingLockedAt !== null ? (
+                        <button
+                          aria-label={`Unlock signing for ${person.name}`}
+                          className="btn-quiet"
+                          disabled={pendingId !== null}
+                          onClick={() => void changePart11(person, "unlock")}
+                          type="button"
+                        >
+                          Unlock signing
+                        </button>
+                      ) : null}
+                    </div>
+                  ) : null}
+                  {verifyingId === person.id ? (
+                    <div className="grid max-w-md gap-2 pt-2">
+                      <label className="grid gap-1.5">
+                        <span className="text-[0.8125rem] font-semibold text-(--secondary)">
+                          How did you check who this is?
+                        </span>
+                        <input
+                          className="field-input"
+                          maxLength={500}
+                          onChange={(event) =>
+                            setVerificationNote(event.target.value)
+                          }
+                          placeholder="For example: passport seen in person, HR record 4417"
+                          value={verificationNote}
+                        />
+                      </label>
+                      <div className="flex gap-2">
+                        <button
+                          className="btn-quiet"
+                          disabled={
+                            pendingId !== null ||
+                            verificationNote.trim().length === 0
+                          }
+                          onClick={() => void changePart11(person, "verify")}
+                          type="button"
+                        >
+                          {pendingId === person.id ? "Saving..." : "Save"}
+                        </button>
+                        <button
+                          className="btn-quiet"
+                          disabled={pendingId !== null}
+                          onClick={() => setVerifyingId(null)}
+                          type="button"
+                        >
+                          Cancel
+                        </button>
+                      </div>
+                    </div>
+                  ) : null}
                 </div>
 
                 {isAdmin ? (

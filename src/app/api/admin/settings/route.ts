@@ -1,7 +1,9 @@
 import { NextResponse } from "next/server";
 
 import { requireAdminSession } from "@/lib/auth/admin";
+import { getDb, withTransaction } from "@/lib/db/connection";
 import {
+  diffSettings,
   OrganizationSettingsError,
   toOrganizationSettingsView,
   updateOrganizationSettings,
@@ -11,12 +13,13 @@ import {
   applyRateLimit,
   buildRateLimitKey,
 } from "@/lib/security/route-controls";
-import { getClientIpAddress, getRequestPathname } from "@/lib/security/request";
 import {
-  getSettings,
-  readStoredSettings,
-  resolveSettings,
-} from "@/lib/settings";
+  getClientIpAddress,
+  getRequestPathname,
+  getRequestUserAgent,
+} from "@/lib/security/request";
+import { recordSystemAuditEvent } from "@/lib/services/system-audit";
+import { readStoredSettings, resolveSettings } from "@/lib/settings";
 
 // The Organization tab in Settings. Administrators only.
 
@@ -44,7 +47,35 @@ export async function PUT(request: Request) {
   const body: unknown = await request.json().catch(() => null);
 
   try {
-    await updateOrganizationSettings(body ?? {}, await getSettings());
+    // The change and its line in the install's audit trail land together.
+    await withTransaction(async (tx) => {
+      // Settings are one row. Holding it while the change is judged and
+      // written keeps a Part 11 switch made meanwhile from being undone, or
+      // a retention period from being set just as the mode goes on.
+      await tx.query(`SELECT id FROM app_settings WHERE id FOR UPDATE`);
+
+      const before = await readStoredSettings(tx);
+      const after = await updateOrganizationSettings(
+        body ?? {},
+        resolveSettings(before),
+        tx,
+      );
+      const changes = diffSettings(before, after);
+
+      if (Object.keys(changes).length > 0) {
+        await recordSystemAuditEvent(
+          {
+            actorEmail: session.user.email,
+            actorUserId: session.user.id,
+            event: "settings_changed",
+            ipAddress: getClientIpAddress(request.headers),
+            metadata: { changes },
+            userAgent: getRequestUserAgent(request.headers),
+          },
+          tx,
+        );
+      }
+    }, getDb());
 
     // Read back rather than trusting the cache, so the form shows exactly
     // what is stored.

@@ -247,6 +247,16 @@ export const signingFieldSubmissionSchema = z.union([
 export const signingSubmissionSchema = z.object({
   clientTimezoneOffsetMinutes: z.number().int().min(-840).max(840),
   fields: z.array(signingFieldSubmissionSchema),
+  // Part 11 envelopes: both parts of the signer's electronic signature,
+  // given again for this signature (21 CFR 11.200(a)), and their confirmation
+  // of what it means.
+  reauthentication: z
+    .object({
+      email: z.string().trim().min(1).max(320),
+      meaningConfirmed: z.literal(true),
+      password: z.string().min(1).max(128),
+    })
+    .optional(),
 });
 
 export type FieldPlacement = z.infer<typeof fieldPlacementSchema>;
