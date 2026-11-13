@@ -1729,6 +1729,53 @@ export async function getReviewEnvelopeDataForUser(
   };
 }
 
+/** Everyone on a draft and every field placed for them, in a fixed order. */
+async function readDraftParties(envelopeId: string, database: DbExecutor) {
+  const signers = await listSignersForEnvelopeId(envelopeId, database);
+  const fields =
+    (await listFieldsForEnvelopeIds([envelopeId], database)).get(envelopeId) ??
+    [];
+  const copyRecipients = await listCopyRecipientsForEnvelopeId(
+    envelopeId,
+    database,
+  );
+
+  return { copyRecipients, fields, signers };
+}
+
+/**
+ * Takes hold of a draft before its signers or fields are changed, and
+ * refuses when it is no longer a draft. Saving signers, saving fields,
+ * sending, and erasing a signer on request all take the envelope's row
+ * first, so they happen one after the other: a save cannot land on an
+ * envelope that was sent a moment before, and a send cannot go out with
+ * signers or fields that a save or an erasure was just then replacing.
+ *
+ * The lock an UPDATE takes, not FOR UPDATE: the signer rows written next
+ * need a share of this row for their foreign key.
+ */
+async function lockDraftEnvelope(
+  userId: string,
+  envelopeId: string,
+  tx: DbExecutor,
+): Promise<void> {
+  const locked = await tx.query(
+    `
+      SELECT id FROM envelopes
+      WHERE id = $1 AND user_id = $2 AND status = 'draft'
+      FOR NO KEY UPDATE
+    `,
+    [envelopeId, userId],
+  );
+
+  if (locked.rowCount !== 1) {
+    throw new EnvelopeMutationError(
+      "Only draft envelopes can be updated.",
+      409,
+    );
+  }
+}
+
 export async function sendDraftEnvelope(
   userId: string,
   envelopeId: string,
@@ -1745,10 +1792,8 @@ export async function sendDraftEnvelope(
     throw new EnvelopeMutationError("Only draft envelopes can be sent.", 409);
   }
 
-  const signers = await listSignersForEnvelopeId(envelopeId, database);
-  const fields =
-    (await listFieldsForEnvelopeIds([envelopeId], database)).get(envelopeId) ??
-    [];
+  const checkedParties = await readDraftParties(envelopeId, database);
+  const { fields, signers } = checkedParties;
 
   if (signers.length === 0 || fields.length === 0) {
     throw new EnvelopeMutationError(
@@ -1841,6 +1886,22 @@ export async function sendDraftEnvelope(
       if (updatedEnvelope.rowCount !== 1) {
         throw new EnvelopeMutationError(
           "This envelope has already been sent.",
+          409,
+        );
+      }
+
+      // The signers and fields were read and checked before this
+      // transaction began. The update above holds the envelope's row,
+      // which everything that changes a draft's signers or fields takes
+      // first, so what is read here is what goes out. If it is not what
+      // was checked (a signer erased on request, a save from another tab),
+      // nothing is sent.
+      if (
+        JSON.stringify(await readDraftParties(envelopeId, tx)) !==
+        JSON.stringify(checkedParties)
+      ) {
+        throw new EnvelopeMutationError(
+          "This envelope was changed while it was being sent. Check it and send it again.",
           409,
         );
       }
@@ -2486,6 +2547,7 @@ export async function replaceDraftEnvelopeFields(
   });
 
   await withTransaction(async (tx) => {
+    await lockDraftEnvelope(userId, envelopeId, tx);
     await tx.query(
       `
         DELETE FROM fields
@@ -2666,6 +2728,8 @@ export async function replaceDraftEnvelopeSigners(
   });
 
   await withTransaction(async (tx) => {
+    await lockDraftEnvelope(userId, envelopeId, tx);
+
     // Copy recipients hold nothing but a name and an address while the
     // envelope is a draft, so they are simply written again below.
     await tx.query(

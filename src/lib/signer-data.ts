@@ -182,11 +182,16 @@ export async function eraseSignerData(
   );
   const inProgress = envelopes.filter((row) => row.envelopeStatus === "sent");
 
-  // Lock the drafts and look at their status again: one that was sent in
-  // the meantime is skipped, not stripped of a signer mid-signing.
-  const removedFromDrafts =
-    drafts.length === 0
-      ? []
+  // Lock the drafts and look again, at their status and at who is on them.
+  // The list above was read a moment ago: a draft that was sent since is
+  // skipped, not stripped of a signer mid-signing, and a signer's row that
+  // was given someone else's address since is left alone. Saving a draft's
+  // signers takes the same lock on the envelope first, so no save is half
+  // done while the rows are read here.
+  const draftEnvelopeIds = [...new Set(drafts.map((row) => row.envelopeId))];
+  const erasedFromDrafts =
+    draftEnvelopeIds.length === 0
+      ? { removed: 0, stillDrafts: new Set<string>() }
       : await withTransaction(async (tx) => {
           const stillDrafts = await tx.query<{ id: string }>(
             `
@@ -194,12 +199,18 @@ export async function eraseSignerData(
               WHERE id = ANY($1::text[]) AND status = 'draft'
               FOR UPDATE
             `,
-            [drafts.map((row) => row.envelopeId)],
+            [draftEnvelopeIds],
           );
-          const draftIds = new Set(stillDrafts.rows.map((row) => row.id));
-          const signerIds = drafts
-            .filter((row) => draftIds.has(row.envelopeId))
-            .map((row) => row.signerId);
+          const draftIds = stillDrafts.rows.map((row) => row.id);
+          const signers = await tx.query<{ id: string }>(
+            `
+              SELECT id FROM signers
+              WHERE envelope_id = ANY($1::text[]) AND lower(email) = $2
+              FOR UPDATE
+            `,
+            [draftIds, email],
+          );
+          const signerIds = signers.rows.map((row) => row.id);
 
           await tx.query(
             `DELETE FROM fields WHERE signer_id = ANY($1::text[])`,
@@ -209,9 +220,11 @@ export async function eraseSignerData(
             signerIds,
           ]);
 
-          return drafts.filter((row) => draftIds.has(row.envelopeId));
+          return { removed: signerIds.length, stillDrafts: new Set(draftIds) };
         }, database);
-  const raced = drafts.filter((row) => !removedFromDrafts.includes(row));
+  const raced = drafts.filter(
+    (row) => !erasedFromDrafts.stillDrafts.has(row.envelopeId),
+  );
 
   const deletedEnvelopes = await deleteEnvelopesAndFiles(
     [...new Set(finished.map((row) => row.envelopeId))],
@@ -220,7 +233,7 @@ export async function eraseSignerData(
 
   return {
     deletedEnvelopes,
-    removedFromDrafts: removedFromDrafts.length,
+    removedFromDrafts: erasedFromDrafts.removed,
     skippedInProgress: [...inProgress, ...raced].map((row) => ({
       id: row.envelopeId,
       title: row.envelopeTitle,
