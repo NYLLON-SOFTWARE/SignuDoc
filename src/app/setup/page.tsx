@@ -10,7 +10,11 @@ import {
 import { getAuthSession } from "@/lib/auth/server";
 import { buildBranding } from "@/lib/branding";
 import { ServiceConfigurationError } from "@/lib/services/service-config";
-import { getSetupState, resolveSettings } from "@/lib/settings";
+import {
+  getSetupState,
+  readStoredSettings,
+  resolveSettings,
+} from "@/lib/settings";
 import { resolveSetupView } from "@/lib/setup";
 import { isHostedMode } from "@/lib/utils/env";
 
@@ -25,8 +29,16 @@ async function loadView(): Promise<SetupShellView> {
     // Only an install that already has accounts cares who is signed in.
     const session =
       state.status === "unclaimed" ? await getAuthSession() : null;
+    // The form asks for a support address unless one is saved already.
+    // Read fresh, not from the settings cache: this page is opened rarely,
+    // and what it asks for should match what setup will accept.
+    const stored =
+      state.status === "fresh" || state.status === "unclaimed"
+        ? await readStoredSettings()
+        : null;
 
     return resolveSetupView(state, {
+      storedSupportAddress: stored?.supportAddress ?? null,
       sessionUser: session
         ? {
             email: session.user.email,

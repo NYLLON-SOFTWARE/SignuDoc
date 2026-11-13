@@ -44,6 +44,7 @@ const emptyValues: SetupValues = {
   password: "",
   senderAddress: "",
   setupToken: "",
+  supportAddress: "",
 };
 
 export function SetupShell({ hosted, onVercel, view }: SetupShellProps) {
@@ -211,6 +212,7 @@ function SetupForm({
   const isCreate = view.view === "create";
   const requiresToken = isCreate ? view.requiresToken : true;
   const asksForSender = isCreate && !view.senderAddressFromEnv;
+  const asksForSupport = view.asksForSupportAddress;
 
   async function handleSwitchAccount() {
     if (isSwitchingAccount) {
@@ -251,6 +253,7 @@ function SetupForm({
         body: JSON.stringify({
           organizationName: values.organizationName,
           setupToken: requiresToken ? values.setupToken : undefined,
+          supportAddress: asksForSupport ? values.supportAddress : undefined,
           ...(isCreate
             ? {
                 email: values.email,
@@ -319,6 +322,22 @@ function SetupForm({
           readOnly={false}
           value={values.organizationName}
         />
+
+        {asksForSupport ? (
+          <FieldShell
+            autoComplete="off"
+            disabled={isSubmitting}
+            error={errors.supportAddress}
+            helper="Signers and people with an account are told to write here for help, and replies to this site's emails come here. You can change it in Settings."
+            label="Support email"
+            name="setup-support-address"
+            onChange={handleChange("supportAddress")}
+            placeholder="help@acmecorp.com"
+            readOnly={false}
+            type="email"
+            value={values.supportAddress}
+          />
+        ) : null}
 
         {isCreate ? (
           <>

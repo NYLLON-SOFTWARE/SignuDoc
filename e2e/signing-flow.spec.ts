@@ -55,6 +55,8 @@ test("a new install is set up, a sender sends a PDF and a recipient signs it", a
 }, testInfo) => {
   const runId = String(Date.now());
   const adminEmail = `admin+${runId}@example.com`;
+  // Not the administrator's own address, so the two cannot be mixed up.
+  const supportEmail = `help+${runId}@example.com`;
   const senderEmail = `sender+${runId}@example.com`;
   const outsiderEmail = `outsider+${runId}@elsewhere.example`;
   const signerEmail = `signer+${runId}@example.com`;
@@ -100,6 +102,18 @@ test("a new install is set up, a sender sends a PDF and a recipient signs it", a
     await adminPage.getByLabel("Your email").fill(adminEmail);
     await adminPage.getByLabel("Password").fill(PASSWORD);
 
+    // Setup does not finish without an address people can write to for
+    // help. Nothing stands in for it, the administrator's own included.
+    await adminPage.getByLabel("Setup token").fill(e2eSetupToken);
+    await adminPage.getByRole("button", { name: "Finish setup" }).click();
+    await expect(
+      adminPage.getByText(
+        "Enter an email address people can write to for help",
+      ),
+    ).toBeVisible();
+    await expect(adminPage).toHaveURL(/\/setup$/);
+    await adminPage.getByLabel("Support email").fill(supportEmail);
+
     // The deployment sets SETUP_TOKEN, so knowing the URL is not enough.
     await adminPage.getByLabel("Setup token").fill("not the token");
     await adminPage.getByRole("button", { name: "Finish setup" }).click();
@@ -117,6 +131,9 @@ test("a new install is set up, a sender sends a PDF and a recipient signs it", a
     ).toBeVisible();
     await expect(adminPage.getByLabel("Organization name")).toHaveValue(
       ORGANIZATION_NAME,
+    );
+    await expect(adminPage.getByLabel("Support address")).toHaveValue(
+      supportEmail,
     );
     // The starting sign-up rule is the administrator's own email domain.
     await expect(adminPage.getByLabel("Email domains")).toHaveValue(
@@ -139,6 +156,9 @@ test("a new install is set up, a sender sends a PDF and a recipient signs it", a
     });
 
     expect(testEmail.subject).toBe(`Test email from ${ORGANIZATION_NAME}`);
+    // Replies and questions go to the address given at setup.
+    expect(testEmail.replyTo).toBe(supportEmail);
+    expect(testEmail.text).toContain(`Questions? Contact ${supportEmail}.`);
 
     // The organization puts its own logo and color on the site. The logo
     // is saved the moment it is chosen, the color with the form.
@@ -213,7 +233,19 @@ test("a new install is set up, a sender sends a PDF and a recipient signs it", a
           footer.getByRole("link", { exact: true, name: hostedOnly }),
         ).toHaveCount(0);
       }
+
+      // The product's own link goes to its repository. There is no site
+      // run by the project to send anyone to.
+      await expect(
+        footer.getByRole("link", { name: "Powered by SignuDoc" }),
+      ).toHaveAttribute("href", "https://github.com/NYLLON-SOFTWARE/signudoc");
     }
+
+    // A signer with a question is sent to the organization's own address.
+    await page.goto("/signer-privacy");
+    await expect(
+      page.getByRole("link", { exact: true, name: supportEmail }),
+    ).toHaveAttribute("href", `mailto:${supportEmail}`);
   });
 
   await test.step("an address outside the organization cannot sign up", async () => {
@@ -437,6 +469,7 @@ test("a new install is set up, a sender sends a PDF and a recipient signs it", a
   const signingLink = extractLink(invitation.text, "/sign/");
 
   expect(invitation.text).toContain(`through ${ORGANIZATION_NAME}.`);
+  expect(invitation.replyTo).toBe(supportEmail);
   // The logo opens the message, fetched from this site.
   expect(invitation.html).toMatch(
     new RegExp(
@@ -662,7 +695,10 @@ test("a new install is set up, a sender sends a PDF and a recipient signs it", a
       await database.end();
     }
 
-    const claim = { organizationName: "Second Wind Partners" };
+    const claim = {
+      organizationName: "Second Wind Partners",
+      supportAddress: `desk+${runId}@example.com`,
+    };
     const anonymousContext = await browser.newContext();
 
     expect(
@@ -686,6 +722,9 @@ test("a new install is set up, a sender sends a PDF and a recipient signs it", a
     await wrongAccountPage.getByRole("button", { name: "Log in" }).click();
     await expect(wrongAccountPage).toHaveURL(/\/dashboard$/);
     await wrongAccountPage.goto("/setup");
+    // The settings went with the administrator, the support address among
+    // them, so whoever takes charge is asked for one.
+    await expect(wrongAccountPage.getByLabel("Support email")).toBeVisible();
     await wrongAccountPage
       .getByRole("button", { name: "Log in as someone else" })
       .click();
@@ -718,6 +757,9 @@ test("a new install is set up, a sender sends a PDF and a recipient signs it", a
     ).toBeVisible();
     await expect(page.getByLabel("Organization name")).toHaveValue(
       claim.organizationName,
+    );
+    await expect(page.getByLabel("Support address")).toHaveValue(
+      claim.supportAddress,
     );
     // Sign-up stays as it was before anyone was in charge: open.
     await expect(page.getByRole("radio", { name: /^Anyone/ })).toBeChecked();

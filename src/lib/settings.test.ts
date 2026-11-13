@@ -43,13 +43,13 @@ test("stored settings are used as they are when the environment says nothing", (
 
 test("email addresses set in the environment win over the stored ones", () => {
   const settings = resolveSettings(stored, {
-    RESEND_FROM_EMAIL: "SignuDoc <noreply@signudoc.app>",
-    SUPPORT_EMAIL: "support@signudoc.app",
+    RESEND_FROM_EMAIL: "Acme Signing <noreply@mail.acme.com>",
+    SUPPORT_EMAIL: "desk@acme.com",
   });
 
-  assert.equal(settings.senderAddress, "SignuDoc <noreply@signudoc.app>");
+  assert.equal(settings.senderAddress, "Acme Signing <noreply@mail.acme.com>");
   assert.equal(settings.senderAddressFromEnv, true);
-  assert.equal(settings.supportAddress, "support@signudoc.app");
+  assert.equal(settings.supportAddress, "desk@acme.com");
   assert.equal(settings.supportAddressFromEnv, true);
 });
 

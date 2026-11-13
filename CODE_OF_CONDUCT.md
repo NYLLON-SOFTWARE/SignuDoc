@@ -23,7 +23,12 @@ Examples of unacceptable behavior:
 
 Project maintainers may remove, edit, or reject comments, commits, issues, and pull requests that violate this Code of Conduct. Contributors who do not follow these standards may be temporarily or permanently banned from participating.
 
-To report Code of Conduct issues, contact **support@signudoc.app**. Reports will be reviewed and handled as confidentially as practical.
+To report a Code of Conduct issue, use GitHub's own reporting. Open the menu (the three dots) on the issue, pull request or comment, choose **Report content**, and then pick one of:
+
+- **Report to repository admins**, which sends your report to the people who administer this repository.
+- **Report abuse to GitHub Support**, if the problem is with a maintainer, or if GitHub offers you only this choice.
+
+The project has no email address for reports. Reports will be reviewed and handled as confidentially as practical.
 
 ## Scope
 
