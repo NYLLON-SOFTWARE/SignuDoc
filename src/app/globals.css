@@ -23,7 +23,7 @@
   --color-destructive-foreground: #ffffff;
   --color-border: var(--border);
   --color-input: var(--border);
-  --color-ring: rgba(83, 64, 214, 0.32);
+  --color-ring: rgb(var(--accent-rgb) / 0.32);
   --color-chart-1: var(--signer-1);
   --color-chart-2: var(--signer-2);
   --color-chart-3: var(--signer-3);
@@ -58,9 +58,15 @@
   --secondary: #575a6e;
   --tertiary: #6e7183;
   --placeholder: #8b8ea0;
+  /*
+   * The accent and its shades. An install with its own color replaces all
+   * of these together, from a rule the layout adds (see brand-color.ts).
+   */
   --accent: #5340d6;
+  --accent-rgb: 83 64 214;
   --accent-hover: #4433b8;
   --accent-soft: #ece9fd;
+  --accent-soft-hover: #e0dbfb;
   --accent-softer: #f4f2ff;
   --accent-ink: #4433b8;
   --danger: #b42318;
@@ -141,11 +147,11 @@
   }
 
   ::selection {
-    background: rgba(83, 64, 214, 0.18);
+    background: rgb(var(--accent-rgb) / 0.18);
   }
 
   :focus-visible {
-    outline: 2px solid rgba(83, 64, 214, 0.55);
+    outline: 2px solid rgb(var(--accent-rgb) / 0.55);
     outline-offset: 2px;
   }
 
@@ -323,7 +329,7 @@
 
   .field-input:focus-visible {
     border-color: var(--accent);
-    box-shadow: 0 0 0 3px rgba(83, 64, 214, 0.16);
+    box-shadow: 0 0 0 3px rgb(var(--accent-rgb) / 0.16);
   }
 
   .field-input:disabled {

@@ -4,6 +4,7 @@ import { test } from "node:test";
 import {
   buildEnvelopeOriginalPdfKey,
   buildEnvelopeThumbnailKey,
+  buildTemplatePdfKey,
 } from "./storage-keys.ts";
 
 const envelopeId = "0b7f6f0e-2f6a-4d0c-9a53-3f0e7c1f9a11";
@@ -48,5 +49,21 @@ test("an original in a shared folder does not share its picture", () => {
       userId: "sender",
     }),
     `users/sender/envelopes/${envelopeId}/thumbnail.jpg`,
+  );
+});
+
+test("a template's document is kept apart from every envelope's", () => {
+  const templateKey = buildTemplatePdfKey({
+    templateId: envelopeId,
+    userId: "sender",
+  });
+
+  assert.equal(
+    templateKey,
+    `users/sender/templates/${envelopeId}/original.pdf`,
+  );
+  assert.notEqual(
+    templateKey,
+    buildEnvelopeOriginalPdfKey({ envelopeId, userId: "sender" }),
   );
 });

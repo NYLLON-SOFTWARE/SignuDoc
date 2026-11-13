@@ -12,6 +12,15 @@ const nextConfig: NextConfig = {
   images: {
     unoptimized: true,
   },
+  // Finished PDFs are drawn with fonts read from disk at runtime, cut down
+  // by a WebAssembly subsetter (src/lib/services/pdf-fonts.ts). Listing the
+  // files here makes sure they are copied into the deployed functions.
+  outputFileTracingIncludes: {
+    "/api/**": [
+      "./src/assets/fonts/*.ttf",
+      "./node_modules/harfbuzzjs/dist/harfbuzz-subset.wasm",
+    ],
+  },
 };
 
 export default nextConfig;

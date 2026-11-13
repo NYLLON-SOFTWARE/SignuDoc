@@ -17,6 +17,13 @@ import {
 } from "@/components/ui/dialog";
 import type { ReviewEnvelopeData } from "@/lib/envelopes";
 import { PERMITTED_USE_PATH } from "@/lib/permitted-uses";
+import { formatReminderInterval } from "@/lib/services/reminders";
+import {
+  DEFAULT_ENVELOPE_DEADLINE_DAYS,
+  DEFAULT_ENVELOPE_REMINDER_DAYS,
+  ENVELOPE_DEADLINE_DAY_OPTIONS,
+  ENVELOPE_REMINDER_DAY_OPTIONS,
+} from "@/lib/types/domain";
 import { getSignerPalette } from "./signer-palette";
 
 const envelopeSteps = ["Upload", "Signers", "Place fields", "Review"];
@@ -30,6 +37,7 @@ type ReviewShellProps = {
 };
 
 type ReviewRecordView = {
+  copyRecipients: readonly { email: string; id: string; name: string }[];
   filename: string;
   pageCount: number;
   signers: readonly ReviewSigner[];
@@ -38,7 +46,14 @@ type ReviewRecordView = {
 };
 
 type ReviewFieldSummaryLabel =
-  "Checkbox" | "Date" | "Initials" | "Signature" | "Text";
+  | "Dropdown"
+  | "Number"
+  | "Radio group"
+  | "Checkbox"
+  | "Date"
+  | "Initials"
+  | "Signature"
+  | "Text";
 
 type ReviewSigner = {
   color?: string;
@@ -61,6 +76,12 @@ export function ReviewShell({
   initialState,
   record,
 }: ReviewShellProps) {
+  const [deadlineDays, setDeadlineDays] = useState<number>(
+    DEFAULT_ENVELOPE_DEADLINE_DAYS,
+  );
+  const [reminderDays, setReminderDays] = useState<number | null>(
+    DEFAULT_ENVELOPE_REMINDER_DAYS,
+  );
   const [isConfirmationOpen, setIsConfirmationOpen] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
   const [sendPhase, setSendPhase] = useState<SendPhase>("idle");
@@ -107,7 +128,9 @@ export function ReviewShell({
     try {
       const response = await fetch(`/api/envelopes/${envelopeId}/send`, {
         body: JSON.stringify({
+          expiresInDays: deadlineDays,
           permittedUseConfirmed: true,
+          reminderIntervalDays: reminderDays,
         }),
         headers: {
           "content-type": "application/json",
@@ -189,6 +212,7 @@ export function ReviewShell({
   }
 
   const activeRecord: ReviewRecordView = {
+    copyRecipients: record.copyRecipients ?? [],
     filename: record.filename,
     pageCount: record.pageCount,
     signers: record.signers.map((signer) => ({ ...signer })),
@@ -315,11 +339,79 @@ export function ReviewShell({
               })}
             </ol>
 
+            {activeRecord.copyRecipients.length > 0 ? (
+              <div className="well mt-3 p-4">
+                <p className="text-[0.9375rem] font-bold text-(--fg)">
+                  Copies when everyone has signed
+                </p>
+                <ul className="mt-2 space-y-1 text-sm leading-6 text-(--secondary)">
+                  {activeRecord.copyRecipients.map((recipient) => (
+                    <li className="truncate" key={recipient.id}>
+                      {recipient.name} · {recipient.email}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            ) : null}
+
             <p className="notice notice-accent mt-4 font-medium">
               After you send, Signer 1 will receive an email with a link to
               sign. Each signer is notified in order after the previous signer
               completes.
             </p>
+
+            <div className="well mt-4 p-4">
+              <div className="grid gap-4 sm:grid-cols-2">
+                <label className="grid gap-1.5">
+                  <span className="text-[0.8125rem] font-semibold text-(--secondary)">
+                    Signing deadline
+                  </span>
+                  <select
+                    className="field-input"
+                    disabled={sendPhase === "sending" || Boolean(notice)}
+                    onChange={(event) =>
+                      setDeadlineDays(Number(event.target.value))
+                    }
+                    value={deadlineDays}
+                  >
+                    {ENVELOPE_DEADLINE_DAY_OPTIONS.map((days) => (
+                      <option key={days} value={days}>
+                        {days} days
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label className="grid gap-1.5">
+                  <span className="text-[0.8125rem] font-semibold text-(--secondary)">
+                    Automatic reminders
+                  </span>
+                  <select
+                    className="field-input"
+                    disabled={sendPhase === "sending" || Boolean(notice)}
+                    onChange={(event) =>
+                      setReminderDays(
+                        event.target.value === "off"
+                          ? null
+                          : Number(event.target.value),
+                      )
+                    }
+                    value={reminderDays ?? "off"}
+                  >
+                    <option value="off">{formatReminderInterval(null)}</option>
+                    {ENVELOPE_REMINDER_DAY_OPTIONS.map((days) => (
+                      <option key={days} value={days}>
+                        {formatReminderInterval(days)}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              </div>
+              <p className="mt-3 text-sm leading-6 text-(--secondary)">
+                Signing links stop working at the deadline. Reminders go to the
+                signer whose turn it is until they sign. You can change both
+                later from the envelope.
+              </p>
+            </div>
           </article>
         </div>
 
@@ -344,6 +436,7 @@ export function ReviewShell({
 
       {isConfirmationOpen ? (
         <SendConfirmationDialog
+          deadlineDays={deadlineDays}
           errorMessage={sendPhase === "error" ? sendError : null}
           firstSignerName={firstSigner?.name ?? "Signer 1"}
           isSending={sendPhase === "sending"}
@@ -358,6 +451,7 @@ export function ReviewShell({
 }
 
 type SendConfirmationDialogProps = {
+  deadlineDays: number;
   errorMessage: string | null;
   firstSignerName: string;
   isSending: boolean;
@@ -368,6 +462,7 @@ type SendConfirmationDialogProps = {
 };
 
 function SendConfirmationDialog({
+  deadlineDays,
   errorMessage,
   firstSignerName,
   isSending,
@@ -398,7 +493,8 @@ function SendConfirmationDialog({
                   {signerCount === 1 ? "signer" : "signers"}.{" "}
                   {signerCount === 1
                     ? `${firstSignerName} will be notified immediately.`
-                    : `The first signer (${firstSignerName}) will be notified immediately.`}
+                    : `The first signer (${firstSignerName}) will be notified immediately.`}{" "}
+                  The request expires in {deadlineDays} days.
                 </p>
               </div>
             </DialogDescription>
@@ -420,7 +516,7 @@ function SendConfirmationDialog({
                 agreement and not a will, court order, legally required consumer
                 disclosure, or other{" "}
                 <a
-                  className="font-semibold text-(--accent-ink) underline decoration-[rgba(83,64,214,0.35)] underline-offset-4"
+                  className="font-semibold text-(--accent-ink) underline decoration-[rgb(var(--accent-rgb)/0.35)] underline-offset-4"
                   href={PERMITTED_USE_PATH}
                   rel="noreferrer"
                   target="_blank"

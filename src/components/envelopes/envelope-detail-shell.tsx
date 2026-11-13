@@ -14,6 +14,7 @@ import { useState } from "react";
 import { DocumentThumbnail } from "@/components/shared/document-thumbnail";
 import { ShellButton } from "@/components/shared/form-shell";
 import { StatusPanel } from "@/components/shared/status-panel";
+import { SaveTemplateDialog } from "@/components/templates/save-template-dialog";
 import {
   Dialog,
   DialogContent,
@@ -25,6 +26,12 @@ import type {
   EnvelopeDetailData,
   EnvelopeDetailTimelineItem,
 } from "@/lib/envelopes";
+import { formatReminderInterval } from "@/lib/services/reminders";
+import {
+  DEFAULT_ENVELOPE_DEADLINE_DAYS,
+  ENVELOPE_DEADLINE_DAY_OPTIONS,
+  ENVELOPE_REMINDER_DAY_OPTIONS,
+} from "@/lib/types/domain";
 import { getSignerPalette } from "./signer-palette";
 
 type EnvelopeDetailShellProps = {
@@ -60,7 +67,13 @@ type EnvelopeDetailRecord = {
   title: string;
 };
 
-type ModalState = "delete-draft" | "void-envelope" | null;
+type ModalState =
+  | "change-deadline"
+  | "change-reminders"
+  | "delete-draft"
+  | "save-template"
+  | "void-envelope"
+  | null;
 
 const statusPillClasses: Record<EnvelopeStatus, string> = {
   completed: "pill-success",
@@ -113,9 +126,14 @@ export function EnvelopeDetailShell({
 }: EnvelopeDetailShellProps) {
   const [activeModal, setActiveModal] = useState<ModalState>(null);
   const [actionError, setActionError] = useState<string | null>(null);
+  const [isChangingDeadline, setIsChangingDeadline] = useState(false);
+  const [isChangingReminders, setIsChangingReminders] = useState(false);
   const [isDeletingDraft, setIsDeletingDraft] = useState(false);
   const [isSendingReminder, setIsSendingReminder] = useState(false);
   const [isVoidingEnvelope, setIsVoidingEnvelope] = useState(false);
+  const [savedTemplateName, setSavedTemplateName] = useState<string | null>(
+    null,
+  );
 
   function handleRetry() {
     window.location.reload();
@@ -170,6 +188,8 @@ export function EnvelopeDetailShell({
     timeline: record.timeline,
     title: record.title,
   };
+  const deadline = activeRecord.status === "sent" ? record.deadline : null;
+  const isExpired = Boolean(deadline?.expired);
   const manualReminderState = record.manualReminder ?? null;
   const reminderLimited =
     activeRecord.status === "sent" &&
@@ -179,6 +199,18 @@ export function EnvelopeDetailShell({
     activeRecord.status === "sent" && manualReminderState?.nextAvailableAtLabel
       ? `You can send another reminder after ${manualReminderState.nextAvailableAtLabel}.`
       : null;
+  const deadlineText = !deadline
+    ? null
+    : isExpired
+      ? `Expired ${deadline.expiresAtLabel}. Nobody can sign until you set a new deadline.`
+      : deadline.expiresAtLabel
+        ? `Expires ${deadline.expiresAtLabel}.`
+        : "No deadline. Each signing link lasts seven days.";
+  const reminderIntervalDays = record.reminderIntervalDays ?? null;
+  const remindersText =
+    reminderIntervalDays === null
+      ? "Automatic reminders are off."
+      : `Automatic reminders: ${formatReminderInterval(reminderIntervalDays).toLowerCase()}.`;
   const activeSigner =
     activeRecord.status === "sent"
       ? activeRecord.signers.find((signer) => signer.status === "waiting")
@@ -221,6 +253,60 @@ export function EnvelopeDetailShell({
       setActionError(payload?.error ?? "Unable to send a reminder right now.");
     } finally {
       setIsSendingReminder(false);
+    }
+  }
+
+  async function handleConfirmChangeDeadline(expiresInDays: number) {
+    setActionError(null);
+    setIsChangingDeadline(true);
+
+    try {
+      const response = await fetch(`/api/envelopes/${envelopeId}/deadline`, {
+        body: JSON.stringify({ expiresInDays }),
+        headers: { "content-type": "application/json" },
+        method: "POST",
+      });
+      const payload = (await response.json().catch(() => null)) as {
+        error?: string;
+      } | null;
+
+      if (response.ok || response.status === 404 || response.status === 409) {
+        window.location.reload();
+        return;
+      }
+
+      setActionError(payload?.error ?? "Unable to change the deadline.");
+    } catch {
+      setActionError("Unable to change the deadline.");
+    } finally {
+      setIsChangingDeadline(false);
+    }
+  }
+
+  async function handleConfirmChangeReminders(intervalDays: number | null) {
+    setActionError(null);
+    setIsChangingReminders(true);
+
+    try {
+      const response = await fetch(`/api/envelopes/${envelopeId}/reminders`, {
+        body: JSON.stringify({ reminderIntervalDays: intervalDays }),
+        headers: { "content-type": "application/json" },
+        method: "POST",
+      });
+      const payload = (await response.json().catch(() => null)) as {
+        error?: string;
+      } | null;
+
+      if (response.ok || response.status === 404 || response.status === 409) {
+        window.location.reload();
+        return;
+      }
+
+      setActionError(payload?.error ?? "Unable to change the reminders.");
+    } catch {
+      setActionError("Unable to change the reminders.");
+    } finally {
+      setIsChangingReminders(false);
     }
   }
 
@@ -310,9 +396,13 @@ export function EnvelopeDetailShell({
               </h1>
               <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
                 <span
-                  className={`pill ${statusPillClasses[activeRecord.status]}`}
+                  className={`pill ${
+                    isExpired
+                      ? "pill-danger"
+                      : statusPillClasses[activeRecord.status]
+                  }`}
                 >
-                  {statusLabelMap[activeRecord.status]}
+                  {isExpired ? "Expired" : statusLabelMap[activeRecord.status]}
                 </span>
                 <p className="text-sm text-(--secondary)">
                   Created {activeRecord.createdAtLabel}
@@ -389,6 +479,88 @@ export function EnvelopeDetailShell({
           <p className="mt-4 text-sm leading-6 text-(--secondary) lg:text-right">
             {reminderHelperText}
           </p>
+        ) : null}
+
+        {deadlineText ? (
+          <div
+            className={`mt-5 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between ${
+              isExpired ? "notice notice-danger" : "well px-5 py-3.5"
+            }`}
+          >
+            <p
+              className={
+                isExpired ? undefined : "text-sm leading-6 text-(--secondary)"
+              }
+            >
+              {deadlineText}
+            </p>
+            <button
+              className="btn-quiet shrink-0"
+              onClick={() => {
+                setActionError(null);
+                setActiveModal("change-deadline");
+              }}
+              type="button"
+            >
+              {isExpired ? "Set a new deadline" : "Change deadline"}
+            </button>
+          </div>
+        ) : null}
+
+        {deadline ? (
+          <div className="well mt-3 flex flex-col gap-3 px-5 py-3.5 sm:flex-row sm:items-center sm:justify-between">
+            <p className="text-sm leading-6 text-(--secondary)">
+              {remindersText}
+            </p>
+            <button
+              className="btn-quiet shrink-0"
+              onClick={() => {
+                setActionError(null);
+                setActiveModal("change-reminders");
+              }}
+              type="button"
+            >
+              Change reminders
+            </button>
+          </div>
+        ) : null}
+
+        {savedTemplateName ? (
+          <div
+            className={`notice notice-success flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between ${
+              deadlineText || deadline ? "mt-3" : "mt-5"
+            }`}
+            role="status"
+          >
+            <p>Saved as the template &ldquo;{savedTemplateName}&rdquo;.</p>
+            <Link
+              className="shrink-0 underline underline-offset-4"
+              href="/templates"
+            >
+              View templates
+            </Link>
+          </div>
+        ) : activeRecord.signers.length > 0 ? (
+          <div
+            className={`well flex flex-col gap-3 px-5 py-3.5 sm:flex-row sm:items-center sm:justify-between ${
+              deadlineText || deadline ? "mt-3" : "mt-5"
+            }`}
+          >
+            <p className="text-sm leading-6 text-(--secondary)">
+              Send this kind of document often? Keep its fields and signing
+              order as a template.
+            </p>
+            <button
+              className="btn-quiet shrink-0"
+              onClick={() => {
+                setActionError(null);
+                setActiveModal("save-template");
+              }}
+              type="button"
+            >
+              Save as template
+            </button>
+          </div>
         ) : null}
 
         {actionError ? (
@@ -472,6 +644,31 @@ export function EnvelopeDetailShell({
               );
             })}
           </ol>
+
+          {record.copyRecipients && record.copyRecipients.length > 0 ? (
+            <div className="mt-6">
+              <h3 className="text-[0.9375rem] font-extrabold text-(--fg)">
+                Receives a copy
+              </h3>
+              <p className="mt-1 text-sm leading-6 text-(--secondary)">
+                {activeRecord.status === "completed"
+                  ? "Sent the finished document and its certificate."
+                  : "Gets the finished document once everyone has signed."}
+              </p>
+              <ul className="mt-3 space-y-2">
+                {record.copyRecipients.map((recipient) => (
+                  <li className="well px-4 py-3" key={recipient.id}>
+                    <p className="truncate text-[0.9375rem] font-bold text-(--fg)">
+                      {recipient.name}
+                    </p>
+                    <p className="truncate text-sm text-(--secondary)">
+                      {recipient.email}
+                    </p>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          ) : null}
         </article>
 
         <article className="panel p-5 sm:p-7">
@@ -507,6 +704,41 @@ export function EnvelopeDetailShell({
         </article>
       </section>
 
+      {activeModal === "change-deadline" ? (
+        <DeadlineDialog
+          errorMessage={actionError}
+          expired={isExpired}
+          onCancel={() => setActiveModal(null)}
+          onConfirm={handleConfirmChangeDeadline}
+          processing={isChangingDeadline}
+        />
+      ) : null}
+
+      {activeModal === "change-reminders" ? (
+        <RemindersDialog
+          errorMessage={actionError}
+          initialIntervalDays={reminderIntervalDays}
+          onCancel={() => setActiveModal(null)}
+          onConfirm={handleConfirmChangeReminders}
+          processing={isChangingReminders}
+        />
+      ) : null}
+
+      {activeModal === "save-template" ? (
+        <SaveTemplateDialog
+          envelopeId={envelopeId}
+          initialName={activeRecord.title}
+          onCancel={() => setActiveModal(null)}
+          onSaved={(templateName) => {
+            setActiveModal(null);
+            setSavedTemplateName(templateName);
+          }}
+          signers={[...activeRecord.signers]
+            .sort((left, right) => left.order - right.order)
+            .map((signer) => ({ id: signer.id, name: signer.name }))}
+        />
+      ) : null}
+
       {activeModal === "delete-draft" ? (
         <ConfirmationDialog
           confirmLabel="Delete draft"
@@ -538,6 +770,196 @@ export function EnvelopeDetailShell({
         />
       ) : null}
     </div>
+  );
+}
+
+type DeadlineDialogProps = {
+  errorMessage?: string | null;
+  expired: boolean;
+  onCancel: () => void;
+  onConfirm: (expiresInDays: number) => void | Promise<void>;
+  processing?: boolean;
+};
+
+function DeadlineDialog({
+  errorMessage,
+  expired,
+  onCancel,
+  onConfirm,
+  processing = false,
+}: DeadlineDialogProps) {
+  const [days, setDays] = useState<number>(DEFAULT_ENVELOPE_DEADLINE_DAYS);
+
+  return (
+    <Dialog
+      open
+      onOpenChange={(open) => {
+        if (!open && !processing) {
+          onCancel();
+        }
+      }}
+    >
+      <DialogContent className="max-w-md sm:p-8" showCloseButton={false}>
+        <div className="space-y-4">
+          <DialogHeader className="space-y-3">
+            <DialogTitle>
+              {expired ? "Set a new deadline" : "Change the deadline"}
+            </DialogTitle>
+            <DialogDescription asChild>
+              <div className="space-y-2 text-sm leading-6 text-(--secondary)">
+                <p>
+                  The new deadline counts from now.{" "}
+                  {expired
+                    ? "The signing link that was already sent will work again."
+                    : "The signing link that was already sent keeps working until then."}
+                </p>
+              </div>
+            </DialogDescription>
+          </DialogHeader>
+
+          <label className="grid gap-1.5">
+            <span className="text-[0.8125rem] font-semibold text-(--secondary)">
+              Signing deadline
+            </span>
+            <select
+              autoFocus
+              className="field-input"
+              disabled={processing}
+              onChange={(event) => setDays(Number(event.target.value))}
+              value={days}
+            >
+              {ENVELOPE_DEADLINE_DAY_OPTIONS.map((option) => (
+                <option key={option} value={option}>
+                  {option} days from now
+                </option>
+              ))}
+            </select>
+          </label>
+
+          {errorMessage ? (
+            <div className="notice notice-danger" role="alert">
+              <p>{errorMessage}</p>
+            </div>
+          ) : null}
+
+          <div className="flex flex-col-reverse gap-3 pt-2 sm:flex-row sm:justify-end">
+            <ShellButton
+              disabled={processing}
+              onClick={onCancel}
+              variant="secondary"
+            >
+              Cancel
+            </ShellButton>
+            <ShellButton loading={processing} onClick={() => onConfirm(days)}>
+              {processing ? "Saving..." : "Save deadline"}
+            </ShellButton>
+          </div>
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+type RemindersDialogProps = {
+  errorMessage?: string | null;
+  initialIntervalDays: number | null;
+  onCancel: () => void;
+  onConfirm: (intervalDays: number | null) => void | Promise<void>;
+  processing?: boolean;
+};
+
+function RemindersDialog({
+  errorMessage,
+  initialIntervalDays,
+  onCancel,
+  onConfirm,
+  processing = false,
+}: RemindersDialogProps) {
+  const [intervalDays, setIntervalDays] = useState<number | null>(
+    initialIntervalDays,
+  );
+  // An interval set some other way than these choices is still offered.
+  const options = [
+    ...new Set([
+      ...ENVELOPE_REMINDER_DAY_OPTIONS,
+      ...(initialIntervalDays === null ? [] : [initialIntervalDays]),
+    ]),
+  ].sort((left, right) => left - right);
+
+  return (
+    <Dialog
+      open
+      onOpenChange={(open) => {
+        if (!open && !processing) {
+          onCancel();
+        }
+      }}
+    >
+      <DialogContent className="max-w-md sm:p-8" showCloseButton={false}>
+        <div className="space-y-4">
+          <DialogHeader className="space-y-3">
+            <DialogTitle>Automatic reminders</DialogTitle>
+            <DialogDescription asChild>
+              <div className="space-y-2 text-sm leading-6 text-(--secondary)">
+                <p>
+                  A reminder goes to the signer whose turn it is when they have
+                  not heard from you for this long. Reminders stop once everyone
+                  has signed or the deadline passes.
+                </p>
+              </div>
+            </DialogDescription>
+          </DialogHeader>
+
+          <label className="grid gap-1.5">
+            <span className="text-[0.8125rem] font-semibold text-(--secondary)">
+              Send a reminder
+            </span>
+            <select
+              autoFocus
+              className="field-input"
+              disabled={processing}
+              onChange={(event) =>
+                setIntervalDays(
+                  event.target.value === "off"
+                    ? null
+                    : Number(event.target.value),
+                )
+              }
+              value={intervalDays ?? "off"}
+            >
+              <option value="off">{formatReminderInterval(null)}</option>
+              {options.map((option) => (
+                <option key={option} value={option}>
+                  {formatReminderInterval(option)}
+                </option>
+              ))}
+            </select>
+          </label>
+
+          {errorMessage ? (
+            <div className="notice notice-danger" role="alert">
+              <p>{errorMessage}</p>
+            </div>
+          ) : null}
+
+          <div className="flex flex-col-reverse gap-3 pt-2 sm:flex-row sm:justify-end">
+            <ShellButton
+              disabled={processing}
+              onClick={onCancel}
+              variant="secondary"
+            >
+              Cancel
+            </ShellButton>
+            <ShellButton
+              loading={processing}
+              onClick={() => onConfirm(intervalDays)}
+            >
+              {processing ? "Saving..." : "Save reminders"}
+            </ShellButton>
+          </div>
+        </div>
+      </DialogContent>
+    </Dialog>
   );
 }
 

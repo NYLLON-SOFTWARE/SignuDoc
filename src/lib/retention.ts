@@ -338,6 +338,8 @@ export async function scheduleAccountClosure(
 }
 
 const FINISHED_ENVELOPE_STATUSES = ["completed", "declined", "voided"];
+/** How many keepers in a row may lose the role before the next run takes over. */
+const MAX_KEEPER_ATTEMPTS = 5;
 
 /**
  * On a self-hosted install the organization owns its signed records, so a
@@ -345,59 +347,84 @@ const FINISHED_ENVELOPE_STATUSES = ["completed", "declined", "voided"];
  * administrator before the
  * account is deleted. Only an administrator may receive them: anyone else
  * would gain documents they were never party to. Returns false when there
- * is no administrator to keep them.
+ * is no administrator to keep them, which leaves the account for the next
+ * run.
  */
 async function handOverFinishedEnvelopes(
   userId: string,
   database: DbExecutor,
 ): Promise<boolean> {
-  const finished = await queryOne<{ count: string }>(
-    database,
-    `
-      SELECT count(*)::text AS count
-      FROM envelopes
-      WHERE user_id = $1 AND status = ANY($2::text[])
-    `,
-    [userId, FINISHED_ENVELOPE_STATUSES],
-  );
+  for (let attempt = 0; attempt < MAX_KEEPER_ATTEMPTS; attempt += 1) {
+    const finished = await queryOne<{ count: string }>(
+      database,
+      `
+        SELECT count(*)::text AS count
+        FROM envelopes
+        WHERE user_id = $1 AND status = ANY($2::text[])
+      `,
+      [userId, FINISHED_ENVELOPE_STATUSES],
+    );
 
-  if (Number(finished?.count ?? 0) === 0) {
-    return true;
+    if (Number(finished?.count ?? 0) === 0) {
+      return true;
+    }
+
+    const keeper = await queryOne<{ id: string }>(
+      database,
+      `
+        SELECT u.id
+        FROM "user" u
+        WHERE u.id <> $1
+          AND u.role = 'admin'
+          AND NOT EXISTS (
+            SELECT 1 FROM account_closure_requests c WHERE c.user_id = u.id
+          )
+        ORDER BY u."createdAt" ASC, u.id ASC
+        LIMIT 1
+      `,
+      [userId],
+    );
+
+    if (!keeper) {
+      return false;
+    }
+
+    // The keeper was an administrator when chosen, but that role can be
+    // taken away at any moment. So the move looks at the keeper again while
+    // it holds their row: a removal already under way finishes first and is
+    // seen here, and one that starts now waits until the records have
+    // moved. Nothing moves to someone who is no longer an administrator.
+    const moved = await database.query(
+      `
+        UPDATE envelopes e
+        SET user_id = k.id
+        FROM (
+          SELECT u.id
+          FROM "user" u
+          WHERE u.id = $1
+            AND u.role = 'admin'
+            AND NOT EXISTS (
+              SELECT 1 FROM account_closure_requests c WHERE c.user_id = u.id
+            )
+          FOR SHARE OF u
+        ) k
+        WHERE e.user_id = $2 AND e.status = ANY($3::text[])
+      `,
+      [keeper.id, userId, FINISHED_ENVELOPE_STATUSES],
+    );
+
+    if ((moved.rowCount ?? 0) > 0) {
+      console.info(
+        `Moved finished envelopes from closed account ${userId} to ${keeper.id}.`,
+      );
+
+      return true;
+    }
+
+    // The keeper stopped being one in between. Look for another.
   }
 
-  const keeper = await queryOne<{ id: string }>(
-    database,
-    `
-      SELECT u.id
-      FROM "user" u
-      WHERE u.id <> $1
-        AND u.role = 'admin'
-        AND NOT EXISTS (
-          SELECT 1 FROM account_closure_requests c WHERE c.user_id = u.id
-        )
-      ORDER BY u."createdAt" ASC, u.id ASC
-      LIMIT 1
-    `,
-    [userId],
-  );
-
-  if (!keeper) {
-    return false;
-  }
-
-  await database.query(
-    `
-      UPDATE envelopes
-      SET user_id = $1
-      WHERE user_id = $2 AND status = ANY($3::text[])
-    `,
-    [keeper.id, userId, FINISHED_ENVELOPE_STATUSES],
-  );
-  console.info(
-    `Moved finished envelopes from closed account ${userId} to ${keeper.id}.`,
-  );
-
-  return true;
+  return false;
 }
 
 export class AccountPurgeDeferredError extends Error {
@@ -436,6 +463,18 @@ async function purgeQueuedAccount(
     )) {
       storageKeys.add(key);
     }
+  }
+
+  // Templates go with the account: their rows with the user's row below,
+  // their documents here.
+  const templates = await queryMany<{ sourcePdfKey: string }>(
+    database,
+    `SELECT source_pdf_key AS "sourcePdfKey" FROM templates WHERE user_id = $1`,
+    [userId],
+  );
+
+  for (const template of templates) {
+    storageKeys.add(template.sourcePdfKey);
   }
 
   const deleteResult = await database.query(

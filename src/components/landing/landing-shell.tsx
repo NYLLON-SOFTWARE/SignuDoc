@@ -108,7 +108,7 @@ const securityPillars: readonly SecurityPillar[] = [
   },
   {
     title: "Secure signing links",
-    body: "Each signer gets a unique cryptographic token. Links expire after 7 days and can't be guessed or reused.",
+    body: "Each signer gets a unique cryptographic token. Links expire at the deadline the sender sets and can't be guessed or reused.",
     icon: Link2,
   },
   {
@@ -400,7 +400,7 @@ function ComparisonTable() {
                 </td>
                 <td
                   className={cn(
-                    "border-t border-[rgba(83,64,214,0.12)] bg-(--accent-softer) px-5 py-4 text-center",
+                    "border-t border-[rgb(var(--accent-rgb)/0.12)] bg-(--accent-softer) px-5 py-4 text-center",
                     index === comparisonRows.length - 1 && "rounded-b-2xl",
                   )}
                 >

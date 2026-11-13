@@ -1,5 +1,7 @@
 import { z } from "zod";
 
+import { normalizeBrandColor } from "./brand-color.ts";
+import { buildBrandLogoPath } from "./branding.ts";
 import { getDb, type DbExecutor } from "./db/connection.ts";
 import { emailSchema } from "./schemas/common.ts";
 import {
@@ -13,6 +15,7 @@ import { parseEmailDomainList, SIGNUP_MODES } from "./signup-policy.ts";
 
 export type OrganizationSettingsField =
   | "allowedEmailDomains"
+  | "brandColor"
   | "organizationName"
   | "privacyUrl"
   | "retentionDays"
@@ -34,7 +37,11 @@ export class OrganizationSettingsError extends Error {
 /** The values the Organization form shows and sends back. */
 export type OrganizationSettingsView = {
   allowedEmailDomains: string;
+  /** "#rrggbb", or empty for the default color. */
+  brandColor: string;
   hosted: boolean;
+  /** Where the logo is served, or null when there is none. */
+  logoUrl: string | null;
   organizationName: string;
   privacyUrl: string;
   /** Days, as typed. Empty keeps finished envelopes until deleted by hand. */
@@ -52,7 +59,12 @@ export function toOrganizationSettingsView(
 ): OrganizationSettingsView {
   return {
     allowedEmailDomains: settings.allowedEmailDomains.join(", "),
+    brandColor: settings.brandColor ?? "",
     hosted: settings.hosted,
+    logoUrl:
+      settings.logoVersion === null
+        ? null
+        : buildBrandLogoPath(settings.logoVersion),
     organizationName: settings.organizationName ?? "",
     privacyUrl: settings.privacyUrl ?? "",
     retentionDays:
@@ -89,8 +101,29 @@ const optionalWebUrl = z.preprocess(
     .nullable(),
 );
 
+// Stored as "#rrggbb" whatever way it was typed. Empty means the default.
+const optionalBrandColor = z.preprocess(
+  blankToNull,
+  z
+    .string()
+    .max(16)
+    .transform((value, context) => {
+      const color = normalizeBrandColor(value);
+
+      if (!color) {
+        context.addIssue({ code: "custom", message: "Not a color" });
+
+        return z.NEVER;
+      }
+
+      return color;
+    })
+    .nullable(),
+);
+
 const organizationSettingsSchema = z.object({
   allowedEmailDomains: z.string().max(4000).default(""),
+  brandColor: optionalBrandColor.default(null),
   organizationName: z.string().trim().min(1).max(120),
   privacyUrl: optionalWebUrl.default(null),
   retentionDays: z
@@ -108,6 +141,7 @@ const organizationSettingsSchema = z.object({
 
 const FIELD_MESSAGES: Record<OrganizationSettingsField, string> = {
   allowedEmailDomains: "Enter one or more domains, such as yourcompany.com",
+  brandColor: "Enter a color as six letters and digits, such as #1a73e8",
   organizationName: "Enter the name of your organization",
   privacyUrl: "Enter a full web address starting with https://",
   retentionDays: "Enter a number of days, 30 or more, or leave this empty",
@@ -142,6 +176,7 @@ function withoutLockedFields(
   }
 
   if (current.hosted) {
+    delete input.brandColor;
     delete input.privacyUrl;
     delete input.termsUrl;
   }
@@ -204,7 +239,11 @@ export async function updateOrganizationSettings(
       signupMode: input.signupMode,
       ...(current.hosted
         ? {}
-        : { privacyUrl: input.privacyUrl, termsUrl: input.termsUrl }),
+        : {
+            brandColor: input.brandColor,
+            privacyUrl: input.privacyUrl,
+            termsUrl: input.termsUrl,
+          }),
       ...(current.senderAddressFromEnv
         ? {}
         : { senderAddress: input.senderAddress?.toLowerCase() ?? null }),

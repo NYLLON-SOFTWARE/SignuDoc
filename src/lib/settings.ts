@@ -18,7 +18,14 @@ import { getEnv, isHostedMode, type EnvSource } from "./utils/env.ts";
 /** What is stored. Null means "not set". */
 export type AppSettings = {
   allowedEmailDomains: string[];
+  /** The install's own color as "#rrggbb", or null for the default. */
+  brandColor: string | null;
   emailReadyAt: number | null;
+  /**
+   * A short hash of the install's logo, or null when it has none. The logo
+   * itself is read and written in brand-logo.ts, never here.
+   */
+  logoVersion: string | null;
   organizationName: string | null;
   privacyUrl: string | null;
   /**
@@ -40,7 +47,7 @@ export type ResolvedSettings = AppSettings & {
   supportAddressFromEnv: boolean;
 };
 
-export type SettingsUpdate = Partial<AppSettings>;
+export type SettingsUpdate = Partial<Omit<AppSettings, "logoVersion">>;
 
 /**
  * Where an install stands on first-run setup.
@@ -65,7 +72,9 @@ export type SetupRequiredDecision = {
 
 type AppSettingsRow = {
   allowed_email_domains: string[] | null;
+  brand_color: string | null;
   email_ready_at: number | null;
+  logo_hash: string | null;
   organization_name: string | null;
   privacy_url: string | null;
   retention_days: number | null;
@@ -76,25 +85,53 @@ type AppSettingsRow = {
   terms_url: string | null;
 };
 
-const SETTINGS_COLUMNS = `
-  allowed_email_domains,
-  email_ready_at,
-  organization_name,
-  privacy_url,
-  retention_days,
-  sender_address,
-  setup_completed_at,
-  signup_mode,
-  support_address,
-  terms_url
-`;
+// The columns the settings table was created with, who may sign up among
+// them.
+const FIRST_SETTINGS_COLUMNS = [
+  "allowed_email_domains",
+  "email_ready_at",
+  "organization_name",
+  "privacy_url",
+  "sender_address",
+  "setup_completed_at",
+  "signup_mode",
+  "support_address",
+  "terms_url",
+] as const;
+
+// What each migration since has added, oldest first. A database that is
+// behind this version is read in the newest of these shapes it has, so
+// what it does hold still counts. A migration that adds a column the app
+// reads adds a line here.
+const LATER_SETTINGS_COLUMNS = [
+  ["retention_days"], // 20261113090000_signature_evidence
+  ["brand_color", "logo_hash"], // 20261114120000_branding
+] as const;
+
+type LaterSettingsColumn = (typeof LATER_SETTINGS_COLUMNS)[number][number];
+
+/** A row read from a table that may not have every later column yet. */
+type StoredSettingsRow = Omit<AppSettingsRow, LaterSettingsColumn> &
+  Partial<Pick<AppSettingsRow, LaterSettingsColumn>>;
+
+/** The columns of the table after this many of the later migrations. */
+function settingsColumnsAfter(laterMigrations: number): string {
+  return [
+    ...FIRST_SETTINGS_COLUMNS,
+    ...LATER_SETTINGS_COLUMNS.slice(0, laterMigrations).flat(),
+  ].join(", ");
+}
+
+const SETTINGS_COLUMNS = settingsColumnsAfter(LATER_SETTINGS_COLUMNS.length);
 
 // How an install behaves before it has a settings row. This is what the app
 // did before settings existed, so an upgraded deployment does not change
 // until someone decides otherwise.
 const UNSET_SETTINGS: AppSettings = {
   allowedEmailDomains: [],
+  brandColor: null,
   emailReadyAt: null,
+  logoVersion: null,
   organizationName: null,
   privacyUrl: null,
   retentionDays: null,
@@ -138,21 +175,31 @@ export function invalidateSettingsCache() {
  * database was connected.
  */
 export function isMissingSchemaError(error: unknown): boolean {
-  const code =
-    typeof error === "object" && error !== null && "code" in error
-      ? (error as { code?: unknown }).code
-      : undefined;
+  const code = readErrorCode(error);
 
   return code === "42P01" || code === "42703";
 }
 
-function mapSettingsRow(row: AppSettingsRow): AppSettings {
+/** The table is there, but a column this version reads is not. */
+function isMissingColumnError(error: unknown): boolean {
+  return readErrorCode(error) === "42703";
+}
+
+function readErrorCode(error: unknown): unknown {
+  return typeof error === "object" && error !== null && "code" in error
+    ? (error as { code?: unknown }).code
+    : undefined;
+}
+
+function mapSettingsRow(row: StoredSettingsRow): AppSettings {
   return {
     allowedEmailDomains: row.allowed_email_domains ?? [],
+    brandColor: row.brand_color ?? null,
     emailReadyAt: row.email_ready_at,
+    logoVersion: row.logo_hash ?? null,
     organizationName: row.organization_name,
     privacyUrl: row.privacy_url,
-    retentionDays: row.retention_days,
+    retentionDays: row.retention_days ?? null,
     senderAddress: row.sender_address,
     setupCompletedAt: row.setup_completed_at,
     signupMode: row.signup_mode,
@@ -161,23 +208,44 @@ function mapSettingsRow(row: AppSettingsRow): AppSettings {
   };
 }
 
-/** Reads the stored row. Null when there is none (or no table for it yet). */
+/**
+ * Reads the stored row. Null when there is none (or no table for it yet).
+ *
+ * A table that is there but behind this version, because a migration has
+ * not run, is read in the newest shape it does have, and what it lacks is
+ * taken as not set. Taking it for "no row" would swap the sign-up rule an
+ * administrator chose for the open default of an install that never had
+ * settings, and drop the retention period along with it.
+ */
 export async function readStoredSettings(
   database: DbExecutor = getDb(),
 ): Promise<AppSettings | null> {
-  try {
-    const row = await queryOne<AppSettingsRow>(
-      database,
-      `select ${SETTINGS_COLUMNS} from public.app_settings where id`,
-    );
+  const newest = LATER_SETTINGS_COLUMNS.length;
 
-    return row ? mapSettingsRow(row) : null;
-  } catch (error) {
-    if (isMissingSchemaError(error)) {
-      return null;
+  for (let laterMigrations = newest; ; laterMigrations -= 1) {
+    try {
+      const row = await queryOne<StoredSettingsRow>(
+        database,
+        `select ${settingsColumnsAfter(laterMigrations)} from public.app_settings where id`,
+      );
+
+      return row ? mapSettingsRow(row) : null;
+    } catch (error) {
+      // One migration further back. Past the table as it was created there
+      // is nothing left to try.
+      if (isMissingColumnError(error) && laterMigrations > 0) {
+        continue;
+      }
+
+      if (laterMigrations === newest && isMissingSchemaError(error)) {
+        return null;
+      }
+
+      // Anything else reaches the caller, and so does a second failure
+      // (inside a transaction, the first one has already ended it). Nobody
+      // is let in on the strength of a guess.
+      throw error;
     }
-
-    throw error;
   }
 }
 
@@ -274,10 +342,11 @@ export async function saveSettings(
         support_address,
         terms_url,
         retention_days,
+        brand_color,
         created_at,
         updated_at
       )
-      values (true, $1, $2, $3, $4, $5, $6, $7, $8, $9, $11, $10, $10)
+      values (true, $1, $2, $3, $4, $5, $6, $7, $8, $9, $11, $12, $10, $10)
       on conflict (id) do update set
         allowed_email_domains = excluded.allowed_email_domains,
         email_ready_at = excluded.email_ready_at,
@@ -289,6 +358,7 @@ export async function saveSettings(
         support_address = excluded.support_address,
         terms_url = excluded.terms_url,
         retention_days = excluded.retention_days,
+        brand_color = excluded.brand_color,
         updated_at = excluded.updated_at
       returning ${SETTINGS_COLUMNS}
     `,
@@ -304,6 +374,7 @@ export async function saveSettings(
       next.termsUrl,
       now,
       next.retentionDays,
+      next.brandColor,
     ],
   );
 

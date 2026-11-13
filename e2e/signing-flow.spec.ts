@@ -11,6 +11,21 @@ const ORGANIZATION_NAME = "Harbour & Finch Legal";
 // The accent and the em dash are on purpose: download file names are built
 // from the title, and a header value cannot carry the em dash as it is.
 const ENVELOPE_TITLE = "Façade works agreement — phase 1";
+// Dark enough to carry white text, so it is used exactly as entered.
+const BRAND_COLOR = "#0b7a53";
+// A one-pixel PNG: the smallest thing that is honestly an image.
+const LOGO_PNG = Buffer.from(
+  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==",
+  "base64",
+);
+
+function readAccentColor(page: Page): Promise<string> {
+  return page.evaluate(() =>
+    getComputedStyle(document.documentElement)
+      .getPropertyValue("--accent")
+      .trim(),
+  );
+}
 
 function watchForContentSecurityPolicyViolations(page: Page, sink: string[]) {
   page.on("console", (message) => {
@@ -43,6 +58,8 @@ test("a new install is set up, a sender sends a PDF and a recipient signs it", a
   const senderEmail = `sender+${runId}@example.com`;
   const outsiderEmail = `outsider+${runId}@elsewhere.example`;
   const signerEmail = `signer+${runId}@example.com`;
+  const copyEmail = `copy+${runId}@example.com`;
+  const secondSignerEmail = `second+${runId}@example.com`;
   const cspViolations: string[] = [];
   let envelopeId = "";
 
@@ -123,6 +140,25 @@ test("a new install is set up, a sender sends a PDF and a recipient signs it", a
 
     expect(testEmail.subject).toBe(`Test email from ${ORGANIZATION_NAME}`);
 
+    // The organization puts its own logo and color on the site. The logo
+    // is saved the moment it is chosen, the color with the form.
+    await adminPage.getByLabel("Logo image").setInputFiles({
+      buffer: LOGO_PNG,
+      mimeType: "image/png",
+      name: "logo.png",
+    });
+    await expect(
+      adminPage.getByRole("button", { name: "Replace logo" }),
+    ).toBeVisible();
+    await adminPage.getByLabel("Brand color").fill(BRAND_COLOR);
+    await adminPage
+      .getByRole("button", { name: "Save organization settings" })
+      .click();
+    await expect(
+      adminPage.getByText("Organization settings saved."),
+    ).toBeVisible();
+    await expect.poll(() => readAccentColor(adminPage)).toBe(BRAND_COLOR);
+
     // Setup can only happen once.
     await adminPage.goto("/setup");
     await expect(adminPage).not.toHaveURL(/\/setup/);
@@ -152,9 +188,19 @@ test("a new install is set up, a sender sends a PDF and a recipient signs it", a
       "/download/not-a-real-link",
     ]) {
       await page.goto(publicPath);
-      await expect(
-        page.getByRole("link", { exact: true, name: ORGANIZATION_NAME }),
-      ).toBeVisible();
+
+      // The link still carries the name, and now shows the logo.
+      const brandLink = page.getByRole("link", {
+        exact: true,
+        name: ORGANIZATION_NAME,
+      });
+
+      await expect(brandLink).toBeVisible();
+      await expect(brandLink.locator("img")).toHaveAttribute(
+        "src",
+        /^\/api\/brand\/logo\?v=[0-9a-f]{16}$/,
+      );
+      expect(await readAccentColor(page)).toBe(BRAND_COLOR);
 
       const footer = page.getByRole("contentinfo");
 
@@ -284,6 +330,10 @@ test("a new install is set up, a sender sends a PDF and a recipient signs it", a
   await test.step("add a signer", async () => {
     await page.getByLabel("Signer 1 name").fill("Riley Recipient");
     await page.getByLabel("Signer 1 email").fill(signerEmail);
+    // Someone who gets the finished document without signing it.
+    await page.getByRole("button", { name: "+ Add a copy recipient" }).click();
+    await page.getByLabel("Copy recipient 1 name").fill("Casey Copy");
+    await page.getByLabel("Copy recipient 1 email").fill(copyEmail);
     await page.getByRole("button", { name: "Next →" }).click();
     await expect(page).toHaveURL(/\/prepare$/);
   });
@@ -306,6 +356,52 @@ test("a new install is set up, a sender sends a PDF and a recipient signs it", a
     ).toBeVisible();
     await expect(page.getByText("Signature ready")).toBeVisible();
     await expect(page.getByRole("status")).toHaveText("Saved");
+
+    // One of each field the signer answers by typing a number or choosing.
+    const placeField = async (tool: string, x: number, y: number) => {
+      await page.getByRole("button", { exact: true, name: tool }).click();
+      await page.getByLabel(`Place ${tool} on page 1`).click({
+        position: { x: box!.width * x, y: box!.height * y },
+      });
+    };
+
+    await placeField("Number", 0.25, 0.3);
+    await placeField("Dropdown", 0.5, 0.3);
+
+    // Until a dropdown has choices the draft is saved but cannot go on.
+    await expect(page.getByRole("button", { name: "Next →" })).toBeDisabled();
+    await page
+      .getByRole("textbox", { name: "Choices" })
+      .fill("Monthly\nYearly");
+
+    // The field editor is on the page twice, for narrow and for wide
+    // windows. The one that was not typed in shows what was saved, so
+    // typing in it after the window changes width cannot undo the choices.
+    await page.setViewportSize({ height: 900, width: 800 });
+    await expect(page.getByRole("textbox", { name: "Choices" })).toHaveValue(
+      "Monthly\nYearly",
+    );
+    await page.setViewportSize({ height: 900, width: 1440 });
+    await expect(page.getByRole("textbox", { name: "Choices" })).toHaveValue(
+      "Monthly\nYearly",
+    );
+
+    await placeField("Radio button", 0.25, 0.4);
+    await page
+      .getByRole("textbox", { name: "What this button means" })
+      .fill("Yes");
+    await page
+      .getByRole("button", { name: "+ Add a button to this group" })
+      .click();
+    await page
+      .getByRole("textbox", { name: "What this button means" })
+      .fill("No");
+    await page.setViewportSize({ height: 900, width: 800 });
+    await expect(
+      page.getByRole("textbox", { name: "What this button means" }),
+    ).toHaveValue("No");
+    await page.setViewportSize({ height: 900, width: 1440 });
+    await expect(page.getByRole("button", { name: "Next →" })).toBeEnabled();
     await page.getByRole("button", { name: "Next →" }).click();
     await expect(page).toHaveURL(/\/review$/);
   });
@@ -314,6 +410,9 @@ test("a new install is set up, a sender sends a PDF and a recipient signs it", a
     await expect(
       page.getByRole("heading", { name: ENVELOPE_TITLE }),
     ).toBeVisible();
+    // The sender decides how long signers get and how often to nudge them.
+    await page.getByLabel("Signing deadline").selectOption("7");
+    await page.getByLabel("Automatic reminders").selectOption("2");
     await page.getByRole("button", { name: "Send envelope" }).click();
 
     const confirmation = page.getByRole("dialog", {
@@ -322,6 +421,13 @@ test("a new install is set up, a sender sends a PDF and a recipient signs it", a
 
     await confirmation.getByRole("checkbox").check();
     await confirmation.getByRole("button", { name: "Send now" }).click();
+
+    await expect(page).toHaveURL(new RegExp(`/envelopes/${envelopeId}$`));
+    await expect(page.getByText(/^Expires .+\.$/)).toBeVisible();
+    await expect(
+      page.getByText("Automatic reminders: every 2 days."),
+    ).toBeVisible();
+    await expect(page.getByText("Casey Copy")).toBeVisible();
   });
 
   const invitation = await waitForEmail({
@@ -331,6 +437,12 @@ test("a new install is set up, a sender sends a PDF and a recipient signs it", a
   const signingLink = extractLink(invitation.text, "/sign/");
 
   expect(invitation.text).toContain(`through ${ORGANIZATION_NAME}.`);
+  // The logo opens the message, fetched from this site.
+  expect(invitation.html).toMatch(
+    new RegExp(
+      `<img src="${baseURL ?? ""}/api/brand/logo\\?v=[0-9a-f]{16}" alt="Harbour &amp; Finch Legal"`,
+    ),
+  );
 
   await test.step("the recipient signs without an account", async () => {
     const recipientContext = await browser.newContext({
@@ -360,7 +472,10 @@ test("a new install is set up, a sender sends a PDF and a recipient signs it", a
     await expect(
       recipientPage.getByRole("img", { name: "Rendered PDF page 1" }),
     ).toBeVisible();
-    await expect(recipientPage.getByText("1 required remaining")).toBeVisible();
+    expect(await readAccentColor(recipientPage)).toBe(BRAND_COLOR);
+    // The signature, the dropdown and the radio group. The number is
+    // optional, and the two radio buttons are one question.
+    await expect(recipientPage.getByText("3 required remaining")).toBeVisible();
     await recipientPage
       .getByRole("button", { exact: true, name: "Signature" })
       .click();
@@ -368,6 +483,19 @@ test("a new install is set up, a sender sends a PDF and a recipient signs it", a
       .getByRole("dialog", { name: "Add your signature" })
       .getByRole("button", { name: "Apply signature" })
       .click();
+    await recipientPage.getByLabel("Choose one").selectOption("Yearly");
+    await recipientPage.getByRole("radio", { name: "No" }).click();
+    await recipientPage.getByRole("radio", { name: "Yes" }).click();
+    await expect(
+      recipientPage.getByRole("radio", { name: "No" }),
+    ).toHaveAttribute("aria-checked", "false");
+
+    // A comma as a decimal mark could be read two ways, so it is not taken.
+    await recipientPage.getByLabel("Enter a number").fill("12,5");
+    await expect(
+      recipientPage.getByRole("button", { name: "Finish" }),
+    ).toBeDisabled();
+    await recipientPage.getByLabel("Enter a number").fill("1,250.5");
     await recipientPage.getByRole("button", { name: "Finish" }).click();
     await recipientPage
       .getByRole("dialog", { name: "Finish signing?" })
@@ -405,6 +533,20 @@ test("a new install is set up, a sender sends a PDF and a recipient signs it", a
     expect(await verification.json()).toMatchObject({ match: true });
 
     await recipientContext.close();
+  });
+
+  await test.step("the copy recipient gets the finished document and nothing before it", async () => {
+    const copyEmailMessage = await waitForEmail({
+      template: "completion_notification",
+      to: copyEmail,
+    });
+
+    expect(copyEmailMessage.attachments?.length).toBe(2);
+    expect(
+      extractLinks(copyEmailMessage.text).some((link) =>
+        new URL(link).pathname.startsWith("/sign/"),
+      ),
+    ).toBe(false);
   });
 
   await test.step("the sender sees it completed and can download", async () => {
@@ -461,6 +603,49 @@ test("a new install is set up, a sender sends a PDF and a recipient signs it", a
       401,
     );
     await anonymousContext.close();
+  });
+
+  await test.step("the document is saved as a template and used for the next one", async () => {
+    await page.goto(`/envelopes/${envelopeId}`);
+    await page.getByRole("button", { name: "Save as template" }).click();
+
+    const saveDialog = page.getByRole("dialog", { name: "Save as a template" });
+
+    await saveDialog.getByLabel("Template name").fill("Works agreement");
+    await saveDialog
+      .getByRole("textbox", { name: /^Signer 1/ })
+      .fill("Contractor");
+    await saveDialog.getByRole("button", { name: "Save template" }).click();
+    await expect(page.getByText("Saved as the template")).toBeVisible();
+
+    await page.getByRole("link", { name: "View templates" }).click();
+    await expect(page).toHaveURL(/\/templates$/);
+    await expect(
+      page.getByRole("heading", { name: "Works agreement" }),
+    ).toBeVisible();
+    // The template names a role, not the person who signed the original.
+    await expect(page.getByText("1. Contractor")).toBeVisible();
+    await expect(page.getByText("Riley Recipient")).toHaveCount(0);
+
+    await page.getByRole("link", { name: "Use template" }).click();
+    await expect(page).toHaveURL(/\/templates\/[^/]+\/use$/);
+    await page.getByLabel("Envelope title").fill("Works agreement, phase 2");
+    await page.getByLabel("Contractor name").fill("Sasha Second");
+    await page.getByLabel("Contractor email").fill(secondSignerEmail);
+    await page.getByRole("button", { name: "Create draft" }).click();
+
+    // A new draft with the same fields, on the person named this time,
+    // one click from being sent.
+    await expect(page).toHaveURL(/\/envelopes\/[^/]+\/review$/);
+    expect(page.url()).not.toContain(envelopeId);
+    await expect(
+      page.getByRole("heading", { name: "Works agreement, phase 2" }),
+    ).toBeVisible();
+    await expect(page.getByText("Sasha Second")).toBeVisible();
+    await expect(page.getByText("(4 fields)")).toBeVisible();
+    await expect(
+      page.getByRole("button", { name: "Send envelope" }),
+    ).toBeEnabled();
   });
 
   // An install from before there were administrators has accounts but

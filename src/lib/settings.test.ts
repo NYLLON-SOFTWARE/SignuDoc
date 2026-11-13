@@ -10,7 +10,9 @@ import {
 
 const stored: AppSettings = {
   allowedEmailDomains: ["acme.com"],
+  brandColor: null,
   emailReadyAt: null,
+  logoVersion: null,
   organizationName: "Acme Corp",
   privacyUrl: "https://acme.com/privacy",
   retentionDays: null,
@@ -60,8 +62,10 @@ test("hosted mode is switched on by HOSTED_MODE", () => {
 
 test("a neutral install goes by the organization's name and links", () => {
   assert.deepEqual(buildBranding(resolveSettings(stored, {})), {
+    brandColor: null,
     contactUrl: null,
     hosted: false,
+    logoUrl: null,
     organizationName: "Acme Corp",
     privacyUrl: "https://acme.com/privacy",
     productName: "Acme Corp",
@@ -113,4 +117,34 @@ test("a missing table or column is recognized, other failures are not", () => {
   assert.equal(isMissingSchemaError({ code: "23505" }), false);
   assert.equal(isMissingSchemaError(new Error("connection refused")), false);
   assert.equal(isMissingSchemaError(null), false);
+});
+
+test("a neutral install carries its own color and logo, hosted mode never does", () => {
+  const branded: AppSettings = {
+    ...stored,
+    brandColor: "#1a73e8",
+    logoVersion: "0123456789abcdef",
+  };
+  const neutral = buildBranding(resolveSettings(branded, {}));
+
+  assert.equal(neutral.brandColor, "#1a73e8");
+  assert.equal(neutral.logoUrl, "/api/brand/logo?v=0123456789abcdef");
+
+  const plain = buildBranding(resolveSettings(stored, {}));
+
+  assert.equal(plain.brandColor, null);
+  assert.equal(plain.logoUrl, null);
+
+  const hosted = buildBranding(resolveSettings(branded, { HOSTED_MODE: "1" }));
+
+  assert.equal(hosted.brandColor, null);
+  assert.equal(hosted.logoUrl, null);
+});
+
+test("a stored color that is not one is ignored rather than put on a page", () => {
+  const branding = buildBranding(
+    resolveSettings({ ...stored, brandColor: "red;}body{display:none" }, {}),
+  );
+
+  assert.equal(branding.brandColor, null);
 });

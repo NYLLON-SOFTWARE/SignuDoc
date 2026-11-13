@@ -18,6 +18,7 @@ import {
   THUMBNAIL_MAX_BYTES,
   ThumbnailValidationError,
 } from "@/lib/services/thumbnails";
+import { readLimitedBody } from "@/lib/utils/limited-body";
 
 type EnvelopeThumbnailRouteContext = {
   params: Promise<{
@@ -164,45 +165,4 @@ export async function PUT(
       { status: 500 },
     );
   }
-}
-
-/** Reads the body, giving up as soon as it is larger than the limit. */
-async function readLimitedBody(
-  request: Request,
-  maxBytes: number,
-): Promise<Uint8Array | null> {
-  if (!request.body) {
-    return new Uint8Array();
-  }
-
-  const reader = request.body.getReader();
-  const chunks: Uint8Array[] = [];
-  let total = 0;
-
-  for (;;) {
-    const { done, value } = await reader.read();
-
-    if (done) {
-      break;
-    }
-
-    total += value.byteLength;
-
-    if (total > maxBytes) {
-      await reader.cancel().catch(() => undefined);
-      return null;
-    }
-
-    chunks.push(value);
-  }
-
-  const body = new Uint8Array(total);
-  let offset = 0;
-
-  for (const chunk of chunks) {
-    body.set(chunk, offset);
-    offset += chunk.byteLength;
-  }
-
-  return body;
 }

@@ -1,6 +1,10 @@
 import { z } from "zod";
 
-import { MAX_SIGNERS_PER_ENVELOPE, signerStatuses } from "../types/domain.ts";
+import {
+  MAX_COPY_RECIPIENTS_PER_ENVELOPE,
+  MAX_SIGNERS_PER_ENVELOPE,
+  signerStatuses,
+} from "../types/domain.ts";
 import {
   emailSchema,
   idSchema,
@@ -12,6 +16,15 @@ import {
 export const signerStatusSchema = z.enum(signerStatuses);
 export const duplicateSignerEmailMessage =
   "Each signer must have a unique email address.";
+export const duplicateCopyRecipientEmailMessage =
+  "This address is already a signer or a copy recipient.";
+
+/** Someone who receives the finished document without signing it. */
+export const copyRecipientSchema = z.object({
+  id: idSchema.optional(),
+  name: nameSchema,
+  email: emailSchema,
+});
 
 export const draftSignerSchema = z.object({
   id: idSchema.optional(),
@@ -62,11 +75,39 @@ export const signerListSchema = z
     }
   });
 
-export const replaceSignersSchema = z.object({
-  signers: signerListSchema,
-});
+export const replaceSignersSchema = z
+  .object({
+    // Left out keeps the copy recipients already saved.
+    copyRecipients: z
+      .array(copyRecipientSchema)
+      .max(MAX_COPY_RECIPIENTS_PER_ENVELOPE)
+      .optional(),
+    signers: signerListSchema,
+  })
+  .superRefine((value, ctx) => {
+    const emails = new Set(
+      value.signers.map((signer) => signer.email.toLowerCase()),
+    );
+
+    for (const [index, recipient] of (value.copyRecipients ?? []).entries()) {
+      const normalizedEmail = recipient.email.toLowerCase();
+
+      if (emails.has(normalizedEmail)) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: duplicateCopyRecipientEmailMessage,
+          path: ["copyRecipients", index, "email"],
+        });
+      }
+
+      emails.add(normalizedEmail);
+    }
+  });
 
 export const replaceSignersResponseSchema = z.object({
+  copyRecipients: z.array(
+    z.object({ email: emailSchema, id: idSchema, name: nameSchema }),
+  ),
   envelopeId: idSchema,
   redirectPath: z.string().trim().min(1),
   signers: z.array(
@@ -100,6 +141,9 @@ export const declineEnvelopeSchema = z.object({
   reason: optionalTrimmedString(1000),
 });
 
+export type CopyRecipient = z.infer<typeof copyRecipientSchema>;
+/** A copy recipient as stored: it always has an id. */
+export type CopyRecipientRecord = { email: string; id: string; name: string };
 export type DraftSigner = z.infer<typeof draftSignerSchema>;
 export type ReplaceSignersInput = z.infer<typeof replaceSignersSchema>;
 export type ReplaceSignersResponse = z.infer<

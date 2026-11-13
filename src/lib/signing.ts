@@ -37,7 +37,11 @@ import {
   type SigningSubmitResponse,
   type SigningUnavailableResponse,
 } from "./schemas/signing.ts";
-import { declineEnvelopeSchema, signerRecordSchema } from "./schemas/signer.ts";
+import {
+  declineEnvelopeSchema,
+  signerRecordSchema,
+  type CopyRecipientRecord,
+} from "./schemas/signer.ts";
 import { getBranding } from "./settings.ts";
 import {
   listAuditEventsForEnvelope,
@@ -72,9 +76,17 @@ import {
   type StorageService,
 } from "./services/storage.ts";
 import { requireConfigValue } from "./services/service-config.ts";
-import { RECIPIENT_DOWNLOAD_LINK_TTL_SECONDS } from "./types/domain.ts";
+import {
+  RECIPIENT_DOWNLOAD_LINK_TTL_SECONDS,
+  type FieldType,
+} from "./types/domain.ts";
 import { getEnv } from "./utils/env.ts";
 import { escapeHtml } from "./utils/html.ts";
+import {
+  isEnvelopeExpired,
+  nextSignerLinkExpiresAt,
+} from "./envelope-deadline.ts";
+import { describeEntryProblem, judgeRadioGroups } from "./field-choices.ts";
 import {
   buildElectronicRecordsDisclosure,
   CONSENT_STATEMENT,
@@ -113,6 +125,7 @@ type SigningEnvelopeRow = {
   createdAt: number;
   declinedAt: number | null;
   evidenceKey: string | null;
+  expiresAt: number | null;
   id: string;
   pageCount: number;
   sentAt: number | null;
@@ -151,16 +164,18 @@ type SigningFieldRow = {
   checked: boolean | null;
   createdAt: number;
   envelopeId: string;
+  groupId: string | null;
   height: number;
   id: string;
   imageKey: string | null;
   inputMethod: "auto" | "drawn" | "typed" | null;
   label: string | null;
+  options: string[] | null;
   page: number;
   required: boolean;
   signerId: string;
   submittedAt: number | null;
-  type: "checkbox" | "date" | "initials" | "signature" | "text";
+  type: FieldType;
   updatedAt: number;
   value: string | null;
   width: number;
@@ -192,7 +207,9 @@ type ResolvedSigningContext = {
 
 type SubmitSigningOptions = {
   database?: DbPool;
+  emailService?: EmailService;
   requestMeta?: SigningRequestMeta;
+  storageService?: StorageService;
   /** The extra checks this browser has passed for the link (from its cookie). */
   verifiedMethods?: readonly SignerCheckMethod[];
 };
@@ -371,6 +388,8 @@ function buildDeclineNotificationEmail(input: {
 function buildCompletionSignerEmail(input: {
   attached: boolean;
   branding: Branding;
+  /** True for someone who gets a copy without having signed. */
+  copyOnly?: boolean;
   evidenceDownloadUrl: string;
   envelopeId: string;
   envelopeTitle: string;
@@ -384,6 +403,9 @@ function buildCompletionSignerEmail(input: {
     `Hi ${input.signerName},`,
     "",
     `"${input.envelopeTitle}" from ${input.senderName} has been fully signed in ${input.branding.productName}.`,
+    ...(input.copyOnly
+      ? [`${input.senderName} asked for you to receive a copy.`]
+      : []),
     input.attached
       ? "The completed document and its certificate are attached. Keep them: they are your copy of the agreement."
       : "The completed document and its certificate are ready.",
@@ -395,6 +417,9 @@ function buildCompletionSignerEmail(input: {
   const htmlBody = [
     `<p>Hi ${escapeHtml(input.signerName)},</p>`,
     `<p>&ldquo;${escapeHtml(input.envelopeTitle)}&rdquo; from ${escapeHtml(input.senderName)} has been fully signed in ${escapeHtml(input.branding.productName)}.</p>`,
+    input.copyOnly
+      ? `<p>${escapeHtml(input.senderName)} asked for you to receive a copy.</p>`
+      : "",
     input.attached
       ? "<p>The completed document and its certificate are attached. Keep them: they are your copy of the agreement.</p>"
       : "<p>The completed document and its certificate are ready.</p>",
@@ -431,11 +456,13 @@ function mapFieldRow(row: SigningFieldRow) {
     checked: row.checked,
     createdAt: row.createdAt,
     envelopeId: row.envelopeId,
+    groupId: row.groupId ?? undefined,
     height: row.height,
     id: row.id,
     imageKey: row.imageKey,
     inputMethod: row.inputMethod,
     label: row.label ?? undefined,
+    options: row.options ?? undefined,
     page: row.page,
     required: row.required,
     signerId: row.signerId,
@@ -477,6 +504,7 @@ async function getEnvelopeRow(
           completed_at AS "completedAt",
           declined_at AS "declinedAt",
           voided_at AS "voidedAt",
+          expires_at AS "expiresAt",
           created_at AS "createdAt",
           updated_at AS "updatedAt"
         FROM envelopes
@@ -513,6 +541,26 @@ async function listSignerRows(
         updated_at AS "updatedAt"
       FROM signers
       WHERE envelope_id = $1
+        -- Copy recipients are not part of the signing order.
+        AND role = 'signer'
+      ORDER BY sign_order ASC, id ASC
+    `,
+    [envelopeId],
+  );
+}
+
+/** The people who get the finished document without signing it. */
+async function listCopyRecipientRows(
+  envelopeId: string,
+  database: DbExecutor,
+): Promise<CopyRecipientRecord[]> {
+  return queryMany<CopyRecipientRecord>(
+    database,
+    `
+      SELECT id, name, email
+      FROM signers
+      WHERE envelope_id = $1
+        AND role = 'cc'
       ORDER BY sign_order ASC, id ASC
     `,
     [envelopeId],
@@ -574,6 +622,8 @@ async function listFieldRows(
         value,
         image_key AS "imageKey",
         checked,
+        options,
+        group_id AS "groupId",
         submitted_at AS "submittedAt",
         created_at AS "createdAt",
         updated_at AS "updatedAt"
@@ -751,11 +801,46 @@ function isFieldSubmissionComplete(
     case "date":
       return typeof update.submittedAt === "number";
     case "text":
+    case "number":
+    case "dropdown":
       return typeof update.value === "string" && update.value.trim().length > 0;
     case "checkbox":
       return update.checked === true;
+    case "radio":
+      // One button is never the whole answer: the group is judged together,
+      // once every button's value is known.
+      return true;
     default:
       return false;
+  }
+}
+
+/**
+ * Checks the radio buttons group by group: never more than one chosen, and
+ * exactly one where the group is required.
+ */
+function assertRadioGroupsAnswered(
+  fields: ReadonlyArray<ReturnType<typeof fieldRecordSchema.parse>>,
+  updates: ReadonlyMap<string, FieldPersistenceUpdate>,
+) {
+  const verdict = judgeRadioGroups(
+    fields,
+    (field) =>
+      field.id !== undefined && updates.get(field.id)?.checked === true,
+  );
+
+  if (verdict === "too_many") {
+    throw new SigningMutationError(
+      "Choose only one option in each group of radio buttons.",
+      400,
+    );
+  }
+
+  if (verdict === "missing") {
+    throw new SigningMutationError(
+      "Complete all required fields before finishing.",
+      400,
+    );
   }
 }
 
@@ -892,6 +977,7 @@ async function sendCompletionEmails(input: {
     recipientCertificate: Uint8Array;
     signedPdf: Uint8Array;
   };
+  copyRecipients: readonly CopyRecipientRecord[];
   database?: DbExecutor;
   emailService: EmailService;
   envelopeId: string;
@@ -918,8 +1004,17 @@ async function sendCompletionEmails(input: {
   const senderName = normalizeSenderName(input.sender);
   const issuedAt = Math.floor(Date.now() / 1000);
   const branding = await getBranding();
+  // Signers first, then the people who only get a copy: the place in this
+  // list is part of each message's idempotency key.
+  const recipients = [
+    ...input.signers.map((signer) => ({ ...signer, copyOnly: false })),
+    ...input.copyRecipients.map((recipient) => ({
+      ...recipient,
+      copyOnly: true,
+    })),
+  ];
   const signerMessages = await Promise.all(
-    input.signers.map(async (signer) => {
+    recipients.map(async (signer) => {
       if (!signer.id) {
         throw new SigningMutationError(
           "Completed signer records must include an id.",
@@ -958,6 +1053,7 @@ async function sendCompletionEmails(input: {
           ...buildCompletionSignerEmail({
             attached: attach,
             branding,
+            copyOnly: signer.copyOnly,
             envelopeId: input.envelopeId,
             envelopeTitle: input.envelopeTitle,
             evidenceDownloadUrl: redactedEvidenceLink.url,
@@ -1417,7 +1513,9 @@ async function resolveSigningContext(
     signer.status !== "notified" ||
     signer.envelopeId !== envelopeRow.id ||
     signer.signingTokenHash !== signerRow.signingTokenHash ||
-    (signingTokenExpiresAt !== null && signingTokenExpiresAt < now)
+    (signingTokenExpiresAt !== null && signingTokenExpiresAt < now) ||
+    // The envelope's own deadline, whatever the link says.
+    isEnvelopeExpired(envelopeRow, now)
   ) {
     throw new SigningAccessError("expired");
   }
@@ -1472,9 +1570,11 @@ export async function getSigningPayloadForToken(
   const currentSignerFields = context.fields
     .filter((field) => field.signerId === context.signer.id)
     .map((field) => ({
+      groupId: field.groupId,
       height: field.height,
       id: field.id,
       label: field.label,
+      options: field.options,
       page: field.page,
       required: field.required,
       signerId: field.signerId,
@@ -1554,7 +1654,9 @@ export async function submitSigningForToken(
   input: unknown,
   {
     database = getDb(),
+    emailService: givenEmailService,
     requestMeta = {},
+    storageService: givenStorageService,
     verifiedMethods = [],
   }: SubmitSigningOptions = {},
 ): Promise<SigningSubmitResponse> {
@@ -1573,8 +1675,8 @@ export async function submitSigningForToken(
     );
   }
 
-  const emailService = createEmailService();
-  const storageService = createStorageService();
+  const emailService = givenEmailService ?? createEmailService();
+  const storageService = givenStorageService ?? createStorageService();
   const currentSignerId = context.signer.id;
 
   if (!currentSignerId) {
@@ -1696,9 +1798,23 @@ export async function submitSigningForToken(
       continue;
     }
 
-    if (field.type === "text") {
+    if (
+      field.type === "text" ||
+      field.type === "number" ||
+      field.type === "dropdown"
+    ) {
       const trimmedValue =
-        submission?.type === "text" ? submission.value.trim() : null;
+        submission?.type === field.type ? submission.value.trim() : null;
+
+      // What goes on the document is exactly what the signer entered, so a
+      // number must be one and a choice must be one the sender offered.
+      const entryProblem = trimmedValue
+        ? describeEntryProblem(field, trimmedValue)
+        : null;
+
+      if (entryProblem) {
+        throw new SigningMutationError(entryProblem, 400);
+      }
 
       fieldUpdates.set(field.id, {
         checked: null,
@@ -1712,7 +1828,9 @@ export async function submitSigningForToken(
     }
 
     const checkedValue =
-      submission?.type === "checkbox" ? submission.checked : false;
+      submission?.type === "checkbox" || submission?.type === "radio"
+        ? submission.checked
+        : false;
 
     fieldUpdates.set(field.id, {
       checked: checkedValue,
@@ -1736,6 +1854,8 @@ export async function submitSigningForToken(
       400,
     );
   }
+
+  assertRadioGroupsAnswered(currentSignerFields, fieldUpdates);
 
   let signingStatePersisted = false;
 
@@ -1764,9 +1884,9 @@ export async function submitSigningForToken(
         );
       }
 
-      nextSignerLink = await issueSigningLink({
-        issuedAt: submittedAt,
-      });
+      // Only the link itself. When it ends is settled further down, from
+      // the deadline as it stands once the envelope is locked.
+      nextSignerLink = await issueSigningLink({ issuedAt: submittedAt });
     }
 
     for (const upload of drawnSignatureUploads) {
@@ -1804,16 +1924,34 @@ export async function submitSigningForToken(
     });
 
     if (nextSigner && nextSignerLink) {
+      // The deadline the next signer is given. The sender can move it while
+      // this signer submits, and moving it only reaches the signer whose
+      // turn it is then. So it is read here, where this update holds the
+      // envelope's row and a change of deadline has to wait its turn.
+      let nextSignerDeadline = context.envelope.expiresAt ?? null;
+
       await withTransaction(async (tx) => {
-        await tx.query(
+        const lockedEnvelope = await queryOne<{ expiresAt: number | null }>(
+          tx,
           `
             UPDATE envelopes
             SET updated_at = $1
             WHERE id = $2
               AND status = 'sent'
+            RETURNING expires_at AS "expiresAt"
           `,
           [submittedAt, context.envelope.id],
         );
+
+        if (!lockedEnvelope) {
+          // Voided or declined since the page was opened.
+          throw new SigningMutationError(
+            "This signing link is no longer active.",
+            409,
+          );
+        }
+
+        nextSignerDeadline = lockedEnvelope.expiresAt;
 
         for (const update of fieldUpdates.values()) {
           const result = await tx.query(
@@ -1890,7 +2028,7 @@ export async function submitSigningForToken(
           `,
           [
             nextSignerLink.tokenHash,
-            nextSignerLink.exp,
+            nextSignerLinkExpiresAt(lockedEnvelope.expiresAt, submittedAt),
             submittedAt,
             submittedAt,
             submittedAt,
@@ -1928,6 +2066,7 @@ export async function submitSigningForToken(
           buildSigningInvitationEmail({
             branding: await getBranding(),
             envelopeTitle: context.envelope.title,
+            expiresAt: nextSignerDeadline,
             senderName: normalizeSenderName(context.sender),
             signerEmail: nextSigner.email,
             signerName: nextSigner.name,
@@ -1980,12 +2119,17 @@ export async function submitSigningForToken(
       );
     }
 
+    const copyRecipients = await listCopyRecipientRows(
+      context.envelope.id,
+      database,
+    );
     const finalArtifacts = await finalizeEnvelope(
       {
         auditEvents: [
           ...(await listAuditEventsForEnvelope(context.envelope.id, database)),
           signedAuditEvent,
         ],
+        copyRecipients,
         envelope: context.envelope,
         fields: completedFields,
         signers: completedSigners,
@@ -2152,6 +2296,7 @@ export async function submitSigningForToken(
           recipientCertificate: finalArtifacts.recipientCertificate.body,
           signedPdf: finalArtifacts.signedPdf.body,
         },
+        copyRecipients,
         database,
         emailService,
         envelopeId: context.envelope.id,

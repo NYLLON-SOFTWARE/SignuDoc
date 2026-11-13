@@ -1,8 +1,11 @@
 "use client";
 
+import { useRouter } from "next/navigation";
 import { useEffect, useState, type ChangeEvent, type FormEvent } from "react";
 
 import { FieldShell, ShellButton } from "@/components/shared/form-shell";
+import { BrandingPanel } from "@/components/settings/branding-panel";
+import { PeoplePanel } from "@/components/settings/people-panel";
 import { SignerDataPanel } from "@/components/settings/signer-data-panel";
 import type { EmailDnsRecord, EmailStatus } from "@/lib/email-status";
 import type {
@@ -68,6 +71,7 @@ const signupModeOptions: Array<{
 export function OrganizationSettings({
   initialSettings,
 }: OrganizationSettingsProps) {
+  const router = useRouter();
   const [values, setValues] = useState(initialSettings);
   const [errors, setErrors] = useState<FormErrors>({});
   const [feedback, setFeedback] = useState<Feedback>(null);
@@ -84,6 +88,12 @@ export function OrganizationSettings({
       setErrors((currentErrors) => ({ ...currentErrors, [field]: undefined }));
       setFeedback(null);
     };
+  }
+
+  function handleBrandColorChange(brandColor: string) {
+    setValues((currentValues) => ({ ...currentValues, brandColor }));
+    setErrors((currentErrors) => ({ ...currentErrors, brandColor: undefined }));
+    setFeedback(null);
   }
 
   function handleSignupModeChange(signupMode: SignupMode) {
@@ -111,6 +121,7 @@ export function OrganizationSettings({
       const response = await fetch("/api/admin/settings", {
         body: JSON.stringify({
           allowedEmailDomains: values.allowedEmailDomains,
+          brandColor: values.brandColor,
           organizationName: values.organizationName,
           privacyUrl: values.privacyUrl,
           retentionDays: values.retentionDays,
@@ -138,6 +149,9 @@ export function OrganizationSettings({
       setValues(payload.settings);
       setEmailRevision((revision) => revision + 1);
       setFeedback({ message: "Organization settings saved.", tone: "success" });
+      // The header and the accent color come from the layout around this
+      // page, which only looks them up again when asked to.
+      router.refresh();
     } catch {
       setFeedback({ message: GENERIC_ERROR_MESSAGE, tone: "error" });
     } finally {
@@ -188,6 +202,20 @@ export function OrganizationSettings({
               value={values.organizationName}
             />
           </div>
+
+          {/* The hosted service runs under its own name, mark and color. */}
+          {!values.hosted ? (
+            <BrandingPanel
+              brandColor={values.brandColor}
+              brandColorError={errors.brandColor}
+              disabled={isSaving}
+              logoUrl={values.logoUrl}
+              onBrandColorChange={handleBrandColorChange}
+              onLogoChange={(logoUrl) =>
+                setValues((currentValues) => ({ ...currentValues, logoUrl }))
+              }
+            />
+          ) : null}
 
           <fieldset className="space-y-4 border-t border-(--border) pt-8">
             <legend className="float-left mb-4 w-full text-lg font-extrabold tracking-[-0.02em] text-(--fg)">
@@ -316,7 +344,7 @@ export function OrganizationSettings({
               <p className="max-w-2xl text-sm leading-6 text-(--secondary)">
                 Without a privacy policy link, signers see{" "}
                 <a
-                  className="font-semibold text-(--accent-ink) underline decoration-[rgba(83,64,214,0.35)] underline-offset-4"
+                  className="font-semibold text-(--accent-ink) underline decoration-[rgb(var(--accent-rgb)/0.35)] underline-offset-4"
                   href="/signer-privacy"
                   target="_blank"
                 >
@@ -360,6 +388,10 @@ export function OrganizationSettings({
         </form>
 
         <EmailSetupPanel key={emailRevision} />
+
+        {/* The hosted service's accounts are strangers to each other, not
+            one organization, so it has no list of them here. */}
+        {!values.hosted ? <PeoplePanel /> : null}
 
         <SignerDataPanel />
       </div>

@@ -122,13 +122,17 @@ Some data still leaves the EU: Vercel's and Resend's account metadata and logs, 
 ## What it does
 
 - Upload PDF documents
-- Add up to 10 signers in routing order
-- Place signature, initials, date, text, and checkbox fields
+- Add up to 10 signers in routing order, and people who only receive a copy of the finished document
+- Place signature, initials, date, text, number, checkbox, dropdown, and radio button fields
+- Save a document as a template, and send it again by naming who signs this time
 - Send secure signing links by email
 - Let recipients sign without creating an account
-- Track draft, sent, completed, declined, and voided envelopes
-- Generate a final signed PDF and audit certificate
-- Send manual reminders to the current signer
+- Give each envelope its own signing deadline, and change it while the envelope is out
+- Track draft, sent, completed, declined, voided, and expired envelopes
+- Generate a final signed PDF and audit certificate, with names and text in Latin, Greek, Cyrillic, Chinese, Japanese, and Korean scripts
+- Send a reminder to the current signer yourself, or have one sent every few days
+- Put your organization's logo and color on the site, the signing pages, and the emails
+- Have more than one administrator
 - Run on any Postgres database, locally or hosted
 
 ## Built with
@@ -277,6 +281,10 @@ npm run test:e2e
 6. Each signer completes their turn in order.
 7. SignuDoc finalizes the signed PDF and audit certificate when the last signer finishes.
 
+People added to receive a copy do not sign. They are sent the finished document and its certificate at step 7 and nothing before it.
+
+A document you send often can be kept as a template: open any envelope, sent or not, and choose Save as template. The template keeps the document, the fields and the signing order, and no one's name or email address. Using it asks who signs this time and opens a draft at step 4.
+
 ## Self-hosting somewhere else
 
 SignuDoc is a regular Next.js app and runs anywhere Node.js 24 and Postgres do:
@@ -305,7 +313,7 @@ Self-hosted operators are responsible for:
 
 ## Daily cleanup
 
-Once a day the app deletes drafts nobody has touched for 30 days, finishes account deletions that were requested, and clears expired download links and finished rate limit counters. The work is done by a request to:
+Once a day the app deletes drafts nobody has touched for 30 days, finishes account deletions that were requested, and clears expired download links and finished rate limit counters. The same run sends the automatic reminders that are due and tells a sender when an envelope has passed its signing deadline. The work is done by a request to:
 
 ```text
 /api/internal/retention

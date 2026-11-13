@@ -219,7 +219,7 @@ export default async function PrivacyPage() {
         <p>
           To request access, correction, deletion, or account closure, email{" "}
           <Link
-            className="font-semibold text-(--accent-ink) underline decoration-[rgba(83,64,214,0.35)] underline-offset-4"
+            className="font-semibold text-(--accent-ink) underline decoration-[rgb(var(--accent-rgb)/0.35)] underline-offset-4"
             href={`mailto:${privacyAddress}`}
           >
             {privacyAddress}
@@ -286,14 +286,14 @@ export default async function PrivacyPage() {
         <p>
           Privacy questions, requests, and complaints may be sent to{" "}
           <Link
-            className="font-semibold text-(--accent-ink) underline decoration-[rgba(83,64,214,0.35)] underline-offset-4"
+            className="font-semibold text-(--accent-ink) underline decoration-[rgb(var(--accent-rgb)/0.35)] underline-offset-4"
             href={`mailto:${privacyAddress}`}
           >
             {privacyAddress}
           </Link>{" "}
           or through the{" "}
           <Link
-            className="font-semibold text-(--accent-ink) underline decoration-[rgba(83,64,214,0.35)] underline-offset-4"
+            className="font-semibold text-(--accent-ink) underline decoration-[rgb(var(--accent-rgb)/0.35)] underline-offset-4"
             href="/contact"
           >
             Contact

@@ -18,7 +18,21 @@ export function Brand({
   href = "/",
   labelClassName = "",
 }: BrandProps) {
-  const { productName } = useBranding();
+  const { logoUrl, productName } = useBranding();
+
+  // An install's own logo stands in for the mark and the name. The link
+  // still carries the name, for people who cannot see the picture.
+  if (logoUrl) {
+    return (
+      <Link
+        aria-label={productName}
+        className={cn("inline-flex min-w-0 items-center", className)}
+        href={href}
+      >
+        <BrandLogo compact={compact} src={logoUrl} />
+      </Link>
+    );
+  }
 
   return (
     <Link
@@ -44,7 +58,34 @@ export function Brand({
   );
 }
 
-/** The signature stroke on a violet tile. Decorative: the link carries the name. */
+/** The install's own logo, kept to the height of the header. */
+export function BrandLogo({
+  className = "",
+  compact = false,
+  src,
+}: {
+  className?: string;
+  compact?: boolean;
+  src: string;
+}) {
+  return (
+    // Served by this site at an address that changes with the image:
+    // next/image would only add a second copy to keep in step.
+    // eslint-disable-next-line @next/next/no-img-element
+    <img
+      alt=""
+      className={cn(
+        "block h-8 w-auto object-contain object-left",
+        compact ? "max-w-10" : "max-w-[44vw] sm:max-w-44",
+        className,
+      )}
+      decoding="async"
+      src={src}
+    />
+  );
+}
+
+/** The signature stroke on a tile in the accent color. Decorative: the link carries the name. */
 export function BrandMark({ className = "" }: { className?: string }) {
   return (
     <span

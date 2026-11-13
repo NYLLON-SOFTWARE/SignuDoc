@@ -5,6 +5,8 @@ import {
   auditEventTypes,
   downloadFileTypes,
   envelopeStatuses,
+  MAX_ENVELOPE_DEADLINE_DAYS,
+  MAX_ENVELOPE_REMINDER_DAYS,
 } from "../types/domain.ts";
 import {
   emailSchema,
@@ -30,8 +32,48 @@ export const envelopeCreateResponseSchema = z.object({
   title: envelopeTitleSchema,
 });
 
+export const deadlineDaysSchema = z
+  .number()
+  .int()
+  .min(1)
+  .max(MAX_ENVELOPE_DEADLINE_DAYS);
+
+/** Days between automatic reminders. Null turns them off. */
+export const reminderIntervalDaysSchema = z
+  .number()
+  .int()
+  .min(1)
+  .max(MAX_ENVELOPE_REMINDER_DAYS)
+  .nullable();
+
+/** What the sender chooses on the last step before sending. */
+export const sendEnvelopeOptionsSchema = z.object({
+  expiresInDays: deadlineDaysSchema.optional(),
+  reminderIntervalDays: reminderIntervalDaysSchema.optional(),
+});
+
+export const changeRemindersSchema = z.object({
+  reminderIntervalDays: reminderIntervalDaysSchema,
+});
+
+export const changeRemindersResponseSchema = z.object({
+  envelopeId: idSchema,
+  reminderIntervalDays: reminderIntervalDaysSchema,
+});
+
+export const changeDeadlineSchema = z.object({
+  expiresInDays: deadlineDaysSchema,
+});
+
+export const changeDeadlineResponseSchema = z.object({
+  envelopeId: idSchema,
+  expiresAt: unixTimestampSchema,
+  expiresAtLabel: z.string().trim().min(1),
+});
+
 export const sendEnvelopeResponseSchema = z.object({
   envelopeId: idSchema,
+  expiresAt: unixTimestampSchema.nullable().optional(),
   notifiedSignerName: z.string().trim().min(1).max(160),
   redirectPath: z.string().trim().min(1),
   sentAt: unixTimestampSchema,
@@ -102,6 +144,10 @@ export const envelopeRecordSchema = z.object({
   completedAt: unixTimestampSchema.nullable().optional(),
   declinedAt: unixTimestampSchema.nullable().optional(),
   voidedAt: unixTimestampSchema.nullable().optional(),
+  /** When the request stops being signable. See envelope-deadline.ts. */
+  expiresAt: unixTimestampSchema.nullable().optional(),
+  /** Days between automatic reminders, or null for none. */
+  reminderIntervalDays: reminderIntervalDaysSchema.optional(),
   createdAt: unixTimestampSchema,
   updatedAt: unixTimestampSchema,
 });
@@ -110,6 +156,13 @@ export type CreateEnvelopeResponse = z.infer<
   typeof envelopeCreateResponseSchema
 >;
 export type SendEnvelopeResponse = z.infer<typeof sendEnvelopeResponseSchema>;
+export type SendEnvelopeOptions = z.infer<typeof sendEnvelopeOptionsSchema>;
+export type ChangeDeadlineResponse = z.infer<
+  typeof changeDeadlineResponseSchema
+>;
+export type ChangeRemindersResponse = z.infer<
+  typeof changeRemindersResponseSchema
+>;
 export type VoidEnvelopeResponse = z.infer<typeof voidEnvelopeResponseSchema>;
 export type ManualNudgeResponse = z.infer<typeof manualNudgeResponseSchema>;
 export type EnvelopeListFilters = z.infer<typeof envelopeListFiltersSchema>;

@@ -85,11 +85,13 @@ type FieldRow = {
   checked: boolean | null;
   createdAt: number;
   envelopeId: string;
+  groupId: string | null;
   height: number;
   id: string;
   imageKey: string | null;
   inputMethod: FieldRecord["inputMethod"] | null;
   label: string | null;
+  options: string[] | null;
   page: number;
   required: boolean;
   signerId: string;
@@ -165,11 +167,13 @@ function mapFieldRow(row: FieldRow): FieldRecord {
     checked: row.checked,
     createdAt: row.createdAt,
     envelopeId: row.envelopeId,
+    groupId: row.groupId ?? undefined,
     height: row.height,
     id: row.id,
     imageKey: row.imageKey,
     inputMethod: row.inputMethod,
     label: row.label ?? undefined,
+    options: row.options ?? undefined,
     page: row.page,
     required: row.required,
     signerId: row.signerId,
@@ -341,12 +345,31 @@ async function listSignersForEnvelope(
         updated_at AS "updatedAt"
       FROM signers
       WHERE envelope_id = $1
+        AND role = 'signer'
       ORDER BY sign_order ASC, id ASC
     `,
     [envelopeId],
   );
 
   return rows.map(mapSignerRow);
+}
+
+/** The people who were to get a copy without signing. */
+async function listCopyRecipientsForEnvelope(
+  envelopeId: string,
+  database: DbExecutor,
+): Promise<{ email: string; name: string }[]> {
+  return queryMany<{ email: string; name: string }>(
+    database,
+    `
+      SELECT name, email
+      FROM signers
+      WHERE envelope_id = $1
+        AND role = 'cc'
+      ORDER BY sign_order ASC, id ASC
+    `,
+    [envelopeId],
+  );
 }
 
 async function storeRecipientDownloadToken(
@@ -448,6 +471,8 @@ async function listFieldsForEnvelope(
         value,
         image_key AS "imageKey",
         checked,
+        options,
+        group_id AS "groupId",
         submitted_at AS "submittedAt",
         created_at AS "createdAt",
         updated_at AS "updatedAt"
@@ -644,12 +669,16 @@ async function buildCertificateDownload(
     throw new DownloadAccessError("This file is no longer available.", 404);
   }
 
-  const [auditEvents, signers] = await Promise.all([
+  const [auditEvents, signers, copyRecipients] = await Promise.all([
     listAuditEventsForEnvelope(envelope.id, database),
     listSignersForEnvelope(envelope.id, database),
+    listCopyRecipientsForEnvelope(envelope.id, database),
   ]);
   const body = await renderEnvelopeCertificatePdf({
     auditEvents,
+    // Only a finished envelope sends copies. A declined or voided one
+    // never did, so its certificate does not name anyone as having one.
+    copyRecipients: envelope.status === "completed" ? copyRecipients : [],
     envelope,
     redactForRecipients,
     signedPdfSha256: envelope.signedPdfSha256,

@@ -1,17 +1,24 @@
 import { createHash, timingSafeEqual } from "node:crypto";
 
 import { getDb, type DbPool } from "./db/connection.ts";
+import {
+  envelopeScheduleFailed,
+  runEnvelopeSchedule,
+  type EnvelopeScheduleSummary,
+} from "./envelope-schedule.ts";
 import { runRetentionSweep, type RetentionSweepSummary } from "./retention.ts";
 import {
   consumeRateLimit,
   deleteExpiredRateLimits,
 } from "./security/rate-limit.ts";
+import type { EmailService } from "./services/email.ts";
 import type { StorageService } from "./services/storage.ts";
 import { isMissingSchemaError } from "./settings.ts";
 import { getEnv, type EnvSource } from "./utils/env.ts";
 
-// The daily cleanup: stale drafts, queued account deletions, expired
-// download links and finished rate limit windows.
+// The daily job. First the cleanup: stale drafts, queued account deletions,
+// expired download links and finished rate limit windows. Then the envelopes
+// that are out for signature: see envelope-schedule.ts.
 //
 // On Vercel it is called by a cron job (see vercel.json). A click-to-deploy
 // install has no secret for that call, because nobody typed one in, so the
@@ -31,7 +38,12 @@ const ANONYMOUS_RUN_INTERVAL_MS = 60 * 60 * 1000;
 export type RetentionCaller = "anonymous" | "authorized" | "denied";
 
 export type RetentionJobOutcome =
-  | { status: "ran"; summary: RetentionSweepSummary }
+  | {
+      /** Null when that part could not run. The cleanup still counts. */
+      schedule: EnvelopeScheduleSummary | null;
+      status: "ran";
+      summary: RetentionSweepSummary;
+    }
   | { status: "skipped"; reason: "already_running" | "ran_recently" };
 
 function digest(value: string): Buffer {
@@ -105,10 +117,12 @@ export function isCronLockedOutByOlderSecret(
 export async function runRetentionJob({
   caller,
   database = getDb(),
+  emailService,
   storageService,
 }: {
   caller: Exclude<RetentionCaller, "denied">;
   database?: DbPool;
+  emailService?: EmailService;
   storageService?: StorageService;
 }): Promise<RetentionJobOutcome> {
   if (caller === "anonymous") {
@@ -143,7 +157,11 @@ export async function runRetentionJob({
       return { reason: "already_running", status: "skipped" };
     }
 
-    const summary = await runRetentionSweep({ database, storageService });
+    const summary = await runRetentionSweep({
+      database,
+      emailService,
+      storageService,
+    });
 
     await deleteExpiredRateLimits(database).catch((error: unknown) => {
       // A database from before rate limits were kept in it has no table to
@@ -153,7 +171,28 @@ export async function runRetentionJob({
       }
     });
 
-    return { status: "ran", summary };
+    const schedule = await runEnvelopeSchedule({
+      database,
+      emailService,
+    }).catch((error: unknown) => {
+      // A database from before deadlines and reminders has no column to
+      // read: nothing is due there. Anything else is a failure worth a red
+      // cron run.
+      if (!isMissingSchemaError(error)) {
+        console.error("The envelope schedule failed:", error);
+        return null;
+      }
+
+      return {
+        expiryNoticeFailures: [],
+        expiryNoticesSent: 0,
+        reminderFailures: [],
+        remindersSent: 0,
+        stoppedEarly: false,
+      };
+    });
+
+    return { schedule, status: "ran", summary };
   } finally {
     await lockClient.query("rollback").catch(() => undefined);
     lockClient.release();
@@ -165,5 +204,16 @@ export function retentionSweepFailed(summary: RetentionSweepSummary): boolean {
     summary.accountPurgeFailures.length > 0 ||
     summary.draftDeletionFailures.length > 0 ||
     summary.finishedEnvelopeDeletionFailures.length > 0
+  );
+}
+
+/** True when any part of a finished run left work undone. */
+export function retentionJobFailed(
+  outcome: Extract<RetentionJobOutcome, { status: "ran" }>,
+): boolean {
+  return (
+    retentionSweepFailed(outcome.summary) ||
+    outcome.schedule === null ||
+    envelopeScheduleFailed(outcome.schedule)
   );
 }

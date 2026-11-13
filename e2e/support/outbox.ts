@@ -5,6 +5,7 @@ import { e2eOutboxDir } from "../../playwright.config";
 
 export type CapturedEmail = {
   attachments?: { filename: string; sha256: string }[];
+  html?: string;
   subject: string;
   template: string;
   text: string;

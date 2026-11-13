@@ -1,6 +1,7 @@
 "use client";
 
 import { FileTextIcon, UploadIcon } from "lucide-react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
   startTransition,
@@ -128,6 +129,11 @@ function UploadShellLayout({
   return (
     <div className="space-y-5">
       <PageHeader
+        action={
+          <Link className="btn-quiet min-h-11 px-4" href="/templates">
+            Start from a template
+          </Link>
+        }
         description="Step 1 of 4 - Upload document"
         title="New envelope"
       />
@@ -197,7 +203,7 @@ function UploadShellLayout({
                     </p>
                     <p className="text-sm text-(--secondary)">
                       or{" "}
-                      <span className="font-bold text-(--accent-ink) underline decoration-[rgba(83,64,214,0.35)] underline-offset-4">
+                      <span className="font-bold text-(--accent-ink) underline decoration-[rgb(var(--accent-rgb)/0.35)] underline-offset-4">
                         click to browse
                       </span>
                     </p>
