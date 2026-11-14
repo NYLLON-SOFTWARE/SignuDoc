@@ -300,11 +300,33 @@ function submissionFor(signer: {
   };
 }
 
-/** The signer goes to the provider, signs, and comes back. */
+const certificates = new Map<string, ReturnType<TestPki["issueSigner"]>>();
+
+/** A qualified certificate in this name, from the test CA. */
+function certificateFor(name: string) {
+  const issued =
+    certificates.get(name) ??
+    pki.issueSigner({ commonName: name, qualified: true });
+
+  certificates.set(name, issued);
+
+  return {
+    chain: [issued.certificate, pki.caCertificate],
+    privateKeyPem: issued.privateKeyPem,
+  };
+}
+
+/**
+ * The signer goes to the provider, signs (with a certificate in their own
+ * name, unless `as` names someone else), and comes back.
+ */
 async function signAtProvider(
   token: string,
   signer: { fields: { id: string; type: string }[]; name: string },
+  { as = signer.name }: { as?: string } = {},
 ) {
+  standIns.setSigner(certificateFor(as));
+
   const started = await startProviderSigning(token, submissionFor(signer), {
     database,
     storageService,
@@ -511,13 +533,13 @@ test("two signers sign with qualified signatures, each in a revision of their ow
 
   assert.equal(signedEvents.rows.length, 2);
 
-  for (const row of signedEvents.rows) {
+  for (const [index, row] of signedEvents.rows.entries()) {
     assert.equal(row.metadata.providerSignature?.level, "qualified");
     assert.equal(row.metadata.providerSignature?.provider, "eID Easy");
     assert.equal(row.metadata.providerSignature?.method, "smart-id-signature");
     assert.match(
       String(row.metadata.providerSignature?.certificateSubject),
-      /Qualified Signer/,
+      index === 0 ? /Riley Recipient/ : /Casey Second/,
     );
   }
 
@@ -755,4 +777,40 @@ test("an ended session keeps no secrets, and the daily cleanup ends abandoned on
     rows.rows.map((row) => row.secret_data),
     ["", ""],
   );
+});
+
+test("a certificate in someone else's name does not sign for the invited signer", async () => {
+  const draft = await createDraft();
+
+  await send(draft, "qualified");
+
+  const token = await linkFor(draft.riley.id);
+  // Someone holding Riley's link signs in at the provider as themselves.
+  const other = await signAtProvider(token, draft.riley, {
+    as: "Morgan Other",
+  });
+
+  await assert.rejects(
+    other.finish(),
+    (error: unknown) =>
+      error instanceof ProviderSigningError &&
+      error.problem === "name" &&
+      error.token === token &&
+      /Morgan Other/.test(error.message),
+  );
+  assert.deepEqual(await sessionStates(draft.envelopeId), ["failed"]);
+
+  const signer = await database.query<{ status: string }>(
+    `select status from signers where id = $1`,
+    [draft.riley.id],
+  );
+
+  assert.equal(signer.rows[0]?.status, "notified");
+
+  // Riley, in their own name, can still sign.
+  await (await signAtProvider(token, draft.riley)).finish();
+  assert.deepEqual(await sessionStates(draft.envelopeId), [
+    "completed",
+    "failed",
+  ]);
 });

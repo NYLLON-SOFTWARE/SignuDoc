@@ -14,6 +14,7 @@ import {
 } from "./services/seal-identity.ts";
 import {
   addSignatureTimestamp,
+  certificateMatchesName,
   checkSignerSignature,
   SignerSignatureError,
   type SignatureLevel,
@@ -72,12 +73,15 @@ type SessionRow = {
   provider: string;
   revisionKey: string;
   secretData: string;
+  /** The name the document was sent to this signer under. */
+  signerName: string;
   state: "completed" | "failed" | "pending" | "signing";
   submittedAt: number;
 };
 
 /** Why a signer is sent back to the signing page, as the page shows it. */
-export type ProviderSigningProblem = "cancelled" | "expired" | "failed";
+export type ProviderSigningProblem =
+  "cancelled" | "expired" | "failed" | "name";
 
 export class ProviderSigningError extends Error {
   readonly problem: ProviderSigningProblem;
@@ -287,6 +291,14 @@ export async function startProviderSigning(
   return { redirectUrl: step.redirectUrl };
 }
 
+/** A signature by a certificate in someone else's name. */
+class SignerNameError extends SignerSignatureError {
+  constructor(message: string) {
+    super(message);
+    this.name = "SignerNameError";
+  }
+}
+
 function alreadyClaimed(token: string): ProviderSigningError {
   return new ProviderSigningError(
     "This signing session is already being completed.",
@@ -359,19 +371,21 @@ export async function resumeProviderSigning(
     database,
     `
       SELECT
-        id,
-        envelope_id AS "envelopeId",
-        provider,
-        level,
-        state,
-        base_sha256 AS "baseSha256",
-        revision_key AS "revisionKey",
-        content_digest AS "contentDigest",
-        secret_data AS "secretData",
-        submitted_at AS "submittedAt",
-        expires_at AS "expiresAt"
-      FROM provider_signing_sessions
-      WHERE id = $1
+        sessions.id,
+        sessions.envelope_id AS "envelopeId",
+        sessions.provider,
+        sessions.level,
+        sessions.state,
+        sessions.base_sha256 AS "baseSha256",
+        sessions.revision_key AS "revisionKey",
+        sessions.content_digest AS "contentDigest",
+        sessions.secret_data AS "secretData",
+        sessions.submitted_at AS "submittedAt",
+        sessions.expires_at AS "expiresAt",
+        signers.name AS "signerName"
+      FROM provider_signing_sessions AS sessions
+      JOIN signers ON signers.id = sessions.signer_id
+      WHERE sessions.id = $1
     `,
     [sessionId],
   );
@@ -474,6 +488,14 @@ export async function resumeProviderSigning(
     const checked = checkSignerSignature(step.cms, contentDigest, {
       level: session.level,
     });
+
+    // The signature has to be the invited signer's own: a signing link
+    // passed to someone else does not let them sign in their name.
+    if (!certificateMatchesName(checked.certificate, session.signerName)) {
+      throw new SignerNameError(
+        `The certificate is in the name of ${checked.subject}, not ${session.signerName}, who this document was sent to.`,
+      );
+    }
     const timestampUrl = readEnv(env, "SEAL_TIMESTAMP_URL");
     let cms = step.cms;
     let timestamped = checked.timestamped;
@@ -549,9 +571,12 @@ export async function resumeProviderSigning(
 
     if (error instanceof SignerSignatureError) {
       console.error("[signing] The provider's signature was refused:", error);
-      throw new ProviderSigningError(error.message, "failed", secret.token, {
-        cause: error,
-      });
+      throw new ProviderSigningError(
+        error.message,
+        error instanceof SignerNameError ? "name" : "failed",
+        secret.token,
+        { cause: error },
+      );
     }
 
     throw new ProviderSigningError(

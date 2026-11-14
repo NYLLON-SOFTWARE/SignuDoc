@@ -15,6 +15,7 @@ import {
   addLongTermValidation,
   createValidationFetch,
   describePadesLevel,
+  parseCertificate,
   resetValidationCache,
 } from "./pdf-ltv.ts";
 import {
@@ -26,6 +27,8 @@ import { buildCadesSignature, requestDocumentTimestamp } from "./pdf-seal.ts";
 import { startTestPki, type TestPki } from "./pki-test-support.ts";
 import {
   addSignatureTimestamp,
+  certificateHolderNames,
+  certificateMatchesName,
   checkSignerSignature,
   ecdsaSignatureAsDer,
   SignerSignatureError,
@@ -459,6 +462,51 @@ test("raw ECDSA r and s are encoded, even when they start like a SEQUENCE", () =
       lookalike.subarray(32),
     ]),
   );
+});
+
+test("a certificate matches the name a signer was sent the document under", async () => {
+  await withPki(async (pki) => {
+    const plain = parseCertificate(
+      pki.issueSigner({ commonName: "Alice Example" }).certificate,
+    );
+    const national = parseCertificate(
+      pki.issueSigner({
+        commonName: "MÄNNIK,MARI-LIIS,47101010033",
+        givenName: "MARI-LIIS",
+        surname: "MÄNNIK",
+      }).certificate,
+    );
+
+    assert.deepEqual(certificateHolderNames(national), [
+      "MARI-LIIS MÄNNIK",
+      "MÄNNIK,MARI-LIIS,47101010033",
+    ]);
+
+    for (const name of [
+      "Alice Example",
+      "alice example",
+      "Example, Alice",
+      "Dr. Alice Example",
+      "Alice B. Example",
+    ]) {
+      assert.equal(certificateMatchesName(plain, name), true, name);
+    }
+
+    for (const name of ["Bob Example", "Alice", "Alice Sample", ""]) {
+      assert.equal(certificateMatchesName(plain, name), false, name);
+    }
+
+    // Accents, hyphens, case and the ID code in the common name do not count.
+    for (const name of [
+      "Mari-Liis Männik",
+      "Mari Liis Mannik",
+      "Männik Mari-Liis",
+    ]) {
+      assert.equal(certificateMatchesName(national, name), true, name);
+    }
+
+    assert.equal(certificateMatchesName(national, "Kadri Männik"), false);
+  });
 });
 
 test("the signature slot fits a chain and a timestamp", () => {

@@ -429,7 +429,8 @@ function buildSigningSubmissionPayload(
 }
 
 /** Why a signer came back from their signing provider without signing. */
-export type ProviderSignatureProblem = "cancelled" | "expired" | "failed";
+export type ProviderSignatureProblem =
+  "cancelled" | "expired" | "failed" | "name";
 
 function describeProviderProblem(
   problem: ProviderSignatureProblem,
@@ -440,6 +441,8 @@ function describeProviderProblem(
       return `You did not finish signing at ${providerName}. Nothing was signed, so you can try again.`;
     case "expired":
       return "Your earlier signing session ended before it finished. Nothing was signed, so you can try again.";
+    case "name":
+      return `The certificate you signed with at ${providerName} is not in the name this document was sent to. Nothing was signed. If the name is wrong, ask the sender to send the document again under the name on your certificate.`;
     default:
       return `${providerName} could not complete your signature. Nothing was signed. Try again, or ask the sender for help.`;
   }

@@ -18,7 +18,7 @@ type SignPageProps = {
   searchParams: Promise<{ signatureProblem?: string | string[] }>;
 };
 
-const SIGNATURE_PROBLEMS = ["cancelled", "expired", "failed"] as const;
+const SIGNATURE_PROBLEMS = ["cancelled", "expired", "failed", "name"] as const;
 
 export default async function SignPage({
   params,

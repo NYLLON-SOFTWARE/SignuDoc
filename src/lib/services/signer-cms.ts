@@ -612,6 +612,99 @@ export function isQualifiedSignatureCertificate(
   );
 }
 
+const NAME_OIDS = {
+  commonName: "2.5.4.3",
+  givenName: "2.5.4.42",
+  surname: "2.5.4.4",
+} as const;
+
+/** A DirectoryString's text, or null for a kind not read here. */
+function readDirectoryString(bytes: Buffer, tlv: Tlv): string | null {
+  const content = contentBytes(bytes, tlv);
+
+  switch (tlv.tag) {
+    case 0x0c: // UTF8String
+      return content.toString("utf8");
+    case 0x13: // PrintableString
+    case 0x14: // TeletexString, read as Latin-1
+    case 0x16: // IA5String
+      return content.toString("latin1");
+    case 0x1e: // BMPString, UTF-16 big-endian
+      return Buffer.from(content).swap16().toString("utf16le");
+    default:
+      return null;
+  }
+}
+
+/**
+ * The names a certificate gives its holder: the given name and surname
+ * together, when it has both, and its common name.
+ */
+export function certificateHolderNames(certificate: Certificate): string[] {
+  const bytes = certificate.subjectName;
+  const values = new Map<string, string[]>();
+
+  for (const set of children(bytes, readTlv(bytes))) {
+    for (const item of children(bytes, set)) {
+      const [type, value] = children(bytes, item);
+      const text = value ? readDirectoryString(bytes, value) : null;
+
+      if (type && text) {
+        const oid = readOid(bytes, type);
+
+        values.set(oid, [...(values.get(oid) ?? []), text]);
+      }
+    }
+  }
+
+  const given = values.get(NAME_OIDS.givenName)?.join(" ");
+  const surname = values.get(NAME_OIDS.surname)?.join(" ");
+
+  return [
+    ...(given && surname ? [`${given} ${surname}`] : []),
+    ...(values.get(NAME_OIDS.commonName) ?? []),
+  ];
+}
+
+/** A name's words, without case, accents, punctuation or numbers. */
+function nameWords(name: string): Set<string> {
+  return new Set(
+    name
+      .normalize("NFKD")
+      .replace(/\p{M}+/gu, "")
+      .toLocaleLowerCase("en")
+      .split(/[^\p{L}\p{N}]+/u)
+      .filter((word) => word.length > 0 && !/\p{N}/u.test(word)),
+  );
+}
+
+/**
+ * Whether a certificate is in the name a signer was sent the document
+ * under. Case, accents, punctuation and word order do not count, nor do
+ * numbers (some national certificates put the holder's ID code in the
+ * common name). A name may have words the other lacks, such as a middle
+ * name or a title, as long as at least two words match and every word of
+ * the shorter name is in the longer; a one-word name has to match exactly.
+ */
+export function certificateMatchesName(
+  certificate: Certificate,
+  invitedName: string,
+): boolean {
+  const invited = nameWords(invitedName);
+
+  return certificateHolderNames(certificate).some((name) => {
+    const words = nameWords(name);
+    const [shorter, longer] =
+      words.size <= invited.size ? [words, invited] : [invited, words];
+
+    return (
+      shorter.size > 0 &&
+      [...shorter].every((word) => longer.has(word)) &&
+      (shorter.size >= 2 || words.size === invited.size)
+    );
+  });
+}
+
 /**
  * Checks a signer's CMS before it goes into the document: it signs exactly
  * `contentDigest` (SHA-256 of the revision's signed bytes), it verifies with

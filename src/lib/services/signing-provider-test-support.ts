@@ -34,6 +34,8 @@ export type StandInSigner = {
 
 export type ProviderStandIns = {
   close: () => Promise<void>;
+  /** Who signs from now on, as if another person signed in. */
+  setSigner: (next: StandInSigner) => void;
   cscUrl: string;
   eidEasyUrl: string;
   state: {
@@ -96,7 +98,7 @@ function cmsForDigest(signer: StandInSigner, digest: Buffer): Buffer {
 }
 
 export async function startProviderStandIns(
-  signer: StandInSigner,
+  firstSigner: StandInSigner,
   { port = 0 }: { port?: number } = {},
 ): Promise<ProviderStandIns> {
   const state: ProviderStandIns["state"] = {
@@ -106,6 +108,7 @@ export async function startProviderStandIns(
     signedWith: null,
     signerCancels: false,
   };
+  let signer = firstSigner;
   const credential = (id: string | undefined): StandInSigner | null =>
     id === "credential-1"
       ? signer
@@ -390,6 +393,9 @@ export async function startProviderStandIns(
       }),
     cscUrl: `${base}/csc`,
     eidEasyUrl: `${base}/eideasy`,
+    setSigner: (next) => {
+      signer = next;
+    },
     state,
   };
 }
