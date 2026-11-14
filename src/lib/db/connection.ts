@@ -65,6 +65,19 @@ export function getDb(): Pool {
   return pool;
 }
 
+/**
+ * Makes getDb() return this pool from now on, for tests that need the code
+ * under test to use a pool of their own. Returns the pool it replaces.
+ */
+export function replaceDbPoolForTests(pool: Pool): Pool | null {
+  const replaced = cachedPool;
+
+  cachedPool = pool;
+  globalThis.__signudocPgPool = pool;
+
+  return replaced;
+}
+
 export async function withTransaction<T>(
   run: (client: PoolClient) => Promise<T>,
   pool: Pool = getDb(),

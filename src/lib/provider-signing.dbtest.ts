@@ -10,6 +10,7 @@ import { promisify } from "node:util";
 import { PDFDocument, StandardFonts } from "pdf-lib";
 import pg from "pg";
 
+import { replaceDbPoolForTests } from "./db/connection.ts";
 import { openTestDatabase } from "./db/test-database.ts";
 import { ELECTRONIC_RECORDS_DISCLOSURE_VERSION } from "./electronic-records-disclosure.ts";
 import {
@@ -853,8 +854,9 @@ test("the last signature needs no second connection while it holds the envelope"
     max: 1,
   });
   const draft = await createDraft();
-
-  globalThis.__signudocPgPool = single;
+  // What the code reads without being handed a pool (the install's name,
+  // the seal key) comes from this one too.
+  const replaced = replaceDbPoolForTests(single);
 
   try {
     await send(draft, "simple");
@@ -882,7 +884,7 @@ test("the last signature needs no second connection while it holds the envelope"
 
     assert.equal(finished.rows[0]!.status, "completed");
   } finally {
-    globalThis.__signudocPgPool = database;
+    replaceDbPoolForTests(replaced ?? database);
     await single.end();
   }
 });
