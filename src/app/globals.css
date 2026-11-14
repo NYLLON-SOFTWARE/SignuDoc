@@ -369,7 +369,8 @@
 
   .field-input:disabled {
     cursor: not-allowed;
-    background: var(--surface);
+    /* background-color, not the shorthand, so a select keeps its chevron. */
+    background-color: var(--surface);
     color: var(--secondary);
   }
 
