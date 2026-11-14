@@ -127,7 +127,7 @@ A seal is easy to check while its certificates are valid and their certificate a
 
 Each step only adds to the file, so the seal from step 1 stays intact. With a certificate from a certificate authority but no timestamp server, step 2 still runs, which lets readers check the certificate later, but the seal stays at B-B: a PAdES level above that needs a trusted time. A self-signed seal without a timestamp server is left as it is, since there is no one to ask about it.
 
-The lookups go to the timestamp server and the certificate authorities, outside Vercel. All of a document's lookups together stop after 15 seconds, and if one fails the document keeps the seal it has and the function log says what was missing, so signing never waits on them for long. An archive timestamp keeps the evidence checkable until the timestamp server's own certificate expires, usually years later. Adding a new archive timestamp before then is not automatic yet.
+The lookups go to the timestamp server and the certificate authorities, outside Vercel. All of a document's lookups, the archive timestamp included, share 15 seconds (the seal's own timestamp has up to 10 seconds before that), and only answers that are current and signed by the certificate authority, or by a responder it authorized, are kept. If one fails the document keeps the seal it has and the function log says what was missing, so signing never waits on them for long. An archive timestamp keeps the evidence checkable until the timestamp server's own certificate expires, usually years later. Adding a new archive timestamp before then is not automatic yet.
 
 ### An advanced electronic seal (eIDAS)
 

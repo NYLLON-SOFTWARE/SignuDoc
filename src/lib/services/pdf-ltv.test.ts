@@ -20,6 +20,7 @@ import { findSignatures, hasDocumentSecurityStore } from "./pdf-incremental.ts";
 import {
   addLongTermValidation,
   collectValidationData,
+  createLookupBudget,
   createValidationFetch,
   describePadesLevel,
   readCms,
@@ -180,7 +181,12 @@ test("a CA-issued seal gets its chain, OCSP answers and an archive timestamp (B-
 
       await writeFile(file, result.bytes);
 
-      const { stdout } = await run("pdfsig", ["-nocert", file]);
+      // pdfsig exits with an error for a signature it cannot check (the
+      // archive timestamp), and where NSS has no database, so its report is
+      // read either way.
+      const { stdout } = await run("pdfsig", ["-nocert", file]).catch(
+        (error: { stdout?: string }) => ({ stdout: error.stdout ?? "" }),
+      );
 
       // Poppler checks the seal, and lists the archive timestamp, which it
       // cannot check itself.
@@ -399,10 +405,132 @@ test("a certificate authority that does not answer is given up on in time", asyn
     const started = Date.now();
     const data = await collectValidationData(
       findSignatures(sealed).map((signature) => signature.contents),
-      { budgetMs: 300, fetch: () => new Promise<Buffer>(() => {}) },
+      {
+        budget: createLookupBudget(300),
+        fetch: () => new Promise<Buffer>(() => {}),
+      },
     );
 
     assert.ok(Date.now() - started < 3_000);
     assert.match(data.problems.join(" "), /Ran out of time/);
+  });
+});
+
+test("one lookup budget covers the whole document, archive timestamp included", async () => {
+  await withPki(async (pki) => {
+    const sealed = await sealedWith(pki, { timestamp: false });
+    const started = Date.now();
+    const result = await addLongTermValidation(sealed, {
+      budget: createLookupBudget(400),
+      fetch: () => new Promise<Buffer>(() => {}),
+      timestamp: () => new Promise<Buffer>(() => {}),
+    });
+
+    // Lookups and the timestamp share the 400 ms, rather than each getting
+    // a budget of its own.
+    assert.ok(Date.now() - started < 1_500, String(Date.now() - started));
+    assert.match(result.problems.join(" "), /archive timestamp failed/);
+  });
+});
+
+test("a host name that resolves to a private address is not fetched", async () => {
+  await withPki(async (pki) => {
+    const port = new URL(pki.timestampUrl).port;
+    const toLoopback = (
+      _hostname: string,
+      callback: (
+        error: Error | null,
+        addresses: { address: string; family: number }[],
+      ) => void,
+    ) => callback(null, [{ address: "127.0.0.1", family: 4 }]);
+    const guarded = createValidationFetch({ lookup: toLoopback });
+
+    await assert.rejects(
+      guarded(`http://ca.example.test:${port}/ca.cer`),
+      /private address \(ca\.example\.test is 127\.0\.0\.1\)/,
+    );
+    assert.equal(pki.state.caFetches, 0);
+
+    // The connection goes to the address the lookup gave.
+    const allowed = createValidationFetch({
+      allowPrivateAddresses: true,
+      lookup: toLoopback,
+    });
+
+    assert.ok(
+      (await allowed(`http://ca.example.test:${port}/ca.cer`)).length > 0,
+    );
+    assert.equal(pki.state.caFetches, 1);
+  });
+});
+
+test("an OCSP answer from a responder the CA authorized is used", async () => {
+  await withPki(async (pki) => {
+    pki.state.ocspSigner = "delegated";
+
+    const data = await collectValidationData(
+      findSignatures(await sealedWith(pki, { timestamp: false })).map(
+        (signature) => signature.contents,
+      ),
+      { fetch: localFetch },
+    );
+
+    assert.equal(data.ocsps.length, 1);
+    assert.equal(pki.state.crlFetches, 0);
+    // The responder's certificate goes in too, without a check of its own.
+    assert.equal(data.certificates.length, 3);
+  });
+});
+
+test("an OCSP answer signed by another of the CA's certificates is refused", async () => {
+  await withPki(async (pki) => {
+    pki.state.ocspSigner = "unauthorized";
+
+    const data = await collectValidationData(
+      findSignatures(await sealedWith(pki, { timestamp: false })).map(
+        (signature) => signature.contents,
+      ),
+      { fetch: localFetch },
+    );
+
+    assert.match(data.problems.join(" "), /signature does not verify/);
+    // The revocation list is used instead.
+    assert.equal(data.ocsps.length, 0);
+    assert.equal(data.crls.length, 1);
+  });
+});
+
+test("out-of-date revocation answers are refused", async () => {
+  await withPki(async (pki) => {
+    // Older than both answers' next update.
+    pki.state.staleByMs = 3 * 24 * 60 * 60 * 1000;
+
+    const data = await collectValidationData(
+      findSignatures(await sealedWith(pki, { timestamp: false })).map(
+        (signature) => signature.contents,
+      ),
+      { fetch: localFetch },
+    );
+
+    assert.equal(data.ocsps.length, 0);
+    assert.equal(data.crls.length, 0);
+    assert.match(data.problems.join(" "), /OCSP answer is out of date/);
+    assert.match(data.problems.join(" "), /revocation list is out of date/);
+  });
+});
+
+test("revocation answers dated in the future are refused", async () => {
+  await withPki(async (pki) => {
+    pki.state.staleByMs = -60 * 60 * 1000;
+
+    const data = await collectValidationData(
+      findSignatures(await sealedWith(pki, { timestamp: false })).map(
+        (signature) => signature.contents,
+      ),
+      { fetch: localFetch },
+    );
+
+    assert.equal(data.ocsps.length + data.crls.length, 0);
+    assert.match(data.problems.join(" "), /dated in the future/);
   });
 });

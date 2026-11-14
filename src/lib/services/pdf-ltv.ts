@@ -3,7 +3,10 @@ import {
   verify as verifySignature,
   X509Certificate,
 } from "node:crypto";
-import { isIP } from "node:net";
+import { lookup as dnsLookup, type LookupAddress } from "node:dns";
+import { request as httpRequest, type IncomingMessage } from "node:http";
+import { request as httpsRequest } from "node:https";
+import { isIP, type LookupFunction } from "node:net";
 
 import {
   algorithm,
@@ -82,6 +85,12 @@ const MAX_RESPONSE_BYTES = 4 * 1024 * 1024;
 const FETCH_TIMEOUT_MS = 10_000;
 const ISSUER_CACHE_MS = 24 * 60 * 60 * 1000;
 const REVOCATION_CACHE_MS = 10 * 60 * 1000;
+/** How far another clock may be ahead of this one. */
+const CLOCK_SKEW_MS = 5 * 60 * 1000;
+/** The oldest an answer without a next update may be. */
+const OCSP_MAX_AGE_MS = 24 * 60 * 60 * 1000;
+const CRL_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
+const OCSP_SIGNING = "1.3.6.1.5.5.7.3.9";
 
 export class LongTermValidationError extends Error {
   constructor(message: string, options?: { cause?: unknown }) {
@@ -340,7 +349,10 @@ function isPrivateAddress(host: string): boolean {
       (a === 100 && b >= 64 && b <= 127) ||
       (a === 169 && b === 254) ||
       (a === 172 && b >= 16 && b <= 31) ||
-      (a === 192 && b === 168)
+      (a === 192 && b === 168) ||
+      (a === 198 && (b === 18 || b === 19)) ||
+      // Multicast, reserved and broadcast.
+      a >= 224
     );
   }
 
@@ -358,6 +370,7 @@ function isPrivateAddress(host: string): boolean {
       address === "::1" ||
       /^f[cd]/.test(address) ||
       /^fe[89ab]/.test(address) ||
+      /^ff/.test(address) ||
       (mapped ? isPrivateAddress(mapped) : false)
     );
   }
@@ -365,20 +378,163 @@ function isPrivateAddress(host: string): boolean {
   return false;
 }
 
+type AddressLookup = (
+  hostname: string,
+  callback: (error: Error | null, addresses: LookupAddress[]) => void,
+) => void;
+
+const systemLookup: AddressLookup = (hostname, callback) => {
+  dnsLookup(hostname, { all: true }, (error, addresses) =>
+    callback(error, addresses ?? []),
+  );
+};
+
+/**
+ * Resolves a host for a connection, refusing it when any of its addresses is
+ * private. The connection is made to the address checked here, so a name
+ * cannot resolve to a public address for the check and a private one after.
+ */
+function guardedLookup(
+  resolve: AddressLookup,
+  allowPrivateAddresses: boolean,
+): LookupFunction {
+  return (hostname, options, callback) => {
+    resolve(hostname, (error, found) => {
+      const family = options.family === 6 ? 6 : options.family === 4 ? 4 : 0;
+      const addresses = found.filter(
+        (address) => family === 0 || address.family === family,
+      );
+
+      if (error || addresses.length === 0) {
+        callback(
+          error ??
+            new LongTermValidationError(`${hostname} has no address to use.`),
+          "",
+        );
+        return;
+      }
+
+      const blocked = addresses.find((address) =>
+        isPrivateAddress(address.address),
+      );
+
+      if (blocked && !allowPrivateAddresses) {
+        callback(
+          new LongTermValidationError(
+            `Refused to fetch from a private address (${hostname} is ${blocked.address}).`,
+          ),
+          "",
+        );
+        return;
+      }
+
+      if (options.all) {
+        callback(null, addresses);
+      } else {
+        callback(null, addresses[0]!.address, addresses[0]!.family);
+      }
+    });
+  };
+}
+
+type FetchedResponse = {
+  body: Buffer;
+  location: string | null;
+  status: number;
+};
+
+function fetchOnce(
+  target: URL,
+  request: { body: Buffer; contentType: string } | undefined,
+  {
+    lookup,
+    maxBytes,
+    timeoutMs,
+  }: { lookup: LookupFunction; maxBytes: number; timeoutMs: number },
+): Promise<FetchedResponse> {
+  return new Promise((resolve, reject) => {
+    const send = target.protocol === "https:" ? httpsRequest : httpRequest;
+    const outgoing = send(
+      target,
+      {
+        // A fresh connection each time, so each one goes through the lookup.
+        agent: false,
+        headers: request
+          ? {
+              "content-length": String(request.body.length),
+              "content-type": request.contentType,
+            }
+          : {},
+        lookup,
+        method: request ? "POST" : "GET",
+        signal: AbortSignal.timeout(timeoutMs),
+      },
+      (response: IncomingMessage) => {
+        const status = response.statusCode ?? 0;
+        const location = response.headers.location ?? null;
+
+        if (status >= 300 && status < 400) {
+          response.resume();
+          resolve({ body: Buffer.alloc(0), location, status });
+          return;
+        }
+
+        const declared = Number(response.headers["content-length"] ?? "0");
+
+        if (declared > maxBytes) {
+          response.destroy();
+          reject(new LongTermValidationError(`${target.host} sent too much.`));
+          return;
+        }
+
+        const chunks: Buffer[] = [];
+        let total = 0;
+
+        response.on("data", (chunk: Buffer) => {
+          total += chunk.length;
+
+          if (total > maxBytes) {
+            response.destroy();
+            reject(
+              new LongTermValidationError(`${target.host} sent too much.`),
+            );
+            return;
+          }
+
+          chunks.push(chunk);
+        });
+        response.on("end", () =>
+          resolve({ body: Buffer.concat(chunks), location, status }),
+        );
+        response.on("error", reject);
+      },
+    );
+
+    outgoing.on("error", reject);
+    outgoing.end(request?.body);
+  });
+}
+
 /**
  * Fetches from a certificate authority's service. Only http and https, no
  * addresses on this machine or a private network (the addresses come from
- * certificates), a few redirects at most, and a size limit.
+ * certificates, so a name is checked for what it resolves to), a few
+ * redirects at most, and a size limit.
  */
 export function createValidationFetch({
   allowPrivateAddresses = false,
+  lookup: resolve = systemLookup,
   maxBytes = MAX_RESPONSE_BYTES,
   timeoutMs = FETCH_TIMEOUT_MS,
 }: {
   allowPrivateAddresses?: boolean;
+  /** Replaced in tests: resolves a host name to its addresses. */
+  lookup?: AddressLookup;
   maxBytes?: number;
   timeoutMs?: number;
 } = {}): ValidationFetch {
+  const lookup = guardedLookup(resolve, allowPrivateAddresses);
+
   return async (url, request) => {
     let target = new URL(url);
 
@@ -389,60 +545,35 @@ export function createValidationFetch({
         );
       }
 
+      // An address written as such is connected to without a lookup.
       if (!allowPrivateAddresses && isPrivateAddress(target.hostname)) {
         throw new LongTermValidationError(
           `Refused to fetch from a private address (${target.hostname}).`,
         );
       }
 
-      const response = await fetch(target, {
-        body: request ? new Uint8Array(request.body) : undefined,
-        headers: request ? { "content-type": request.contentType } : undefined,
-        method: request ? "POST" : "GET",
-        redirect: "manual",
-        signal: AbortSignal.timeout(timeoutMs),
+      const response = await fetchOnce(target, request, {
+        lookup,
+        maxBytes,
+        timeoutMs,
       });
-      const location = response.headers.get("location");
 
-      if (response.status >= 300 && response.status < 400 && location) {
-        target = new URL(location, target);
+      if (
+        response.status >= 300 &&
+        response.status < 400 &&
+        response.location
+      ) {
+        target = new URL(response.location, target);
         continue;
       }
 
-      if (!response.ok || !response.body) {
+      if (response.status < 200 || response.status >= 300) {
         throw new LongTermValidationError(
           `${target.host} answered ${String(response.status)}.`,
         );
       }
 
-      const declared = Number(response.headers.get("content-length") ?? "0");
-
-      if (declared > maxBytes) {
-        throw new LongTermValidationError(`${target.host} sent too much.`);
-      }
-
-      const chunks: Buffer[] = [];
-      const reader = response.body.getReader();
-      let total = 0;
-
-      for (;;) {
-        const { done, value } = await reader.read();
-
-        if (done) {
-          break;
-        }
-
-        total += value.length;
-
-        if (total > maxBytes) {
-          await reader.cancel();
-          throw new LongTermValidationError(`${target.host} sent too much.`);
-        }
-
-        chunks.push(Buffer.from(value));
-      }
-
-      return Buffer.concat(chunks);
+      return response.body;
     }
 
     throw new LongTermValidationError("Too many redirects.");
@@ -541,11 +672,59 @@ export function buildOcspRequest(
   return der.sequence(der.sequence(der.sequence(der.sequence(certId))));
 }
 
+/**
+ * Refuses a revocation answer that is not current: issued in the future,
+ * past its next update, or, without one, older than `maxAgeMs`. A stale
+ * answer could hide a revocation made since.
+ */
+function assertCurrent(
+  thisUpdate: Date,
+  nextUpdate: Date | null,
+  { maxAgeMs, now, what }: { maxAgeMs: number; now: Date; what: string },
+) {
+  if (thisUpdate.getTime() > now.getTime() + CLOCK_SKEW_MS) {
+    throw new LongTermValidationError(`The ${what} is dated in the future.`);
+  }
+
+  if (nextUpdate) {
+    if (nextUpdate.getTime() < now.getTime() - CLOCK_SKEW_MS) {
+      throw new LongTermValidationError(`The ${what} is out of date.`);
+    }
+  } else if (thisUpdate.getTime() < now.getTime() - maxAgeMs) {
+    throw new LongTermValidationError(`The ${what} is out of date.`);
+  }
+}
+
+function isValidAt(certificate: Certificate, now: Date): boolean {
+  const from = Date.parse(certificate.x509.validFrom);
+  const to = Date.parse(certificate.x509.validTo);
+
+  return now.getTime() >= from - CLOCK_SKEW_MS && now.getTime() <= to;
+}
+
+/**
+ * A responder the issuer delegated OCSP to (RFC 6960 4.2.2.2): certified by
+ * the issuer for OCSP signing, and valid now. Any other certificate from
+ * the same issuer may not answer for it.
+ */
+function isAuthorizedResponder(
+  responder: Certificate,
+  issuer: Certificate,
+  now: Date,
+): boolean {
+  return (
+    isIssuedBy(responder, issuer) &&
+    (responder.x509.keyUsage ?? []).includes(OCSP_SIGNING) &&
+    isValidAt(responder, now)
+  );
+}
+
 /** Reads an OCSP response for `certificate`, checking it is the issuer's. */
 export function readOcspResponse(
   body: Buffer,
   certificate: Certificate,
   issuer: Certificate,
+  now = new Date(),
 ): RevocationAnswer {
   const response = readTlv(body);
   const [status, responseBytes] = children(body, response);
@@ -579,11 +758,14 @@ export function readOcspResponse(
       field.tag === TAG.sequence &&
       tbsFields[index - 1]!.tag === TAG.generalizedTime,
   );
-  let match: { status: "good" | "revoked"; nextUpdate: Date | null } | null =
-    null;
+  let match: {
+    nextUpdate: Date | null;
+    status: "good" | "revoked";
+    thisUpdate: Date;
+  } | null = null;
 
   for (const single of responses ? children(body, responses) : []) {
-    const [certId, certStatus, , ...rest] = children(body, single);
+    const [certId, certStatus, thisUpdate, ...rest] = children(body, single);
     const [hashAlgorithm, nameHash, keyHash, serial] = children(body, certId!);
     const hash = hashName(readOid(body, children(body, hashAlgorithm!)[0]!));
 
@@ -611,6 +793,7 @@ export function readOcspResponse(
     match = {
       nextUpdate: next ? readTime(body, children(body, next)[0]!) : null,
       status: certStatus!.tag === 0x80 ? "good" : "revoked",
+      thisUpdate: readTime(body, thisUpdate!),
     };
     break;
   }
@@ -631,12 +814,12 @@ export function readOcspResponse(
     SIGNATURE_HASHES[readOid(body, children(body, signatureAlgorithm!)[0]!)];
   const signature = contentBytes(body, signatureValue!).subarray(1);
   const signed = elementBytes(body, tbs!);
-  // Signed by the issuer itself, or by a responder the issuer certified.
+  // Signed by the issuer itself, or by a responder the issuer authorized.
   const candidates = [
     issuer,
     ...extraCertificates
       .map((cert) => parseCertificate(cert))
-      .filter((responder) => isIssuedBy(responder, issuer)),
+      .filter((responder) => isAuthorizedResponder(responder, issuer, now)),
   ];
 
   if (
@@ -646,6 +829,12 @@ export function readOcspResponse(
       "The OCSP answer's signature does not verify.",
     );
   }
+
+  assertCurrent(match.thisUpdate, match.nextUpdate, {
+    maxAgeMs: OCSP_MAX_AGE_MS,
+    now,
+    what: "OCSP answer",
+  });
 
   return {
     data: elementBytes(body, response),
@@ -661,6 +850,7 @@ export function readCrl(
   body: Buffer,
   certificate: Certificate,
   issuer: Certificate,
+  now = new Date(),
 ): RevocationAnswer {
   const list = readTlv(body);
   const [tbs, signatureAlgorithm, signatureValue] = children(body, list);
@@ -690,12 +880,19 @@ export function readCrl(
     );
   }
 
+  const thisUpdate = readTime(body, fields[offset + 2]!);
   const rest = fields.slice(offset + 3);
   const nextUpdate =
     rest[0] &&
     (rest[0].tag === TAG.utcTime || rest[0].tag === TAG.generalizedTime)
       ? readTime(body, rest[0])
       : null;
+
+  assertCurrent(thisUpdate, nextUpdate, {
+    maxAgeMs: CRL_MAX_AGE_MS,
+    now,
+    what: "revocation list",
+  });
   const revoked = rest.find((field) => field.tag === TAG.sequence);
   const listed = (revoked ? children(body, revoked) : []).some((entry) =>
     contentBytes(body, children(body, entry)[0]!).equals(certificate.serial),
@@ -738,6 +935,42 @@ function revocationLifetime(answer: RevocationAnswer | null): number {
   );
 }
 
+/** The time and number of lookups one document may still spend. */
+export type LookupBudget = { deadline: number; fetches: number };
+
+export function createLookupBudget(budgetMs = LOOKUP_BUDGET_MS): LookupBudget {
+  return { deadline: Date.now() + budgetMs, fetches: 0 };
+}
+
+/** Runs `task`, giving up when the document's lookup time runs out. */
+async function withinBudget<T>(
+  budget: LookupBudget,
+  task: () => Promise<T>,
+): Promise<T> {
+  const remaining = budget.deadline - Date.now();
+
+  if (remaining <= 0) {
+    throw new LongTermValidationError("Ran out of time for lookups.");
+  }
+
+  let timer: NodeJS.Timeout | undefined;
+
+  try {
+    return await Promise.race([
+      task(),
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(
+          () =>
+            reject(new LongTermValidationError("Ran out of time for lookups.")),
+          remaining,
+        );
+      }),
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 /**
  * Gathers the certificate chains of every signature given (CMS or RFC 3161
  * tokens) up to their roots, with a revocation answer for each certificate
@@ -746,11 +979,14 @@ function revocationLifetime(answer: RevocationAnswer | null): number {
 export async function collectValidationData(
   signatures: readonly Uint8Array[],
   {
-    budgetMs = LOOKUP_BUDGET_MS,
+    budget = createLookupBudget(),
     fetch: fetchFrom = createValidationFetch(),
-  }: { budgetMs?: number; fetch?: ValidationFetch } = {},
+  }: {
+    /** Shared by every step of one document. */
+    budget?: LookupBudget;
+    fetch?: ValidationFetch;
+  } = {},
 ): Promise<ValidationData> {
-  const deadline = Date.now() + budgetMs;
   const pool = new Map<string, Certificate>();
   const result: ValidationData = {
     certificates: [],
@@ -759,39 +995,15 @@ export async function collectValidationData(
     problems: [],
     revoked: [],
   };
-  let fetches = 0;
   // A slow certificate authority must not hold up a signing for long.
-  const limitedFetch: ValidationFetch = async (url, request) => {
-    fetches += 1;
+  const limitedFetch: ValidationFetch = (url, request) => {
+    budget.fetches += 1;
 
-    const remaining = deadline - Date.now();
-
-    if (fetches > MAX_FETCHES) {
+    if (budget.fetches > MAX_FETCHES) {
       throw new LongTermValidationError("Too many lookups for one document.");
     }
 
-    if (remaining <= 0) {
-      throw new LongTermValidationError("Ran out of time for lookups.");
-    }
-
-    let timer: NodeJS.Timeout | undefined;
-
-    try {
-      return await Promise.race([
-        fetchFrom(url, request),
-        new Promise<never>((_, reject) => {
-          timer = setTimeout(
-            () =>
-              reject(
-                new LongTermValidationError("Ran out of time for lookups."),
-              ),
-            remaining,
-          );
-        }),
-      ]);
-    } finally {
-      clearTimeout(timer);
-    }
+    return withinBudget(budget, () => fetchFrom(url, request));
   };
   const addToPool = (certificate: Certificate) => {
     if (!pool.has(certificate.fingerprint)) {
@@ -971,14 +1183,17 @@ export type LongTermValidationResult = {
  * Adds validation data for every signature in the file and, given a
  * time-stamping function, a document timestamp after it with the timestamp's
  * own validation data. Returns the file as far as it got: a failure in the
- * document timestamp keeps the validation data.
+ * document timestamp keeps the validation data. All of it, the timestamp
+ * included, shares one lookup budget.
  */
 export async function addLongTermValidation(
   bytes: Uint8Array,
   {
+    budget = createLookupBudget(),
     fetch: fetchFrom = createValidationFetch(),
     timestamp,
   }: {
+    budget?: LookupBudget;
     fetch?: ValidationFetch;
     /** Returns an RFC 3161 token for a SHA-256 digest. */
     timestamp?: ((digest: Buffer) => Promise<Buffer>) | null;
@@ -986,7 +1201,7 @@ export async function addLongTermValidation(
 ): Promise<LongTermValidationResult> {
   const data = await collectValidationData(
     findSignatures(bytes).map((signature) => signature.contents),
-    { fetch: fetchFrom },
+    { budget, fetch: fetchFrom },
   );
   const problems = [...data.problems];
   const revoked = [...data.revoked];
@@ -997,10 +1212,13 @@ export async function addLongTermValidation(
   }
 
   try {
-    current = await appendDocumentTimestamp(current, timestamp);
+    current = await appendDocumentTimestamp(current, (digest) =>
+      withinBudget(budget, () => timestamp(digest)),
+    );
 
     const archive = findSignatures(current).at(-1)!;
     const more = await collectValidationData([archive.contents], {
+      budget,
       fetch: fetchFrom,
     });
 

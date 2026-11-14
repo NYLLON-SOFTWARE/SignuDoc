@@ -170,8 +170,15 @@ export type TestPki = {
     crlFetches: number;
     ocspDown: boolean;
     ocspRequests: number;
+    /**
+     * Who signs OCSP answers: the CA, a responder the CA authorized for it,
+     * or another certificate from the CA that is not allowed to.
+     */
+    ocspSigner: "ca" | "delegated" | "unauthorized";
     /** Serial numbers (hex, lowercase) the CA says are revoked. */
     revoked: Set<string>;
+    /** How long ago the revocation answers say they were made. */
+    staleByMs: number;
     timestampRequests: number;
   };
   timestampUrl: string;
@@ -254,12 +261,41 @@ export async function startTestPki(): Promise<TestPki> {
   });
   const tsaDer = certificateDer(tsaCertificate);
   const tsaParsed = parseCertificate(tsaDer);
+  const responderKeys = makeKeys();
+  const responderDer = certificateDer(
+    issueCertificate({
+      commonName: "Test OCSP Responder",
+      extensions: [
+        // Extended key usage: OCSP signing, which forge has no name for.
+        {
+          id: "2.5.29.37",
+          value: binary(der.sequence(der.oid("1.3.6.1.5.5.7.3.9"))),
+        },
+        // id-pkix-ocsp-nocheck: no revocation check for the responder.
+        { id: "1.3.6.1.5.5.7.48.1.5", value: binary(der.null()) },
+      ],
+      issuer: { certificate: ca, keys: caKeys },
+      keys: responderKeys,
+      serial: "3001",
+    }),
+  );
+  const strangerKeys = makeKeys();
+  const strangerDer = certificateDer(
+    issueCertificate({
+      commonName: "Another subscriber",
+      issuer: { certificate: ca, keys: caKeys },
+      keys: strangerKeys,
+      serial: "3002",
+    }),
+  );
   const state: TestPki["state"] = {
     caFetches: 0,
     crlFetches: 0,
     ocspDown: false,
     ocspRequests: 0,
+    ocspSigner: "ca",
     revoked: new Set(),
+    staleByMs: 0,
     timestampRequests: 0,
   };
   let tokenSerial = 1;
@@ -274,7 +310,7 @@ export async function startTestPki(): Promise<TestPki> {
 
     const certId = elementBytes(requestBody, node);
     const serial = contentBytes(requestBody, children(requestBody, node)[3]!);
-    const now = new Date();
+    const now = new Date(Date.now() - state.staleByMs);
     const revoked = state.revoked.has(
       serial.toString("hex").replace(/^0+/, ""),
     );
@@ -284,15 +320,27 @@ export async function startTestPki(): Promise<TestPki> {
       generalizedTime(now),
       encode(0xa0, generalizedTime(new Date(now.getTime() + 60 * 60 * 1000))),
     );
+    const signer =
+      state.ocspSigner === "delegated"
+        ? { der: responderDer, keys: responderKeys }
+        : state.ocspSigner === "unauthorized"
+          ? { der: strangerDer, keys: strangerKeys }
+          : null;
     const responseData = der.sequence(
-      encode(0xa1, caParsed.subjectName),
+      encode(
+        0xa1,
+        signer
+          ? parseCertificate(signer.der).subjectName
+          : caParsed.subjectName,
+      ),
       generalizedTime(now),
       der.sequence(single),
     );
     const basic = der.sequence(
       responseData,
       algorithm(OID.sha256WithRsa),
-      bitString(signSha256(responseData, caKeys)),
+      bitString(signSha256(responseData, signer?.keys ?? caKeys)),
+      ...(signer ? [encode(0xa0, der.sequence(signer.der))] : []),
     );
 
     return der.sequence(
@@ -302,7 +350,7 @@ export async function startTestPki(): Promise<TestPki> {
   }
 
   function revocationList(): Buffer {
-    const now = new Date();
+    const now = new Date(Date.now() - state.staleByMs);
     const entries = [...state.revoked].map((serial) =>
       der.sequence(
         encode(
