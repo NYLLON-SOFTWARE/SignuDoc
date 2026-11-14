@@ -247,3 +247,47 @@ test("the retention period warns the sender, then deletes", async () => {
   assert.equal(await envelopeOwner(old), null);
   assert.equal(await envelopeOwner(recent), owner);
 });
+
+test("the retention period never warns about or deletes a Part 11 record", async () => {
+  const owner = await createUser();
+  const now = 2_000_000_000;
+  const day = 24 * 60 * 60;
+  const record = await createEnvelope(
+    owner,
+    "completed",
+    "p11@example.test",
+    now - 400 * day,
+  );
+  const sent: string[] = [];
+  const emailService = {
+    send: async (message: { subject: string; to: string }) => {
+      sent.push(message.to);
+
+      return { accepted: [message.to], rejected: [] };
+    },
+    sendBatch: async () => ({ accepted: [], rejected: [] }),
+  } as unknown as EmailService;
+
+  await database.query(`update envelopes set part11 = true where id = $1`, [
+    record,
+  ]);
+  // Part 11 mode refuses a retention period, but one set before (or by
+  // hand) must still leave Part 11 records alone.
+  await database.query(
+    `insert into app_settings (id, signup_mode, retention_days, created_at, updated_at)
+     values (true, 'closed', 30, 1, 1)
+     on conflict (id) do update set retention_days = 30`,
+  );
+
+  for (const at of [now, now + 60 * day]) {
+    await runRetentionSweep({
+      database,
+      emailService,
+      now: at,
+      storageService: storage(),
+    });
+  }
+
+  assert.equal(await envelopeOwner(record), owner);
+  assert.equal(sent.includes(`${owner}@example.test`), false);
+});

@@ -101,6 +101,16 @@ The first time you open a new install it takes you to `/setup`. There you name y
 
 Your install carries your organization's name, not SignuDoc's. In Settings, link your own terms and privacy policy (without a privacy link, signers see a notice built from your settings at `/signer-privacy`; check it), keep the support address you gave at setup pointed at a mailbox someone reads, and choose how long finished documents are kept. Under GDPR your organization is the controller; Settings, Organization has the tools to answer a signer who asks for their data or for its erasure.
 
+## FDA 21 CFR Part 11
+
+An administrator can turn on Part 11 mode under Settings for regulated records. While it is on:
+
+- signers sign with their own confirmed accounts and give their password again at each signature;
+- the meaning of each signature is printed beside it;
+- finished records are never deleted on a timer.
+
+Validating the install is up to your organization. The [Part 11 validation pack](part11/README.md) has the documents to start from.
+
 ## Signed PDFs and the seal
 
 Every finished PDF and audit certificate is sealed with a PAdES signature, so any change after signing shows in Adobe Acrobat and other PDF readers, and its SHA-256 is recorded. Anyone can check a copy at `/verify`. The audit trail in the database is a hash chain, so an edited or deleted row shows too.
