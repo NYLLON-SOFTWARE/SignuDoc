@@ -38,8 +38,11 @@ export type EmailDnsRecord = {
 export type EmailStatus =
   /** Development: messages are written to disk, not sent. */
   | { state: "capture" }
-  /** No Resend API key, so nothing can be sent. */
-  | { state: "missing_key" }
+  /**
+   * No Resend API key, so nothing can be sent. On Vercel the steps to fix it
+   * are Vercel's, which the page spells out.
+   */
+  | { state: "missing_key"; onVercel: boolean }
   /** Sending from Resend's shared test address: only reaches the Resend account owner. */
   | { state: "test_sender"; senderAddress: string }
   /** The API key can send, but is not allowed to look at domains. */
@@ -391,7 +394,10 @@ async function inspectEmail({
       client: null,
       domainId: null,
       markReady: noop,
-      status: { state: "missing_key" },
+      status: {
+        onVercel: readEnv(env, "VERCEL") === "1",
+        state: "missing_key",
+      },
     };
   }
 

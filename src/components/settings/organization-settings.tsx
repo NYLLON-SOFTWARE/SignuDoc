@@ -20,6 +20,7 @@ import type { SignupMode } from "@/lib/signup-policy";
 
 const GENERIC_ERROR_MESSAGE = "Something went wrong. Please try again.";
 const RESEND_DOMAINS_URL = "https://resend.com/domains";
+const RESEND_MARKETPLACE_URL = "https://vercel.com/marketplace/resend";
 
 type OrganizationSettingsProps = {
   initialSettings: OrganizationSettingsView;
@@ -280,7 +281,7 @@ export function OrganizationSettings({
                 helper={
                   values.senderAddressFromEnv
                     ? "Set by the RESEND_FROM_EMAIL environment variable."
-                    : "The address emails come from. Use one at a domain you own."
+                    : "The address emails come from, at a domain you own. A subdomain such as notifications@sign.yourcompany.com keeps this site's mail apart from your everyday email."
                 }
                 label="Send email from"
                 name="sender-address"
@@ -527,6 +528,28 @@ function EmailSetupPanel() {
               {line}
             </p>
           ))}
+          {summary.steps ? (
+            <ol className="list-decimal space-y-2 pl-5 text-sm leading-6 text-(--secondary) marker:font-semibold marker:text-(--fg)">
+              {summary.steps.map((step) => (
+                <li key={step.text}>
+                  {step.text}
+                  {step.link ? (
+                    <>
+                      {" "}
+                      <a
+                        className="font-semibold text-(--accent-ink) underline underline-offset-4"
+                        href={step.link.href}
+                        rel="noreferrer"
+                        target="_blank"
+                      >
+                        {step.link.label}
+                      </a>
+                    </>
+                  ) : null}
+                </li>
+              ))}
+            </ol>
+          ) : null}
         </div>
       )}
 
@@ -590,9 +613,15 @@ function EmailSetupPanel() {
   );
 }
 
+type EmailStep = {
+  link?: { href: string; label: string };
+  text: string;
+};
+
 function describeEmailStatus(status: EmailStatus): {
   lines: string[];
   ready: boolean;
+  steps?: EmailStep[];
   title: string;
 } {
   switch (status.state) {
@@ -605,14 +634,52 @@ function describeEmailStatus(status: EmailStatus): {
         title: "Emails are being captured, not sent",
       };
     case "missing_key":
-      return {
-        lines: [
-          "This site has no email provider connected, so it cannot send anything: no sign-up confirmations and no signing invitations.",
-          "Connect Resend to the project (on Vercel, from the project's Integrations tab), or set the RESEND_API_KEY environment variable, then deploy again.",
-        ],
-        ready: false,
-        title: "Email is not connected",
-      };
+      return status.onVercel
+        ? {
+            lines: [
+              "This site has no Resend API key, so it cannot send anything: no sign-up confirmations and no signing invitations.",
+            ],
+            ready: false,
+            steps: [
+              {
+                link: {
+                  href: RESEND_MARKETPLACE_URL,
+                  label: "Resend on the Vercel Marketplace",
+                },
+                text: "Open Resend on the Vercel Marketplace. Choose Install (or Connect Project if your team already has Resend) and connect it to this project.",
+              },
+              {
+                text: "In this project on Vercel, open Settings, then Environment Variables, and check that RESEND_API_KEY is listed for Production.",
+              },
+              {
+                text: "Open Deployments, open the ••• menu on the latest Production deployment and choose Redeploy. Environment variables only reach deployments made after they were added, so a site deployed before Resend was connected still has no key until it is redeployed.",
+              },
+              {
+                text: "When the new deployment is ready, reload this page.",
+              },
+            ],
+            title: "Email is not connected",
+          }
+        : {
+            lines: [
+              "This site has no Resend API key, so it cannot send anything: no sign-up confirmations and no signing invitations.",
+            ],
+            ready: false,
+            steps: [
+              {
+                link: {
+                  href: "https://resend.com/api-keys",
+                  label: "Resend API keys",
+                },
+                text: "Create an API key in Resend with full access, so this page can add your domain and check its DNS records.",
+              },
+              {
+                text: "Set it as the RESEND_API_KEY environment variable where this site runs.",
+              },
+              { text: "Restart the app, then reload this page." },
+            ],
+            title: "Email is not connected",
+          };
     case "test_sender":
       return {
         lines: [
