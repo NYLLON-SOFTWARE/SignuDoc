@@ -11,7 +11,17 @@ import {
 import { Brand } from "@/components/layout/brand";
 import { PublicLegalFooter } from "@/components/layout/public-legal-links";
 import { FieldShell, ShellButton } from "@/components/shared/form-shell";
+import { Input } from "@/components/ui/input";
 import { authClient } from "@/lib/auth/client";
+import { cn } from "@/lib/cn";
+import {
+  buildSenderAddress,
+  DEFAULT_SENDER_LOCAL_PART,
+  DEFAULT_SENDING_SUBDOMAIN,
+  joinSendingDomain,
+  suggestSendingRootDomain,
+  type SenderAddressParts,
+} from "@/lib/sending-domain";
 import type { SetupFieldName, SetupView } from "@/lib/setup";
 import { getEmailDomain, suggestSignupPolicy } from "@/lib/signup-policy";
 
@@ -23,6 +33,8 @@ export type SetupShellView =
 type SetupShellProps = {
   hosted: boolean;
   onVercel: boolean;
+  /** The host this site answers on, used to guess the sending domain. */
+  siteHost: string | null;
   view: SetupShellView;
 };
 
@@ -47,7 +59,12 @@ const emptyValues: SetupValues = {
   supportAddress: "",
 };
 
-export function SetupShell({ hosted, onVercel, view }: SetupShellProps) {
+export function SetupShell({
+  hosted,
+  onVercel,
+  siteHost,
+  view,
+}: SetupShellProps) {
   return (
     <div className="flex min-h-screen flex-col">
       <header>
@@ -60,7 +77,12 @@ export function SetupShell({ hosted, onVercel, view }: SetupShellProps) {
       <main className="page-width flex flex-1 items-start justify-center py-8 sm:py-14">
         <div className="flex w-full justify-center" data-animate="enter">
           <section className="panel w-full max-w-[520px] p-8 sm:p-10">
-            <SetupContent hosted={hosted} onVercel={onVercel} view={view} />
+            <SetupContent
+              hosted={hosted}
+              onVercel={onVercel}
+              siteHost={siteHost}
+              view={view}
+            />
           </section>
         </div>
       </main>
@@ -70,7 +92,7 @@ export function SetupShell({ hosted, onVercel, view }: SetupShellProps) {
   );
 }
 
-function SetupContent({ hosted, onVercel, view }: SetupShellProps) {
+function SetupContent({ hosted, onVercel, siteHost, view }: SetupShellProps) {
   if (view.view === "no_database") {
     return (
       <SetupNotice title="Connect a database">
@@ -154,7 +176,7 @@ function SetupContent({ hosted, onVercel, view }: SetupShellProps) {
     return null;
   }
 
-  return <SetupForm hosted={hosted} view={view} />;
+  return <SetupForm hosted={hosted} siteHost={siteHost} view={view} />;
 }
 
 function SetupNotice({
@@ -196,14 +218,27 @@ function describeSignupStart(email: string, hosted: boolean): string | null {
   return "Only you will have an account to begin with. You can let other people in from Settings.";
 }
 
+type SenderErrors = Partial<Record<keyof SenderAddressParts, string>>;
+
 function SetupForm({
   hosted,
+  siteHost,
   view,
 }: {
   hosted: boolean;
+  siteHost: string | null;
   view: Extract<SetupShellView, { view: "claim" | "create" }>;
 }) {
   const [values, setValues] = useState<SetupValues>(emptyValues);
+  const [sender, setSender] = useState<SenderAddressParts>({
+    localPart: DEFAULT_SENDER_LOCAL_PART,
+    rootDomain: "",
+    subdomain: DEFAULT_SENDING_SUBDOMAIN,
+  });
+  // Until the administrator types a domain of their own, it follows what
+  // setup can tell from the site's address and the emails typed above.
+  const [rootDomainEdited, setRootDomainEdited] = useState(false);
+  const [senderErrors, setSenderErrors] = useState<SenderErrors>({});
   const [errors, setErrors] = useState<SetupErrors>({});
   const [bannerMessage, setBannerMessage] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -213,6 +248,33 @@ function SetupForm({
   const requiresToken = isCreate ? view.requiresToken : true;
   const asksForSender = isCreate && !view.senderAddressFromEnv;
   const asksForSupport = view.asksForSupportAddress;
+  const suggestedRootDomain = asksForSender
+    ? suggestSendingRootDomain({
+        emails: [values.email, values.supportAddress],
+        siteHost,
+      })
+    : null;
+  const senderParts: SenderAddressParts = {
+    ...sender,
+    rootDomain: rootDomainEdited
+      ? sender.rootDomain
+      : (suggestedRootDomain ?? ""),
+  };
+
+  function handleSenderChange(field: keyof SenderAddressParts) {
+    return (event: ChangeEvent<HTMLInputElement>) => {
+      const nextValue = event.target.value;
+
+      if (field === "rootDomain") {
+        setRootDomainEdited(true);
+      }
+
+      setSender((current) => ({ ...current, [field]: nextValue }));
+      setSenderErrors((current) => ({ ...current, [field]: undefined }));
+      setErrors((current) => ({ ...current, senderAddress: undefined }));
+      setBannerMessage(null);
+    };
+  }
 
   async function handleSwitchAccount() {
     if (isSwitchingAccount) {
@@ -246,6 +308,18 @@ function SetupForm({
 
     setBannerMessage(null);
     setErrors({});
+    setSenderErrors({});
+
+    const builtSender = asksForSender
+      ? buildSenderAddress(senderParts)
+      : { address: null, error: null };
+
+    if (builtSender.error) {
+      setSenderErrors({ [builtSender.error.field]: builtSender.error.message });
+      setBannerMessage("Check the address this site sends email from.");
+      return;
+    }
+
     setIsSubmitting(true);
 
     try {
@@ -259,7 +333,7 @@ function SetupForm({
                 email: values.email,
                 fullName: values.fullName,
                 password: values.password,
-                senderAddress: asksForSender ? values.senderAddress : undefined,
+                senderAddress: builtSender.address ?? undefined,
               }
             : {}),
         }),
@@ -329,6 +403,7 @@ function SetupForm({
             disabled={isSubmitting}
             error={errors.supportAddress}
             helper="Signers and people with an account are told to write here for help, and replies to this site's emails come here. You can change it in Settings."
+            ignorePasswordManagers
             label="Support email"
             name="setup-support-address"
             onChange={handleChange("supportAddress")}
@@ -353,7 +428,9 @@ function SetupForm({
               value={values.fullName}
             />
             <FieldShell
-              autoComplete="email"
+              // "username" tells password managers this is the login the
+              // new password belongs to, so they save the two together.
+              autoComplete="username"
               disabled={isSubmitting}
               error={errors.email}
               helper={signupStart ?? undefined}
@@ -369,9 +446,12 @@ function SetupForm({
               autoComplete="new-password"
               disabled={isSubmitting}
               error={errors.password}
-              helper="Must be at least 15 characters"
+              helper="At least 15 characters. Let your password manager make one."
               label="Password"
+              maxLength={128}
+              minLength={15}
               name="setup-password"
+              passwordRules="minlength: 20; maxlength: 64; required: lower; required: upper; required: digit; allowed: [-_.!@#$%^&*];"
               onChange={handleChange("password")}
               placeholder="Enter a password"
               readOnly={false}
@@ -382,18 +462,13 @@ function SetupForm({
         ) : null}
 
         {asksForSender ? (
-          <FieldShell
-            autoComplete="off"
+          <SenderFields
             disabled={isSubmitting}
-            error={errors.senderAddress}
-            helper="Optional. An address at a domain you own, such as sign@yourcompany.com. The next screen shows the DNS records that let this site send from it. Leave it empty to decide later."
-            label="Send email from"
-            name="setup-sender-address"
-            onChange={handleChange("senderAddress")}
-            placeholder="sign@acmecorp.com"
-            readOnly={false}
-            type="email"
-            value={values.senderAddress}
+            errors={senderErrors}
+            onChange={handleSenderChange}
+            parts={senderParts}
+            serverError={errors.senderAddress}
+            suggested={!rootDomainEdited && suggestedRootDomain !== null}
           />
         ) : null}
 
@@ -403,6 +478,9 @@ function SetupForm({
             disabled={isSubmitting}
             error={errors.setupToken}
             helper="The value of the SETUP_TOKEN environment variable on this deployment."
+            // Not a password of the account being made, so a password
+            // manager should neither fill nor save it.
+            ignorePasswordManagers
             label="Setup token"
             name="setup-token"
             onChange={handleChange("setupToken")}
@@ -441,5 +519,166 @@ function SetupForm({
         </p>
       ) : null}
     </div>
+  );
+}
+
+const senderLabelClass = "text-[0.8125rem] font-semibold text-(--secondary)";
+const senderHelperClass = "text-xs leading-5 text-(--tertiary)";
+const senderErrorClass = "text-xs font-semibold text-(--danger)";
+
+// The address this site sends from, asked for as its parts: the
+// organization's domain (filled in when setup can tell it), a subdomain in
+// front of it ("sign" unless changed) and the name before the @. Together
+// they read as notifications@sign.acmecorp.com.
+function SenderFields({
+  disabled,
+  errors,
+  onChange,
+  parts,
+  serverError,
+  suggested,
+}: {
+  disabled: boolean;
+  errors: SenderErrors;
+  onChange: (
+    field: keyof SenderAddressParts,
+  ) => (event: ChangeEvent<HTMLInputElement>) => void;
+  parts: SenderAddressParts;
+  serverError?: string;
+  suggested: boolean;
+}) {
+  const built = buildSenderAddress(parts);
+  const rootDomain = parts.rootDomain.trim().toLowerCase();
+  const subdomain = parts.subdomain.trim().toLowerCase().replace(/\.+$/, "");
+  const sendingDomain = rootDomain
+    ? joinSendingDomain(rootDomain, subdomain)
+    : null;
+  const rootError = errors.rootDomain ?? serverError;
+  const passwordManagerIgnore = {
+    "data-1p-ignore": "true",
+    "data-lpignore": "true",
+  };
+
+  return (
+    <fieldset className="space-y-4 rounded-2xl border border-(--border) p-4 sm:p-5">
+      <legend className="px-1 text-sm font-bold text-(--fg)">
+        Send email from
+      </legend>
+      <p className={senderHelperClass}>
+        Optional. Email is sent through Resend from a domain your organization
+        owns. Leave the domain empty to decide later in Settings.
+      </p>
+
+      <div className="space-y-2 text-sm">
+        <label className={senderLabelClass} htmlFor="setup-sender-domain">
+          Your domain
+        </label>
+        <Input
+          aria-describedby="setup-sender-domain-description"
+          aria-invalid={rootError ? true : undefined}
+          autoComplete="off"
+          className={rootError ? "border-(--danger)" : undefined}
+          disabled={disabled}
+          id="setup-sender-domain"
+          inputMode="url"
+          name="setup-sender-domain"
+          onChange={onChange("rootDomain")}
+          placeholder="acmecorp.com"
+          spellCheck={false}
+          value={parts.rootDomain}
+          {...passwordManagerIgnore}
+        />
+        <p
+          className={rootError ? senderErrorClass : senderHelperClass}
+          id="setup-sender-domain-description"
+        >
+          {rootError ??
+            (suggested
+              ? "Filled in from this site's address and the emails above. Change it if your organization uses another domain."
+              : "The domain your organization's email uses, such as acmecorp.com.")}
+        </p>
+      </div>
+
+      <div className="space-y-2 text-sm">
+        <label className={senderLabelClass} htmlFor="setup-sender-subdomain">
+          Subdomain
+        </label>
+        <div className="flex items-center gap-2">
+          <Input
+            aria-describedby="setup-sender-subdomain-description"
+            aria-invalid={errors.subdomain ? true : undefined}
+            autoComplete="off"
+            className={cn(
+              "w-40 flex-none",
+              errors.subdomain ? "border-(--danger)" : "",
+            )}
+            disabled={disabled}
+            id="setup-sender-subdomain"
+            name="setup-sender-subdomain"
+            onChange={onChange("subdomain")}
+            placeholder="none"
+            spellCheck={false}
+            value={parts.subdomain}
+            {...passwordManagerIgnore}
+          />
+          <span className="min-w-0 truncate text-sm text-(--secondary)">
+            .{rootDomain || "acmecorp.com"}
+          </span>
+        </div>
+        <p
+          className={errors.subdomain ? senderErrorClass : senderHelperClass}
+          id="setup-sender-subdomain-description"
+        >
+          {errors.subdomain ??
+            (subdomain
+              ? `Recommended. Mail comes from ${sendingDomain ?? `${subdomain}.acmecorp.com`}, so its DNS records and sending reputation stay apart from your everyday email. Clear it to send from ${rootDomain || "the domain"} itself.`
+              : `Mail will come from ${rootDomain || "the domain"} itself. A subdomain such as ${DEFAULT_SENDING_SUBDOMAIN} keeps it apart from your everyday email.`)}
+        </p>
+      </div>
+
+      <div className="space-y-2 text-sm">
+        <label className={senderLabelClass} htmlFor="setup-sender-local-part">
+          Address
+        </label>
+        <div className="flex items-center gap-2">
+          <Input
+            aria-describedby="setup-sender-local-part-description"
+            aria-invalid={errors.localPart ? true : undefined}
+            autoComplete="off"
+            className={cn(
+              "w-40 flex-none",
+              errors.localPart ? "border-(--danger)" : "",
+            )}
+            disabled={disabled}
+            id="setup-sender-local-part"
+            name="setup-sender-local-part"
+            onChange={onChange("localPart")}
+            spellCheck={false}
+            value={parts.localPart}
+            {...passwordManagerIgnore}
+          />
+          <span className="min-w-0 truncate text-sm text-(--secondary)">
+            @{sendingDomain ?? "acmecorp.com"}
+          </span>
+        </div>
+        <p
+          className={errors.localPart ? senderErrorClass : senderHelperClass}
+          id="setup-sender-local-part-description"
+        >
+          {errors.localPart ??
+            "Nobody needs to read this mailbox: replies go to the support email."}
+        </p>
+      </div>
+
+      {built.address ? (
+        <p className="rounded-xl bg-(--surface) px-4 py-3 text-xs leading-5 text-(--secondary)">
+          Emails will come from{" "}
+          <strong className="font-semibold text-(--fg)">{built.address}</strong>
+          . If Resend is connected, setup adds {built.sendingDomain} to it, and
+          the next screen lists the DNS records to add where your domain is
+          managed.
+        </p>
+      ) : null}
+    </fieldset>
   );
 }

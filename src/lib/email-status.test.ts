@@ -147,6 +147,11 @@ test("the capture driver is reported as such without asking anyone", async () =>
 
 test("no Resend key means email is not connected", async () => {
   assert.deepEqual(await getEmailStatus({ env: {}, settings }), {
+    onVercel: false,
+    state: "missing_key",
+  });
+  assert.deepEqual(await getEmailStatus({ env: { VERCEL: "1" }, settings }), {
+    onVercel: true,
     state: "missing_key",
   });
 });

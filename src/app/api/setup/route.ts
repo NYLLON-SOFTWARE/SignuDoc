@@ -3,6 +3,7 @@ import { NextResponse } from "next/server";
 
 import { getAuth, getAuthSessionFromHeaders } from "@/lib/auth/server";
 import { runAsSetup } from "@/lib/auth/setup-context";
+import { addEmailDomain } from "@/lib/email-status";
 import { rejectBots } from "@/lib/security/botid";
 import { logRouteError, logSecurityEvent } from "@/lib/security/logging";
 import {
@@ -56,6 +57,19 @@ async function createAdminAccount(input: {
     }
 
     throw error;
+  }
+}
+
+// Adds the new sending domain to Resend straight away, so the Settings page
+// that setup ends on already lists the DNS records to add. Anything that
+// goes wrong here (no Resend key yet, a key that may only send, the free
+// plan's domain limit) is left for that page to explain, where the
+// administrator can try again.
+async function addSenderDomain(): Promise<void> {
+  try {
+    await addEmailDomain();
+  } catch (error) {
+    console.error("Setup could not add the sending domain to Resend:", error);
   }
 }
 
@@ -114,6 +128,10 @@ export async function POST(request: Request) {
       path: getRequestPathname(request),
       userId: result.userId,
     });
+
+    if (typeof body?.senderAddress === "string" && body.senderAddress.trim()) {
+      await addSenderDomain();
+    }
 
     if (result.mode === "create") {
       // Sign the new administrator in, so setup ends inside the app rather

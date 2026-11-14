@@ -16,7 +16,17 @@ import {
   resolveSettings,
 } from "@/lib/settings";
 import { resolveSetupView } from "@/lib/setup";
-import { isHostedMode } from "@/lib/utils/env";
+import { isHostedMode, resolveAppUrl } from "@/lib/utils/env";
+
+function readSiteHost(): string | null {
+  try {
+    const appUrl = resolveAppUrl(process.env);
+
+    return appUrl ? new URL(appUrl).hostname : null;
+  } catch {
+    return null;
+  }
+}
 
 export const metadata: Metadata = {
   description: "Create the administrator account for this site.",
@@ -74,6 +84,7 @@ export default async function SetupPage() {
       <SetupShell
         hosted={isHostedMode()}
         onVercel={process.env.VERCEL === "1"}
+        siteHost={readSiteHost()}
         view={view}
       />
     </BrandingProvider>
