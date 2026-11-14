@@ -371,6 +371,17 @@ export async function resumeProviderSigning(
     );
   }
 
+  // Another return for this session (a reload, or the provider calling back
+  // twice) is finishing it. Leave it to finish: failing the session here
+  // would delete the revision it is saving.
+  if (session.state === "signing" || session.state === "completed") {
+    throw new ProviderSigningError(
+      "This signing session is already being completed.",
+      "expired",
+      secret.token,
+    );
+  }
+
   if (
     session.state !== "pending" ||
     session.expiresAt < Math.floor(Date.now() / 1000)
@@ -522,28 +533,8 @@ export async function resumeProviderSigning(
       },
     );
 
-    // The revision this one was built on is inside it now.
-    const previous = await queryOne<{ revisionKey: string }>(
-      database,
-      `
-        SELECT revision_key AS "revisionKey"
-        FROM provider_signing_sessions
-        WHERE envelope_id = $1
-          AND state = 'completed'
-          AND id <> $2
-          AND revision_key <> $3
-        ORDER BY completed_at DESC
-        LIMIT 1
-      `,
-      [session.envelopeId, session.id, session.revisionKey],
-    );
-
-    if (previous) {
-      await storageService
-        .deleteObject(previous.revisionKey)
-        .catch(() => undefined);
-    }
-
+    // The revision this one was built on is inside it now. Saving the
+    // submission deleted it (see commitProviderRevision in signing.ts).
     return { redirectPath: result.redirectPath };
   } catch (error) {
     await failSession(session, database, storageService);

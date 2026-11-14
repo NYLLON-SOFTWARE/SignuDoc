@@ -8,6 +8,7 @@ import {
   CMS_OIDS,
   ecdsaSignatureAsDer,
   hasEcKey,
+  isQualifiedSignatureCertificate,
   signatureAlgorithmFor,
   type SignatureLevel,
 } from "./signer-cms.ts";
@@ -280,6 +281,21 @@ type CscCredentialInfo = {
   key?: { status?: string };
 };
 
+/**
+ * Whether a certificate can make a signature of this level. For a qualified
+ * signature it has to say it is qualified, on a qualified device; the CMS is
+ * checked again after signing. A certificate that cannot be read is skipped.
+ */
+function meetsLevel(certificate: Buffer, level: SignatureLevel): boolean {
+  try {
+    const parsed = parseCertificate(certificate);
+
+    return level !== "qualified" || isQualifiedSignatureCertificate(parsed);
+  } catch {
+    return false;
+  }
+}
+
 export function createCscProvider({
   apiUrl,
   clientId,
@@ -358,6 +374,10 @@ export function createCscProvider({
         );
       }
 
+      // The level the envelope asks for, kept from the start.
+      const level: SignatureLevel =
+        data.level === "qualified" ? "qualified" : "advanced";
+
       if (data.step === "service") {
         // The signer signed in: find their certificate, and ask them to
         // authorize the signature of exactly this hash.
@@ -386,7 +406,8 @@ export function createCscProvider({
           if (
             certificates.length > 0 &&
             (info.cert?.status ?? "valid") === "valid" &&
-            (info.key?.status ?? "enabled") === "enabled"
+            (info.key?.status ?? "enabled") === "enabled" &&
+            meetsLevel(certificates[0]!, level)
           ) {
             chosen = { certificates, id: credentialID };
             break;
@@ -395,12 +416,11 @@ export function createCscProvider({
 
         if (!chosen) {
           throw new SigningProviderError(
-            `${name} has no usable signing certificate for this signer.`,
+            level === "qualified"
+              ? `${name} has no qualified signing certificate for this signer.`
+              : `${name} has no usable signing certificate for this signer.`,
           );
         }
-
-        // Read now, so a certificate that cannot be read stops here.
-        parseCertificate(chosen.certificates[0]!);
 
         const signedAttributes = buildSignedAttributes({
           certificate: chosen.certificates[0]!,
@@ -487,11 +507,11 @@ export function createCscProvider({
         method: "csc",
       };
     },
-    async start({ returnUrl, state }) {
+    async start({ level, returnUrl, state }) {
       const first = pkce();
 
       return {
-        data: { step: "service", verifier: first.verifier },
+        data: { level, step: "service", verifier: first.verifier },
         kind: "redirect",
         redirectUrl: authorizeUrl(
           { scope: "service" },

@@ -3,7 +3,7 @@
 // version is stored with each send, so the record shows which list the
 // sender confirmed.
 
-export const PERMITTED_USE_VERSION = "2026-11-13";
+export const PERMITTED_USE_VERSION = "2026-11-14";
 export const PERMITTED_USE_PATH = "/electronic-signatures";
 
 export type UseSection = { heading: string; items: string[] };

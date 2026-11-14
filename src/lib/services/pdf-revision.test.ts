@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { createHash } from "node:crypto";
+import { createHash, generateKeyPairSync, sign, verify } from "node:crypto";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -27,6 +27,7 @@ import { startTestPki, type TestPki } from "./pki-test-support.ts";
 import {
   addSignatureTimestamp,
   checkSignerSignature,
+  ecdsaSignatureAsDer,
   SignerSignatureError,
 } from "./signer-cms.ts";
 
@@ -356,6 +357,108 @@ test("a qualified signature needs a qualified certificate", async () => {
 
     assert.equal(advanced.checked.qualified, false);
   });
+});
+
+test("a signature timestamp counts only when it is for the signature and verifies", async () => {
+  await withPki(async (pki) => {
+    const alice = pki.issueSigner({ commonName: "Alice Example" });
+    const prepared = await prepareSignerRevision(
+      await prepareRevisionZero(await makeSource()),
+      {
+        fields: aliceFields,
+        images: new Map(),
+        signature: { fieldName: "Alice", signingTime: new Date() },
+      },
+    );
+    const [signature] = findSignatures(prepared.bytes);
+    const covered = Buffer.concat([
+      Buffer.from(prepared.bytes.subarray(0, signature!.byteRange[1])),
+      Buffer.from(prepared.bytes.subarray(signature!.byteRange[2])),
+    ]);
+    const plain = Buffer.from(await buildCadesSignature(covered, alice));
+    const timestampCount = (cms: Buffer) =>
+      cms.toString("latin1").split(
+        // The timeStampToken attribute's OID, as DER.
+        Buffer.from("060b2a864886f70d010910020e", "hex").toString("latin1"),
+      ).length - 1;
+    const check = (cms: Buffer) =>
+      checkSignerSignature(cms, prepared.digest, { level: "advanced" });
+
+    // An empty timestamp attribute, a token for another signature, and
+    // something that is not a token at all.
+    const empty = await addSignatureTimestamp(plain, async () =>
+      Buffer.alloc(0),
+    );
+    const otherSignature = await addSignatureTimestamp(plain, () =>
+      requestDocumentTimestamp(Buffer.alloc(32, 7), pki.timestampUrl),
+    );
+    const notAToken = await addSignatureTimestamp(plain, async () =>
+      Buffer.from("3000", "hex"),
+    );
+
+    for (const cms of [plain, empty, otherSignature, notAToken]) {
+      assert.equal(check(cms).timestamped, false);
+    }
+
+    // Each is replaced by a real one, and only one is left.
+    for (const cms of [empty, otherSignature, notAToken]) {
+      const repaired = await addSignatureTimestamp(cms, (imprint) =>
+        requestDocumentTimestamp(imprint, pki.timestampUrl),
+      );
+
+      assert.equal(check(repaired).timestamped, true);
+      assert.equal(timestampCount(repaired), 1);
+
+      // One that checks out is kept as it is.
+      const again = await addSignatureTimestamp(repaired, () => {
+        throw new Error("A good timestamp is not replaced.");
+      });
+
+      assert.deepEqual(again, repaired);
+    }
+  });
+});
+
+test("raw ECDSA r and s are encoded, even when they start like a SEQUENCE", () => {
+  const { privateKey, publicKey } = generateKeyPairSync("ec", {
+    namedCurve: "P-256",
+  });
+  const data = Buffer.from("signed attributes");
+  const raw = sign("sha256", data, {
+    dsaEncoding: "ieee-p1363",
+    key: privateKey,
+  });
+  const asDer = ecdsaSignatureAsDer(raw);
+
+  assert.ok(
+    verify("sha256", data, { dsaEncoding: "der", key: publicKey }, asDer),
+  );
+
+  // A signature already in DER is left alone.
+  const alreadyDer = sign("sha256", data, {
+    dsaEncoding: "der",
+    key: privateKey,
+  });
+
+  assert.deepEqual(ecdsaSignatureAsDer(alreadyDer), alreadyDer);
+
+  // 64 raw bytes whose first two read as a 62-byte SEQUENCE.
+  const lookalike = Buffer.concat([
+    Buffer.from([0x30, 0x3e, 0x04, 0x3c]),
+    Buffer.alloc(60, 0x11),
+  ]);
+  const encoded = ecdsaSignatureAsDer(lookalike);
+
+  assert.notDeepEqual(encoded, lookalike);
+  assert.deepEqual(
+    encoded,
+    Buffer.concat([
+      Buffer.from([0x30, 0x44, 0x02, 0x20]),
+      lookalike.subarray(0, 32),
+      Buffer.from([0x02, 0x20]),
+      lookalike.subarray(32),
+    ]),
+  );
 });
 
 test("the signature slot fits a chain and a timestamp", () => {

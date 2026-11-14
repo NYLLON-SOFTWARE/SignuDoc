@@ -626,3 +626,75 @@ test("a signer who does not finish at the provider can try again", async () => {
 
   assert.ok(envelope.rows[0]?.revision_key);
 });
+
+test("a return while another is saving the signature leaves that one to finish", async () => {
+  const draft = await createDraft();
+
+  await send(draft, "advanced");
+
+  const riley = await signAtProvider(
+    await linkFor(draft.riley.id),
+    draft.riley,
+  );
+  const sessionId = riley.query.get("state") ?? "";
+  const session = await database.query<{ revision_key: string }>(
+    `select revision_key from provider_signing_sessions where id = $1`,
+    [sessionId],
+  );
+
+  // Another return claimed the session first and is saving it.
+  await database.query(
+    `update provider_signing_sessions set state = 'signing' where id = $1`,
+    [sessionId],
+  );
+
+  await assert.rejects(
+    riley.finish(),
+    (error: unknown) =>
+      error instanceof ProviderSigningError && error.problem === "expired",
+  );
+  assert.deepEqual(await sessionStates(draft.envelopeId), ["signing"]);
+  assert.equal(await stored(session.rows[0]!.revision_key), true);
+});
+
+test("the next signer's turn starts when the signer is back from the provider", async () => {
+  const draft = await createDraft();
+
+  await send(draft, "advanced");
+
+  const riley = await signAtProvider(
+    await linkFor(draft.riley.id),
+    draft.riley,
+  );
+  const left = await database.query<{ submitted_at: string }>(
+    `select submitted_at from provider_signing_sessions where id = $1`,
+    [riley.query.get("state") ?? ""],
+  );
+  const leftAt = Number(left.rows[0]!.submitted_at);
+
+  // The signer takes a while at the provider.
+  await new Promise((resolve) => setTimeout(resolve, 1100));
+
+  const backAt = Math.floor(Date.now() / 1000);
+
+  await riley.finish();
+
+  const signers = await database.query<{
+    id: string;
+    last_notified_at: string | null;
+    signed_at: string | null;
+    turn_started_at: string | null;
+  }>(
+    `select id, signed_at, turn_started_at, last_notified_at from signers where envelope_id = $1`,
+    [draft.envelopeId],
+  );
+  const rileyRow = signers.rows.find((row) => row.id === draft.riley.id)!;
+  const caseyRow = signers.rows.find((row) => row.id === draft.casey.id)!;
+
+  // Riley signed when the signed revision says, before leaving.
+  assert.equal(Number(rileyRow.signed_at), leftAt);
+  assert.ok(leftAt < backAt);
+  // Casey's turn, and the invitation, start once Riley is back.
+  assert.ok(Number(caseyRow.turn_started_at) >= backAt);
+  assert.ok(Number(caseyRow.last_notified_at) >= backAt);
+});

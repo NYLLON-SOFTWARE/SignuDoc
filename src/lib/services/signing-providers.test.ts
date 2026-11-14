@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import test from "node:test";
 
-import { startTestPki } from "./pki-test-support.ts";
+import { startTestPki, type TestPki } from "./pki-test-support.ts";
 import {
   followSigner,
   STAND_IN_CLIENT,
@@ -23,7 +23,7 @@ const RETURN_URL = "https://sign.example.org/api/signing/provider/return";
 const digest = createHash("sha256").update("revision bytes").digest();
 
 async function withStandIns(
-  body: (standIns: ProviderStandIns) => Promise<void>,
+  body: (standIns: ProviderStandIns, pki: TestPki) => Promise<void>,
 ) {
   const pki = await startTestPki();
   const signer = pki.issueSigner({
@@ -36,7 +36,7 @@ async function withStandIns(
   });
 
   try {
-    await body(standIns);
+    await body(standIns, pki);
   } finally {
     await standIns.close();
     await pki.close();
@@ -44,11 +44,14 @@ async function withStandIns(
 }
 
 /** Runs a provider's whole flow, following each redirect as a browser. */
-async function signWith(provider: SigningProvider) {
+async function signWith(
+  provider: SigningProvider,
+  level: "advanced" | "qualified" = "qualified",
+) {
   const started = await provider.start({
     contentDigest: digest,
     documentName: "Supply agreement / 2026",
-    level: "qualified",
+    level,
     returnUrl: RETURN_URL,
     signer: { email: "alice@example.org", name: "Alice Example" },
     state: "session-1",
@@ -157,6 +160,67 @@ test("a CSC provider signs after the signer chooses a certificate and authorizes
     assert.equal(standIns.state.lastAuthorize?.get("scope"), "credential");
     assert.equal(standIns.state.lastAuthorize?.get("numSignatures"), "1");
     assert.equal(standIns.state.refusedHashes, 0);
+  });
+});
+
+test("for a qualified signature the CSC provider uses the signer's qualified certificate", async () => {
+  await withStandIns(async (standIns, pki) => {
+    const ordinary = pki.issueSigner({ commonName: "Alice Example" });
+    const provider = createCscProvider({
+      apiUrl: standIns.cscUrl,
+      clientId: STAND_IN_CLIENT.id,
+      clientSecret: STAND_IN_CLIENT.secret,
+      name: "Test QTSP",
+    });
+
+    // Alice also holds an ordinary certificate there, listed first.
+    standIns.state.otherCredential = {
+      chain: [ordinary.certificate, pki.caCertificate],
+      privateKeyPem: ordinary.privateKeyPem,
+    };
+
+    const qualified = await signWith(provider, "qualified");
+
+    assert.equal(standIns.state.signedWith, "credential-1");
+    assert.equal(
+      checkSignerSignature(qualified.cms, digest, { level: "qualified" })
+        .qualified,
+      true,
+    );
+
+    // For an advanced signature the first usable one does.
+    const advanced = await signWith(provider, "advanced");
+
+    assert.equal(standIns.state.signedWith, "credential-0");
+    assert.equal(
+      checkSignerSignature(advanced.cms, digest, { level: "advanced" })
+        .qualified,
+      false,
+    );
+
+    // With only an ordinary certificate there, a qualified signature stops
+    // before the signer is asked to authorize anything.
+    const onlyOrdinary = await startProviderStandIns({
+      chain: [ordinary.certificate, pki.caCertificate],
+      privateKeyPem: ordinary.privateKeyPem,
+    });
+
+    try {
+      await assert.rejects(
+        signWith(
+          createCscProvider({
+            apiUrl: onlyOrdinary.cscUrl,
+            clientId: STAND_IN_CLIENT.id,
+            clientSecret: STAND_IN_CLIENT.secret,
+            name: "Test QTSP",
+          }),
+        ),
+        /Test QTSP has no qualified signing certificate/,
+      );
+      assert.equal(onlyOrdinary.state.lastAuthorize?.get("scope"), "service");
+    } finally {
+      await onlyOrdinary.close();
+    }
   });
 });
 

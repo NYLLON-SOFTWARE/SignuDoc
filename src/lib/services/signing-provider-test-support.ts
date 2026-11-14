@@ -41,6 +41,13 @@ export type ProviderStandIns = {
     lastAuthorize: URLSearchParams | null;
     /** Signing requests refused for a hash nobody authorized. */
     refusedHashes: number;
+    /**
+     * A second certificate the signer holds at the CSC provider, listed
+     * before their own (for example an ordinary one beside a qualified one).
+     */
+    otherCredential: StandInSigner | null;
+    /** The credential the last CSC signature was made with. */
+    signedWith: string | null;
     /** When true, the signer cancels at the provider. */
     signerCancels: boolean;
   };
@@ -94,9 +101,17 @@ export async function startProviderStandIns(
 ): Promise<ProviderStandIns> {
   const state: ProviderStandIns["state"] = {
     lastAuthorize: null,
+    otherCredential: null,
     refusedHashes: 0,
+    signedWith: null,
     signerCancels: false,
   };
+  const credential = (id: string | undefined): StandInSigner | null =>
+    id === "credential-1"
+      ? signer
+      : id === "credential-0"
+        ? state.otherCredential
+        : null;
   const documents = new Map<
     string,
     { digest: Buffer; redirect: string; signed: boolean }
@@ -283,7 +298,11 @@ export async function startProviderStandIns(
         return;
       }
 
-      json(response, 200, { credentialIDs: ["credential-1"] });
+      json(response, 200, {
+        credentialIDs: state.otherCredential
+          ? ["credential-0", "credential-1"]
+          : ["credential-1"],
+      });
       return;
     }
 
@@ -293,9 +312,18 @@ export async function startProviderStandIns(
         return;
       }
 
+      const holder = credential(
+        (JSON.parse(body) as { credentialID?: string }).credentialID,
+      );
+
+      if (!holder) {
+        json(response, 400, { error: "invalid_request" });
+        return;
+      }
+
       json(response, 200, {
         cert: {
-          certificates: signer.chain.map((item) => item.toString("base64")),
+          certificates: holder.chain.map((item) => item.toString("base64")),
           status: "valid",
         },
         key: { algo: [CMS_OIDS.rsaEncryption], status: "enabled" },
@@ -324,11 +352,19 @@ export async function startProviderStandIns(
         return;
       }
 
+      const holder = credential(input.credentialID);
+
+      if (!holder) {
+        json(response, 400, { error: "invalid_request" });
+        return;
+      }
+
       tokens.delete((request.headers.authorization ?? "").slice(7));
+      state.signedWith = input.credentialID;
       json(response, 200, {
         signatures: [
           privateEncrypt(
-            signer.privateKeyPem,
+            holder.privateKeyPem,
             Buffer.concat([SHA256_DIGEST_INFO, hash]),
           ).toString("base64"),
         ],

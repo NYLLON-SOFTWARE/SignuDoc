@@ -58,6 +58,7 @@ export const CMS_OIDS = {
   signingTime: "1.2.840.113549.1.9.5",
   sha1: "1.3.14.3.2.26",
   timeStampToken: "1.2.840.113549.1.9.16.2.14",
+  tstInfo: "1.2.840.113549.1.9.16.1.4",
 } as const;
 
 const HASHES: Record<string, string> = {
@@ -130,20 +131,47 @@ export function signatureAlgorithmFor(certificate: Certificate): Buffer {
 }
 
 /**
+ * Whether a signature is an ECDSA-Sig-Value in DER: a SEQUENCE of exactly
+ * two positive INTEGERs, minimally encoded, filling the whole value. Raw
+ * r and s can start with the bytes of a SEQUENCE by chance, but not pass
+ * all of this.
+ */
+function isDerEcdsaSignature(signature: Buffer): boolean {
+  try {
+    const outer = readTlv(signature);
+
+    if (outer.tag !== TAG.sequence || outer.end !== signature.length) {
+      return false;
+    }
+
+    const parts = children(signature, outer);
+
+    return (
+      parts.length === 2 &&
+      parts.every((part) => {
+        const value = contentBytes(signature, part);
+
+        return (
+          part.tag === TAG.integer &&
+          value.length > 0 &&
+          // Positive, and no needless leading zero.
+          (value[0]! & 0x80) === 0 &&
+          !(value.length > 1 && value[0] === 0 && (value[1]! & 0x80) === 0)
+        );
+      })
+    );
+  } catch {
+    return false;
+  }
+}
+
+/**
  * An ECDSA signature as DER, from the raw r and s some services return.
  * A signature already in DER is returned as it is.
  */
 export function ecdsaSignatureAsDer(signature: Buffer): Buffer {
-  if (signature[0] === TAG.sequence) {
-    try {
-      const outer = readTlv(signature);
-
-      if (outer.end === signature.length) {
-        return signature;
-      }
-    } catch {
-      // Not DER after all.
-    }
+  if (isDerEcdsaSignature(signature)) {
+    return signature;
   }
 
   const half = signature.length / 2;
@@ -224,7 +252,7 @@ type ParsedSignerInfo = {
   signedAttributes: Buffer;
   signedAttributeValues: Map<string, Tlv[]>;
   signerIdentifier: Tlv;
-  unsignedAttributeIds: string[];
+  unsignedAttributeValues: Map<string, Tlv[]>;
 };
 
 function readAttributes(bytes: Buffer, tlv: Tlv): Map<string, Tlv[]> {
@@ -265,19 +293,41 @@ function readSignedData(cms: Buffer): {
   return { parts: children(cms, signedData), signedData };
 }
 
-function readSignerInfo(cms: Buffer): ParsedSignerInfo {
+/**
+ * The one SignerInfo of a CMS SignedData. A signer's signature is detached
+ * (the content type only, no content); a timestamp token carries its TSTInfo
+ * as the content, returned here as `content`.
+ */
+function readSignerInfo(
+  cms: Buffer,
+  kind: "detached" | "timestamp" = "detached",
+): ParsedSignerInfo & { content: Buffer | null } {
   const { parts } = readSignedData(cms);
   const encapsulated = parts[2];
+  const encapsulatedParts = encapsulated ? children(cms, encapsulated) : [];
+  let content: Buffer | null = null;
 
-  // Detached: the content type only, no content.
-  if (
-    !encapsulated ||
-    children(cms, encapsulated).length !== 1 ||
-    readOid(cms, children(cms, encapsulated)[0]!) !== CMS_OIDS.data
-  ) {
-    throw new SignerSignatureError(
-      "The signature is not a detached signature of data.",
-    );
+  if (kind === "detached") {
+    if (
+      encapsulatedParts.length !== 1 ||
+      readOid(cms, encapsulatedParts[0]!) !== CMS_OIDS.data
+    ) {
+      throw new SignerSignatureError(
+        "The signature is not a detached signature of data.",
+      );
+    }
+  } else {
+    const wrapped = encapsulatedParts[1];
+
+    if (
+      encapsulatedParts.length !== 2 ||
+      readOid(cms, encapsulatedParts[0]!) !== CMS_OIDS.tstInfo ||
+      wrapped?.tag !== contextTag(0)
+    ) {
+      throw new SignerSignatureError("The timestamp token has no TSTInfo.");
+    }
+
+    content = contentBytes(cms, children(cms, wrapped)[0]!);
   }
 
   const certificates = parts
@@ -310,6 +360,7 @@ function readSignerInfo(cms: Buffer): ParsedSignerInfo {
   return {
     bytes: cms,
     certificates,
+    content,
     digestAlgorithm: readOid(cms, children(cms, digestAlgorithm!)[0]!),
     signature: contentBytes(cms, signatureValue!),
     signatureAlgorithm: {
@@ -322,10 +373,10 @@ function readSignerInfo(cms: Buffer): ParsedSignerInfo {
     signedAttributes: signed,
     signedAttributeValues: readAttributes(cms, signedAttributes),
     signerIdentifier: signerIdentifier!,
-    unsignedAttributeIds:
+    unsignedAttributeValues:
       unsigned && unsigned.tag === contextTag(1)
-        ? [...readAttributes(cms, unsigned).keys()]
-        : [],
+        ? readAttributes(cms, unsigned)
+        : new Map(),
   };
 }
 
@@ -465,6 +516,67 @@ function assertSigningCertificate(
   }
 }
 
+/**
+ * Whether a timestamp token is a signature timestamp for this signature
+ * value: its TSTInfo's message imprint is the hash of the value, its signed
+ * attributes hold the hash of that TSTInfo, and the time-stamping authority's
+ * signature over them verifies with the certificate the token carries.
+ */
+function isTimestampFor(
+  bytes: Buffer,
+  token: Tlv,
+  signatureValue: Buffer,
+): boolean {
+  try {
+    const info = readSignerInfo(elementBytes(bytes, token), "timestamp");
+    const tstInfo = info.content!;
+    // TSTInfo { version, policy, messageImprint, ... }
+    const imprint = children(tstInfo, children(tstInfo, readTlv(tstInfo))[2]!);
+    const imprintHash =
+      HASHES[readOid(tstInfo, children(tstInfo, imprint[0]!)[0]!)];
+    const digestHash = HASHES[info.digestAlgorithm];
+    const contentType = info.signedAttributeValues.get(CMS_OIDS.contentType);
+    const messageDigest = info.signedAttributeValues.get(
+      CMS_OIDS.messageDigest,
+    );
+
+    if (
+      !imprintHash ||
+      !digestHash ||
+      !contentBytes(tstInfo, imprint[1]!).equals(
+        createHash(imprintHash).update(signatureValue).digest(),
+      ) ||
+      contentType?.length !== 1 ||
+      readOid(info.bytes, contentType[0]!) !== CMS_OIDS.tstInfo ||
+      messageDigest?.length !== 1 ||
+      !contentBytes(info.bytes, messageDigest[0]!).equals(
+        createHash(digestHash).update(tstInfo).digest(),
+      )
+    ) {
+      return false;
+    }
+
+    const authority = findSigner(
+      info,
+      info.certificates.map((certificate) => parseCertificate(certificate)),
+    );
+
+    return verifyValue(info, authority.x509.publicKey);
+  } catch {
+    return false;
+  }
+}
+
+/** Whether the CMS carries a signature timestamp that checks out. */
+function hasSignatureTimestamp(info: ParsedSignerInfo): boolean {
+  const tokens =
+    info.unsignedAttributeValues.get(CMS_OIDS.timeStampToken) ?? [];
+
+  return tokens.some((token) =>
+    isTimestampFor(info.bytes, token, info.signature),
+  );
+}
+
 export type SignatureLevel = "advanced" | "qualified";
 
 export type CheckedSignerSignature = {
@@ -476,7 +588,10 @@ export type CheckedSignerSignature = {
   qualified: boolean;
   serialNumber: string;
   subject: string;
-  /** The CMS carries a signature timestamp (PAdES B-T). */
+  /**
+   * The CMS carries a signature timestamp (PAdES B-T) for this signature,
+   * signed by the time-stamping authority whose certificate it includes.
+   */
   timestamped: boolean;
   validTo: Date;
 };
@@ -596,7 +711,7 @@ export function checkSignerSignature(
     qualified,
     serialNumber: signer.serial.toString("hex"),
     subject: displayName(signer.x509.subject),
-    timestamped: info.unsignedAttributeIds.includes(CMS_OIDS.timeStampToken),
+    timestamped: hasSignatureTimestamp(info),
     validTo,
   };
 }
@@ -604,9 +719,11 @@ export function checkSignerSignature(
 // --- Changing --------------------------------------------------------------
 
 /**
- * Adds a signature timestamp (PAdES B-T) to a CMS that has none: the
- * timestamp token for the SHA-256 of the signature value, as an unsigned
- * attribute. The signature itself is unchanged.
+ * Adds a signature timestamp (PAdES B-T) to a CMS without one that checks
+ * out: the timestamp token for the SHA-256 of the signature value, as an
+ * unsigned attribute. A timestamp attribute that does not check out (empty,
+ * for another signature, or not verifying) is replaced. The signature itself
+ * is unchanged.
  */
 export async function addSignatureTimestamp(
   cms: Uint8Array,
@@ -615,7 +732,7 @@ export async function addSignatureTimestamp(
   const bytes = Buffer.from(cms);
   const info = readSignerInfo(bytes);
 
-  if (info.unsignedAttributeIds.includes(CMS_OIDS.timeStampToken)) {
+  if (hasSignatureTimestamp(info)) {
     return bytes;
   }
 
@@ -632,7 +749,13 @@ export async function addSignatureTimestamp(
     .map((field) => elementBytes(bytes, field));
   const attributes = [
     ...(unsigned
-      ? children(bytes, unsigned).map((item) => elementBytes(bytes, item))
+      ? children(bytes, unsigned)
+          .filter(
+            (item) =>
+              readOid(bytes, children(bytes, item)[0]!) !==
+              CMS_OIDS.timeStampToken,
+          )
+          .map((item) => elementBytes(bytes, item))
       : []),
     attribute(CMS_OIDS.timeStampToken, token),
   ];

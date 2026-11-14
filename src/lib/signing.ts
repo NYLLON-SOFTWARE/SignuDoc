@@ -1912,35 +1912,44 @@ async function reauthenticatePart11Signer(
  * Makes a provider-signed revision the envelope's current one, within the
  * transaction that records the signature. Refused when another revision was
  * committed since this signer began, so no signature is ever built on a
- * revision that is no longer the latest.
+ * revision that is no longer the latest. Returns the storage key of the
+ * revision it replaces (null when it was built on the source PDF), which the
+ * new one contains and which can go once the transaction commits.
  */
 async function commitProviderRevision(
   tx: DbExecutor,
   envelopeId: string,
   completion: ProviderSignatureCompletion,
   now: number,
-) {
-  const revision = await tx.query(
+): Promise<string | null> {
+  // Locked, so the revision read here is the one the update below replaces.
+  const current = await queryOne<{ revisionKey: string | null }>(
+    tx,
     `
-      UPDATE envelopes
-      SET revision_key = $1, revision_sha256 = $2
-      WHERE id = $3
-        AND revision_sha256 IS NOT DISTINCT FROM $4
+      SELECT revision_key AS "revisionKey"
+      FROM envelopes
+      WHERE id = $1
+        AND revision_sha256 IS NOT DISTINCT FROM $2
+      FOR UPDATE
     `,
-    [
-      completion.revision.key,
-      completion.revision.sha256,
-      envelopeId,
-      completion.baseSha256,
-    ],
+    [envelopeId, completion.baseSha256],
   );
 
-  if (revision.rowCount !== 1) {
+  if (!current) {
     throw new SigningMutationError(
       "The document changed while you were signing. Open your signing link again.",
       409,
     );
   }
+
+  await tx.query(
+    `
+      UPDATE envelopes
+      SET revision_key = $1, revision_sha256 = $2
+      WHERE id = $3
+    `,
+    [completion.revision.key, completion.revision.sha256, envelopeId],
+  );
 
   const session = await tx.query(
     `
@@ -1953,6 +1962,19 @@ async function commitProviderRevision(
 
   if (session.rowCount !== 1) {
     throw new SigningMutationError("This signing session has ended.", 409);
+  }
+
+  return current.revisionKey === completion.revision.key
+    ? null
+    : current.revisionKey;
+}
+
+async function deleteReplacedRevision(
+  key: string | null,
+  storageService: StorageService,
+) {
+  if (key) {
+    await storageService.deleteObject(key).catch(() => undefined);
   }
 }
 
@@ -2207,8 +2229,13 @@ export async function submitSigningForToken(
     { database, emailService, requestMeta, verifyPassword },
   );
   const storageService = givenStorageService ?? createStorageService();
-  const submittedAt =
-    providerSignature?.submittedAt ?? Math.floor(Date.now() / 1000);
+  // When the signer signed. Through a provider, that is when they left for
+  // it, the time the signed revision itself states. The next signer's turn
+  // starts now, however long the provider took.
+  const routedAt = Math.floor(Date.now() / 1000);
+  const submittedAt = providerSignature?.submittedAt ?? routedAt;
+  // The revision this signer's replaces, deleted once the change is saved.
+  let replacedRevisionKey: string | null = null;
   const {
     currentSignerFields,
     currentSignerId,
@@ -2245,7 +2272,7 @@ export async function submitSigningForToken(
 
       // Only the link itself. When it ends is settled further down, from
       // the deadline as it stands once the envelope is locked.
-      nextSignerLink = await issueSigningLink({ issuedAt: submittedAt });
+      nextSignerLink = await issueSigningLink({ issuedAt: routedAt });
     }
 
     for (const upload of drawnSignatureUploads) {
@@ -2301,7 +2328,7 @@ export async function submitSigningForToken(
               AND status = 'sent'
             RETURNING expires_at AS "expiresAt"
           `,
-          [submittedAt, context.envelope.id],
+          [routedAt, context.envelope.id],
         );
 
         if (!lockedEnvelope) {
@@ -2315,11 +2342,11 @@ export async function submitSigningForToken(
         nextSignerDeadline = lockedEnvelope.expiresAt;
 
         if (providerSignature) {
-          await commitProviderRevision(
+          replacedRevisionKey = await commitProviderRevision(
             tx,
             context.envelope.id,
             providerSignature,
-            submittedAt,
+            routedAt,
           );
         }
 
@@ -2398,10 +2425,10 @@ export async function submitSigningForToken(
           `,
           [
             nextSignerLink.tokenHash,
-            nextSignerLinkExpiresAt(lockedEnvelope.expiresAt, submittedAt),
-            submittedAt,
-            submittedAt,
-            submittedAt,
+            nextSignerLinkExpiresAt(lockedEnvelope.expiresAt, routedAt),
+            routedAt,
+            routedAt,
+            routedAt,
             nextSigner.id,
             context.envelope.id,
           ],
@@ -2430,6 +2457,7 @@ export async function submitSigningForToken(
         );
       }, database);
       signingStatePersisted = true;
+      await deleteReplacedRevision(replacedRevisionKey, storageService);
 
       try {
         const delivery = await emailService.send(
@@ -2534,11 +2562,11 @@ export async function submitSigningForToken(
         await lockSentEnvelope(context.envelope.id, tx);
 
         if (providerSignature) {
-          await commitProviderRevision(
+          replacedRevisionKey = await commitProviderRevision(
             tx,
             context.envelope.id,
             providerSignature,
-            submittedAt,
+            routedAt,
           );
         }
 
@@ -2663,6 +2691,7 @@ export async function submitSigningForToken(
         );
       }, database);
       signingStatePersisted = true;
+      await deleteReplacedRevision(replacedRevisionKey, storageService);
     } catch (error) {
       await Promise.all(
         storedArtifactKeys.map((key) =>
