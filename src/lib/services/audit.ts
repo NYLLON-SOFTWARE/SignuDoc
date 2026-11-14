@@ -14,6 +14,49 @@ import { canonicalJson } from "../utils/canonical-json.ts";
 
 export type AuditEventMetadata = Record<string, unknown> | null;
 
+function readMetadataString(
+  metadata: Record<string, unknown> | null | undefined,
+  key: string,
+): string | null {
+  const value = metadata?.[key];
+
+  return typeof value === "string" && value.trim().length > 0 ? value : null;
+}
+
+function formatSignerPerson(name: string | null, email: string | null): string {
+  if (name && email) {
+    return `${name} <${email}>`;
+  }
+
+  return name ?? email ?? "signer";
+}
+
+/** Plain words for a signer_corrected audit event, from its stored metadata. */
+export function describeSignerCorrectedEvent(
+  metadata: Record<string, unknown> | null | undefined,
+): string {
+  const previousName = readMetadataString(metadata, "previousName");
+  const previousEmail = readMetadataString(metadata, "previousEmail");
+  const name = readMetadataString(metadata, "signerName");
+  const email = readMetadataString(metadata, "signerEmail");
+  const sameName =
+    previousName !== null && name !== null && previousName === name;
+  const sameEmail =
+    previousEmail !== null &&
+    email !== null &&
+    previousEmail.toLowerCase() === email.toLowerCase();
+
+  if (sameName && previousEmail && email) {
+    return `Signer email corrected from ${previousEmail} to ${email}`;
+  }
+
+  if (sameEmail && previousName && name) {
+    return `Signer name corrected from ${previousName} to ${name}`;
+  }
+
+  return `Signer corrected from ${formatSignerPerson(previousName, previousEmail)} to ${formatSignerPerson(name, email)}`;
+}
+
 export type RecordAuditEventInput = {
   /** Given when the event was already shown on a certificate under this id. */
   id?: string;

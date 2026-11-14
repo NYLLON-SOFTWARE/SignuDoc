@@ -10,6 +10,7 @@ import {
 import type { FieldRecord } from "../schemas/field.ts";
 import type { SignerRecord } from "../schemas/signer.ts";
 import { buildSignatureManifestation } from "../signature-meanings.ts";
+import { describeSignerCorrectedEvent } from "./audit.ts";
 import { canonicalJson } from "../utils/canonical-json.ts";
 import { normalizedRectToPdfRect } from "../utils/pdf-coords.ts";
 import { embedTextFaces, type TextFace } from "./pdf-fonts.ts";
@@ -775,8 +776,11 @@ function buildAuditLines(input: {
     const actorLabel =
       signerName && actor !== signerName ? `${signerName} <${actor}>` : actor;
 
+    const eventLabel =
+      event.event === "signer_corrected" ? "Signer corrected" : event.event;
+
     pushParagraph(
-      `${formatAuditTimestamp(event.createdAt)} | ${event.event} | ${actorLabel}`,
+      `${formatAuditTimestamp(event.createdAt)} | ${eventLabel} | ${actorLabel}`,
       input.fonts.regular,
       bodyFontSize,
     );
@@ -987,6 +991,10 @@ function describeEventEvidence(event: AuditEventRecord): string[] {
         .filter(Boolean)
         .join(" "),
     );
+  }
+
+  if (event.event === "signer_corrected") {
+    details.push(describeSignerCorrectedEvent(metadata));
   }
 
   if (event.event === "verified" && typeof metadata.method === "string") {

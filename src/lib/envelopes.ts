@@ -13,6 +13,7 @@ import {
   deadlineFromDays,
   formatDeadline,
   isEnvelopeExpired,
+  signingLinkLifetimeSeconds,
 } from "./envelope-deadline.ts";
 import {
   countAnswerableFields,
@@ -47,11 +48,15 @@ import {
   type ReplaceFieldsResponse,
 } from "./schemas/field.ts";
 import {
+  correctSentSignerResponseSchema,
+  correctSentSignerSchema,
   duplicateCopyRecipientEmailMessage,
+  duplicateSignerEmailMessage,
   replaceSignersResponseSchema,
   replaceSignersSchema,
   signerRecordSchema,
   type CopyRecipientRecord,
+  type CorrectSentSignerResponse,
   type ReplaceSignersResponse,
   type SignerRecord,
 } from "./schemas/signer.ts";
@@ -65,19 +70,23 @@ import { getBranding, readStoredSettings } from "./settings.ts";
 import { type SignatureMeaning } from "./types/domain.ts";
 import { importPdfDocument } from "./services/document-import.ts";
 import {
+  describeSignerCorrectedEvent,
   listAuditEventsForEnvelope,
   lockEnvelopeAuditChain,
   recordAuditEvent,
   recordEmailSent,
 } from "./services/audit.ts";
-import { createEmailService } from "./services/email.ts";
+import { createEmailService, type EmailService } from "./services/email.ts";
 import { withUserEmailLegalFooter } from "./services/email-legal-footer.ts";
 import { buildSigningInvitationEmail } from "./services/signing-invitation-email.ts";
 import {
   storeEnvelopeCertificatePdf,
   storeRecipientEnvelopeCertificatePdf,
 } from "./services/pdf-finalize.ts";
-import { issueSigningLink } from "./services/signing-links.ts";
+import {
+  issueSigningLink,
+  type IssuedSigningLink,
+} from "./services/signing-links.ts";
 import {
   buildEnvelopeCertificateKey,
   buildEnvelopeOriginalPdfKey,
@@ -146,6 +155,19 @@ type VoidEnvelopeInput = {
   senderEmail: string;
   senderName: string;
   userAgent?: string | null;
+};
+
+type CorrectSentEnvelopeSignerContext = {
+  ipAddress?: string | null;
+  senderEmail: string;
+  senderName: string;
+  userAgent?: string | null;
+};
+
+type CorrectSentEnvelopeSignerOptions = {
+  database?: DbPool;
+  emailService?: EmailService;
+  nowUnixTimestamp?: number;
 };
 
 type SendDraftEnvelopeOptions = {
@@ -442,6 +464,7 @@ export type ReplaceDraftSignersResult = ReplaceSignersResponse;
 export type ReplaceDraftFieldsResult = ReplaceFieldsResponse;
 export type SendDraftEnvelopeResult = SendEnvelopeResponse;
 export type VoidEnvelopeResult = VoidEnvelopeResponse;
+export type CorrectSentSignerResult = CorrectSentSignerResponse;
 
 const FIELD_TYPE_SUMMARY_LABELS: Record<
   FieldRecord["type"],
@@ -481,6 +504,7 @@ const TIMELINE_TONE_MAP: Record<
   expired: "danger",
   reauthentication_failed: "danger",
   reminded_auto: "neutral",
+  signer_corrected: "neutral",
   reminded_manual: "neutral",
   sent: "neutral",
   signed: "success",
@@ -1315,6 +1339,8 @@ function buildTimelineDescription(event: AuditEventRecord): string {
         : "Deadline changed";
     case "expired":
       return "Deadline passed before everyone signed";
+    case "signer_corrected":
+      return describeSignerCorrectedEvent(event.metadata);
     default:
       return event.event;
   }
@@ -2443,6 +2469,453 @@ export async function changeEnvelopeDeadline(
     envelopeId,
     expiresAt,
     expiresAtLabel: formatDeadline(expiresAt),
+  });
+}
+
+const SENT_ENVELOPE_SIGNER_CORRECTION_MESSAGE =
+  "Only an envelope that is out for signature can have a signer corrected.";
+
+type PersistedSignerCorrection = {
+  auditEventId: string;
+  envelopeExpiresAt: number | null;
+  envelopeId: string;
+  envelopeTitle: string;
+  envelopeUpdatedAt: number;
+  invitationNeeded: boolean;
+  issuedLink: IssuedSigningLink | null;
+  previous: {
+    consentedAt: number | null;
+    email: string;
+    emailCodeAttempts: number;
+    emailCodeExpiresAt: number | null;
+    emailCodeHash: string | null;
+    emailCodeSentAt: number | null;
+    lastNotifiedAt: number | null;
+    name: string;
+    signingTokenExpiresAt: number | null;
+    signingTokenHash: string | null;
+    updatedAt: number;
+  };
+  signerEmail: string;
+  signerId: string;
+  signerName: string;
+  userId: string;
+};
+
+/**
+ * Fixes the name and/or email of a signer who has not signed or declined on
+ * an envelope that is out for signature. The signing link they already have
+ * stops working. If it is their turn, a new invitation goes to the
+ * corrected address.
+ */
+export async function correctSentEnvelopeSigner(
+  userId: string,
+  envelopeId: string,
+  signerId: string,
+  input: unknown,
+  context: CorrectSentEnvelopeSignerContext,
+  {
+    database = getDb(),
+    emailService,
+    nowUnixTimestamp = Math.floor(Date.now() / 1000),
+  }: CorrectSentEnvelopeSignerOptions = {},
+): Promise<CorrectSentSignerResult> {
+  const parsedInput = correctSentSignerSchema.parse(input);
+  const persisted = await withTransaction(async (tx) => {
+    const envelope = await queryOne<{
+      expiresAt: number | null;
+      part11: boolean;
+      status: EnvelopeRecord["status"];
+      title: string;
+      updatedAt: number;
+      userId: string;
+    }>(
+      tx,
+      `
+        SELECT
+          expires_at AS "expiresAt",
+          part11,
+          status,
+          title,
+          updated_at AS "updatedAt",
+          user_id AS "userId"
+        FROM envelopes
+        WHERE id = $1 AND user_id = $2
+        FOR NO KEY UPDATE
+      `,
+      [envelopeId, userId],
+    );
+
+    if (!envelope) {
+      throw new EnvelopeMutationError("Envelope not found.", 404);
+    }
+
+    if (envelope.status !== "sent") {
+      throw new EnvelopeMutationError(
+        SENT_ENVELOPE_SIGNER_CORRECTION_MESSAGE,
+        409,
+      );
+    }
+
+    if (envelope.part11) {
+      throw new EnvelopeMutationError(
+        "This envelope was sent in Part 11 mode. The signer's identity is bound to their account and cannot be corrected.",
+        409,
+      );
+    }
+
+    const signer = await queryOne<{
+      consentedAt: number | null;
+      email: string;
+      emailCodeAttempts: number;
+      emailCodeExpiresAt: number | null;
+      emailCodeHash: string | null;
+      emailCodeSentAt: number | null;
+      lastNotifiedAt: number | null;
+      name: string;
+      role: string;
+      signOrder: number;
+      signingTokenExpiresAt: number | null;
+      signingTokenHash: string | null;
+      status: SignerRecord["status"];
+      updatedAt: number;
+    }>(
+      tx,
+      `
+        SELECT
+          consented_at AS "consentedAt",
+          email,
+          email_code_attempts AS "emailCodeAttempts",
+          email_code_expires_at AS "emailCodeExpiresAt",
+          email_code_hash AS "emailCodeHash",
+          email_code_sent_at AS "emailCodeSentAt",
+          last_notified_at AS "lastNotifiedAt",
+          name,
+          role,
+          sign_order AS "signOrder",
+          signing_token_expires_at AS "signingTokenExpiresAt",
+          signing_token_hash AS "signingTokenHash",
+          status,
+          updated_at AS "updatedAt"
+        FROM signers
+        WHERE id = $1 AND envelope_id = $2
+        FOR NO KEY UPDATE
+      `,
+      [signerId, envelopeId],
+    );
+
+    if (!signer || signer.role !== "signer") {
+      throw new EnvelopeMutationError("Envelope not found.", 404);
+    }
+
+    if (signer.status === "signed") {
+      throw new EnvelopeMutationError(
+        "This person has already signed and cannot be corrected.",
+        409,
+      );
+    }
+
+    if (signer.status === "declined") {
+      throw new EnvelopeMutationError(
+        "This person has already declined and cannot be corrected.",
+        409,
+      );
+    }
+
+    const nextName = parsedInput.name ?? signer.name;
+    const nextEmail = parsedInput.email ?? signer.email;
+
+    if (
+      nextName === signer.name &&
+      nextEmail.toLowerCase() === signer.email.toLowerCase()
+    ) {
+      return {
+        auditEventId: "",
+        envelopeExpiresAt: envelope.expiresAt,
+        envelopeId,
+        envelopeTitle: envelope.title,
+        envelopeUpdatedAt: envelope.updatedAt,
+        invitationNeeded: false,
+        issuedLink: null,
+        previous: {
+          consentedAt: signer.consentedAt,
+          email: signer.email,
+          emailCodeAttempts: signer.emailCodeAttempts,
+          emailCodeExpiresAt: signer.emailCodeExpiresAt,
+          emailCodeHash: signer.emailCodeHash,
+          emailCodeSentAt: signer.emailCodeSentAt,
+          lastNotifiedAt: signer.lastNotifiedAt,
+          name: signer.name,
+          signingTokenExpiresAt: signer.signingTokenExpiresAt,
+          signingTokenHash: signer.signingTokenHash,
+          updatedAt: signer.updatedAt,
+        },
+        signerEmail: signer.email,
+        signerId,
+        signerName: signer.name,
+        userId,
+      } satisfies PersistedSignerCorrection;
+    }
+
+    const duplicate = await queryOne<{ id: string; role: string }>(
+      tx,
+      `
+        SELECT id, role
+        FROM signers
+        WHERE envelope_id = $1
+          AND lower(email) = $2
+          AND id <> $3
+      `,
+      [envelopeId, nextEmail.toLowerCase(), signerId],
+    );
+
+    if (duplicate) {
+      throw new EnvelopeMutationError(
+        duplicate.role === "cc"
+          ? duplicateCopyRecipientEmailMessage
+          : duplicateSignerEmailMessage,
+        400,
+      );
+    }
+
+    let issuedLink: IssuedSigningLink | null = null;
+    let tokenHash: string | null = null;
+    let tokenExpiresAt: number | null = null;
+    let lastNotifiedAt = signer.lastNotifiedAt;
+    const invitationNeeded = signer.status === "notified";
+
+    if (invitationNeeded) {
+      const remainingSeconds =
+        typeof envelope.expiresAt === "number" &&
+        envelope.expiresAt > nowUnixTimestamp
+          ? envelope.expiresAt - nowUnixTimestamp
+          : typeof envelope.expiresAt === "number"
+            ? 1
+            : signingLinkLifetimeSeconds(envelope.expiresAt, nowUnixTimestamp);
+
+      issuedLink = await issueSigningLink({
+        expiresInSeconds: remainingSeconds,
+        issuedAt: nowUnixTimestamp,
+      });
+      tokenHash = issuedLink.tokenHash;
+      tokenExpiresAt =
+        typeof envelope.expiresAt === "number"
+          ? envelope.expiresAt
+          : issuedLink.exp;
+      lastNotifiedAt = nowUnixTimestamp;
+    }
+
+    const updatedSigner = await tx.query(
+      `
+        UPDATE signers
+        SET
+          name = $1,
+          email = $2,
+          signing_token_hash = $3,
+          signing_token_expires_at = $4,
+          last_notified_at = $5,
+          consented_at = NULL,
+          email_code_hash = NULL,
+          email_code_expires_at = NULL,
+          email_code_attempts = 0,
+          email_code_sent_at = NULL,
+          updated_at = $6
+        WHERE id = $7
+          AND envelope_id = $8
+          AND status IN ('pending', 'notified')
+      `,
+      [
+        nextName,
+        nextEmail,
+        tokenHash,
+        tokenExpiresAt,
+        lastNotifiedAt,
+        nowUnixTimestamp,
+        signerId,
+        envelopeId,
+      ],
+    );
+
+    if (updatedSigner.rowCount !== 1) {
+      throw new EnvelopeMutationError(
+        "This person has already signed or declined and cannot be corrected.",
+        409,
+      );
+    }
+
+    await tx.query(
+      `
+        UPDATE envelopes
+        SET updated_at = $1
+        WHERE id = $2
+      `,
+      [nowUnixTimestamp, envelopeId],
+    );
+
+    const auditEvent = await recordAuditEvent(
+      {
+        actorEmail: context.senderEmail,
+        actorType: "sender",
+        createdAt: nowUnixTimestamp,
+        envelopeId,
+        event: "signer_corrected",
+        ipAddress: context.ipAddress ?? null,
+        metadata: {
+          previousEmail: signer.email,
+          previousName: signer.name,
+          signerEmail: nextEmail,
+          signerId,
+          signerName: nextName,
+          signerOrder: signer.signOrder,
+        },
+        userAgent: context.userAgent ?? null,
+      },
+      tx,
+    );
+
+    return {
+      auditEventId: auditEvent.id,
+      envelopeExpiresAt: envelope.expiresAt,
+      envelopeId,
+      envelopeTitle: envelope.title,
+      envelopeUpdatedAt: envelope.updatedAt,
+      invitationNeeded,
+      issuedLink,
+      previous: {
+        consentedAt: signer.consentedAt,
+        email: signer.email,
+        emailCodeAttempts: signer.emailCodeAttempts,
+        emailCodeExpiresAt: signer.emailCodeExpiresAt,
+        emailCodeHash: signer.emailCodeHash,
+        emailCodeSentAt: signer.emailCodeSentAt,
+        lastNotifiedAt: signer.lastNotifiedAt,
+        name: signer.name,
+        signingTokenExpiresAt: signer.signingTokenExpiresAt,
+        signingTokenHash: signer.signingTokenHash,
+        updatedAt: signer.updatedAt,
+      },
+      signerEmail: nextEmail,
+      signerId,
+      signerName: nextName,
+      userId,
+    } satisfies PersistedSignerCorrection;
+  }, database);
+
+  if (!persisted.invitationNeeded || !persisted.issuedLink) {
+    return correctSentSignerResponseSchema.parse({
+      email: persisted.signerEmail,
+      envelopeId: persisted.envelopeId,
+      invitationSent: false,
+      name: persisted.signerName,
+      signerId: persisted.signerId,
+    });
+  }
+
+  const mailer = emailService ?? createEmailService();
+  let invitationMessageId: string | undefined;
+
+  try {
+    invitationMessageId = (
+      await mailer.send(
+        buildSigningInvitationEmail({
+          branding: await getBranding(),
+          envelopeTitle: persisted.envelopeTitle,
+          expiresAt: persisted.envelopeExpiresAt,
+          senderName: context.senderName,
+          signerEmail: persisted.signerEmail,
+          signerName: persisted.signerName,
+          signingUrl: persisted.issuedLink.url,
+        }),
+      )
+    ).messageId;
+  } catch (error) {
+    await withTransaction(async (tx) => {
+      await tx.query(
+        `
+          UPDATE envelopes
+          SET updated_at = $1
+          WHERE id = $2
+            AND user_id = $3
+            AND status = 'sent'
+        `,
+        [persisted.envelopeUpdatedAt, persisted.envelopeId, persisted.userId],
+      );
+
+      await tx.query(
+        `
+          UPDATE signers
+          SET
+            name = $1,
+            email = $2,
+            signing_token_hash = $3,
+            signing_token_expires_at = $4,
+            last_notified_at = $5,
+            consented_at = $6,
+            email_code_hash = $7,
+            email_code_expires_at = $8,
+            email_code_attempts = $9,
+            email_code_sent_at = $10,
+            updated_at = $11
+          WHERE id = $12
+            AND envelope_id = $13
+            AND status = 'notified'
+        `,
+        [
+          persisted.previous.name,
+          persisted.previous.email,
+          persisted.previous.signingTokenHash,
+          persisted.previous.signingTokenExpiresAt,
+          persisted.previous.lastNotifiedAt,
+          persisted.previous.consentedAt,
+          persisted.previous.emailCodeHash,
+          persisted.previous.emailCodeExpiresAt,
+          persisted.previous.emailCodeAttempts,
+          persisted.previous.emailCodeSentAt,
+          persisted.previous.updatedAt,
+          persisted.signerId,
+          persisted.envelopeId,
+        ],
+      );
+
+      await lockEnvelopeAuditChain(persisted.envelopeId, tx);
+      await tx.query(
+        `
+          DELETE FROM audit_events
+          WHERE envelope_id = $1
+            AND id = $2
+            AND sequence = (
+              SELECT max(sequence) FROM audit_events WHERE envelope_id = $1
+            )
+        `,
+        [persisted.envelopeId, persisted.auditEventId],
+      );
+    }, database).catch((rollbackError) => {
+      console.error(
+        `Failed to roll back a signer correction for envelope ${persisted.envelopeId} after email delivery failure:`,
+        rollbackError,
+      );
+    });
+
+    throw error;
+  }
+
+  await recordEmailSent(
+    {
+      envelopeId: persisted.envelopeId,
+      messageId: invitationMessageId,
+      recipient: persisted.signerEmail,
+      signerId: persisted.signerId,
+      template: "signing_invitation",
+    },
+    database,
+  );
+
+  return correctSentSignerResponseSchema.parse({
+    email: persisted.signerEmail,
+    envelopeId: persisted.envelopeId,
+    invitationSent: true,
+    name: persisted.signerName,
+    signerId: persisted.signerId,
   });
 }
 
