@@ -434,6 +434,42 @@ test("a certificate authority that does not answer is given up on in time", asyn
   });
 });
 
+test("each redirect counts against the document's lookups", async () => {
+  let requests = 0;
+  const server = createServer((request, response) => {
+    requests += 1;
+    // Always somewhere else.
+    response.writeHead(302, { location: `/next-${String(requests)}` }).end();
+  });
+
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+
+  try {
+    const address = server.address();
+    const port = typeof address === "object" && address ? address.port : 0;
+    const fetchFrom = createValidationFetch({ allowPrivateAddresses: true });
+    let redirects = 0;
+
+    await assert.rejects(
+      fetchFrom(`http://127.0.0.1:${String(port)}/start`, undefined, {
+        onRedirect: () => {
+          redirects += 1;
+
+          if (redirects > 2) {
+            throw new Error("Too many lookups for one document.");
+          }
+        },
+      }),
+      /Too many lookups/,
+    );
+    // The first request and two redirects, then the third was refused.
+    assert.equal(requests, 3);
+  } finally {
+    server.closeAllConnections();
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+  }
+});
+
 test("a lookup told to stop closes its connection", async () => {
   let closed = false;
   const server = createServer((request) => {

@@ -333,8 +333,12 @@ function cmsCertificates(cms: Uint8Array, depth = 0): Buffer[] {
 export type ValidationFetch = (
   url: string,
   request?: { body: Buffer; contentType: string },
-  /** Aborted when the document's lookup time runs out. */
-  options?: { signal?: AbortSignal },
+  options?: {
+    /** Called before following each redirect; may throw to stop. */
+    onRedirect?: () => void;
+    /** Aborted when the document's lookup time runs out. */
+    signal?: AbortSignal;
+  },
 ) => Promise<Buffer>;
 
 function isPrivateAddress(host: string): boolean {
@@ -551,12 +555,16 @@ export function createValidationFetch({
 } = {}): ValidationFetch {
   const lookup = guardedLookup(resolve, allowPrivateAddresses);
 
-  return async (url, request, { signal } = {}) => {
+  return async (url, request, { onRedirect, signal } = {}) => {
     let target = new URL(url);
 
     for (let hop = 0; hop < 4; hop += 1) {
       if (signal?.aborted) {
         throw new LongTermValidationError("Ran out of time for lookups.");
+      }
+
+      if (hop > 0) {
+        onRedirect?.();
       }
 
       if (target.protocol !== "http:" && target.protocol !== "https:") {
@@ -1142,15 +1150,19 @@ export async function collectValidationData(
     revoked: [],
   };
   // A slow certificate authority must not hold up a signing for long.
-  const limitedFetch: ValidationFetch = (url, request) => {
+  // Every request counts, each redirect too.
+  const countRequest = () => {
     budget.fetches += 1;
 
     if (budget.fetches > MAX_FETCHES) {
       throw new LongTermValidationError("Too many lookups for one document.");
     }
+  };
+  const limitedFetch: ValidationFetch = (url, request) => {
+    countRequest();
 
     return withinBudget(budget, (signal) =>
-      fetchFrom(url, request, { signal }),
+      fetchFrom(url, request, { onRedirect: countRequest, signal }),
     );
   };
   const addToPool = (certificate: Certificate) => {
