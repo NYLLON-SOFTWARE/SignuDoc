@@ -2475,136 +2475,19 @@ export async function changeEnvelopeDeadline(
 const SENT_ENVELOPE_SIGNER_CORRECTION_MESSAGE =
   "Only an envelope that is out for signature can have a signer corrected.";
 
-type PersistedSignerCorrection = {
-  correctedAt: number;
-  envelopeExpiresAt: number | null;
-  envelopeId: string;
-  envelopeTitle: string;
-  envelopeUpdatedAt: number;
-  invitationNeeded: boolean;
-  issuedLink: IssuedSigningLink | null;
-  previous: {
-    consentedAt: number | null;
-    email: string;
-    emailCodeAttempts: number;
-    emailCodeExpiresAt: number | null;
-    emailCodeHash: string | null;
-    emailCodeSentAt: number | null;
-    lastNotifiedAt: number | null;
-    name: string;
-    signingTokenExpiresAt: number | null;
-    signingTokenHash: string | null;
-    updatedAt: number;
-  };
-  signerEmail: string;
-  signerId: string;
-  signerName: string;
-  signerOrder: number;
-  userId: string;
-};
-
-/**
- * Puts a notified signer back as they were when sending their new
- * invitation failed. The correction is not written to the audit trail
- * until that send succeeds, so restoring the row is enough. Another
- * correction of the same person can land while the send is in flight;
- * restoring then would revive the first link and drop the second. The
- * row is only written if it still holds this correction's address and
- * token.
- */
-async function revertFailedSignerCorrection(
-  persisted: PersistedSignerCorrection,
-  database: DbPool,
-): Promise<void> {
-  const issuedLink = persisted.issuedLink;
-
-  if (!issuedLink) {
-    return;
-  }
-
-  await withTransaction(async (tx) => {
-    const envelope = await queryOne<{ id: string }>(
-      tx,
-      `
-        SELECT id
-        FROM envelopes
-        WHERE id = $1 AND user_id = $2 AND status = 'sent'
-        FOR NO KEY UPDATE
-      `,
-      [persisted.envelopeId, persisted.userId],
-    );
-
-    if (!envelope) {
-      return;
-    }
-
-    const restored = await tx.query(
-      `
-        UPDATE signers
-        SET
-          name = $1,
-          email = $2,
-          signing_token_hash = $3,
-          signing_token_expires_at = $4,
-          last_notified_at = $5,
-          consented_at = $6,
-          email_code_hash = $7,
-          email_code_expires_at = $8,
-          email_code_attempts = $9,
-          email_code_sent_at = $10,
-          updated_at = $11
-        WHERE id = $12
-          AND envelope_id = $13
-          AND status = 'notified'
-          AND name = $14
-          AND email = $15
-          AND signing_token_hash = $16
-      `,
-      [
-        persisted.previous.name,
-        persisted.previous.email,
-        persisted.previous.signingTokenHash,
-        persisted.previous.signingTokenExpiresAt,
-        persisted.previous.lastNotifiedAt,
-        persisted.previous.consentedAt,
-        persisted.previous.emailCodeHash,
-        persisted.previous.emailCodeExpiresAt,
-        persisted.previous.emailCodeAttempts,
-        persisted.previous.emailCodeSentAt,
-        persisted.previous.updatedAt,
-        persisted.signerId,
-        persisted.envelopeId,
-        persisted.signerName,
-        persisted.signerEmail,
-        issuedLink.tokenHash,
-      ],
-    );
-
-    if (restored.rowCount !== 1) {
-      return;
-    }
-
-    await tx.query(
-      `
-        UPDATE envelopes
-        SET updated_at = $1
-        WHERE id = $2
-          AND updated_at = $3
-      `,
-      [
-        persisted.envelopeUpdatedAt,
-        persisted.envelopeId,
-        persisted.correctedAt,
-      ],
-    );
-  }, database);
-}
-
 /**
  * Fixes the name and/or email of a signer who has not signed or declined on
  * an envelope that is out for signature. The signing link they already have
  * stops working. If it is their turn, a new invitation goes to the
  * corrected address.
+ *
+ * The envelope and signer rows stay locked until that invitation is sent
+ * or refused, so another correction of the same person waits. A failed
+ * send rolls the whole transaction back: the last committed identity
+ * returns, the original link still works when nothing succeeded, and no
+ * signer_corrected event is left behind. The audit event is written in
+ * this same transaction after a successful send, so overlapping
+ * corrections cannot appear out of order.
  */
 export async function correctSentEnvelopeSigner(
   userId: string,
@@ -2619,7 +2502,8 @@ export async function correctSentEnvelopeSigner(
   }: CorrectSentEnvelopeSignerOptions = {},
 ): Promise<CorrectSentSignerResult> {
   const parsedInput = correctSentSignerSchema.parse(input);
-  const persisted = await withTransaction(async (tx) => {
+
+  return withTransaction(async (tx) => {
     const envelope = await queryOne<{
       expiresAt: number | null;
       part11: boolean;
@@ -2727,33 +2611,13 @@ export async function correctSentEnvelopeSigner(
       nextName === signer.name &&
       nextEmail.toLowerCase() === signer.email.toLowerCase()
     ) {
-      return {
-        correctedAt: nowUnixTimestamp,
-        envelopeExpiresAt: envelope.expiresAt,
+      return correctSentSignerResponseSchema.parse({
+        email: signer.email,
         envelopeId,
-        envelopeTitle: envelope.title,
-        envelopeUpdatedAt: envelope.updatedAt,
-        invitationNeeded: false,
-        issuedLink: null,
-        previous: {
-          consentedAt: signer.consentedAt,
-          email: signer.email,
-          emailCodeAttempts: signer.emailCodeAttempts,
-          emailCodeExpiresAt: signer.emailCodeExpiresAt,
-          emailCodeHash: signer.emailCodeHash,
-          emailCodeSentAt: signer.emailCodeSentAt,
-          lastNotifiedAt: signer.lastNotifiedAt,
-          name: signer.name,
-          signingTokenExpiresAt: signer.signingTokenExpiresAt,
-          signingTokenHash: signer.signingTokenHash,
-          updatedAt: signer.updatedAt,
-        },
-        signerEmail: signer.email,
+        invitationSent: false,
+        name: signer.name,
         signerId,
-        signerName: signer.name,
-        signerOrder: signer.signOrder,
-        userId,
-      } satisfies PersistedSignerCorrection;
+      });
     }
 
     const duplicate = await queryOne<{ id: string; role: string }>(
@@ -2851,10 +2715,22 @@ export async function correctSentEnvelopeSigner(
       [nowUnixTimestamp, envelopeId],
     );
 
-    // A notified signer still needs a new invitation. Do not record the
-    // correction until that send succeeds; a failed send must not leave a
-    // signer_corrected event in the trail.
-    if (!invitationNeeded) {
+    if (invitationNeeded && issuedLink) {
+      const mailer = emailService ?? createEmailService();
+      const invitationMessageId = (
+        await mailer.send(
+          buildSigningInvitationEmail({
+            branding: await getBranding(),
+            envelopeTitle: envelope.title,
+            expiresAt: envelope.expiresAt,
+            senderName: context.senderName,
+            signerEmail: nextEmail,
+            signerName: nextName,
+            signingUrl: issuedLink.url,
+          }),
+        )
+      ).messageId;
+
       await recordAuditEvent(
         {
           actorEmail: context.senderEmail,
@@ -2875,116 +2751,55 @@ export async function correctSentEnvelopeSigner(
         },
         tx,
       );
+      await recordEmailSent(
+        {
+          envelopeId,
+          messageId: invitationMessageId,
+          recipient: nextEmail,
+          signerId,
+          template: "signing_invitation",
+        },
+        tx,
+      );
+
+      return correctSentSignerResponseSchema.parse({
+        email: nextEmail,
+        envelopeId,
+        invitationSent: true,
+        name: nextName,
+        signerId,
+      });
     }
 
-    return {
-      correctedAt: nowUnixTimestamp,
-      envelopeExpiresAt: envelope.expiresAt,
-      envelopeId,
-      envelopeTitle: envelope.title,
-      envelopeUpdatedAt: envelope.updatedAt,
-      invitationNeeded,
-      issuedLink,
-      previous: {
-        consentedAt: signer.consentedAt,
-        email: signer.email,
-        emailCodeAttempts: signer.emailCodeAttempts,
-        emailCodeExpiresAt: signer.emailCodeExpiresAt,
-        emailCodeHash: signer.emailCodeHash,
-        emailCodeSentAt: signer.emailCodeSentAt,
-        lastNotifiedAt: signer.lastNotifiedAt,
-        name: signer.name,
-        signingTokenExpiresAt: signer.signingTokenExpiresAt,
-        signingTokenHash: signer.signingTokenHash,
-        updatedAt: signer.updatedAt,
+    await recordAuditEvent(
+      {
+        actorEmail: context.senderEmail,
+        actorType: "sender",
+        createdAt: nowUnixTimestamp,
+        envelopeId,
+        event: "signer_corrected",
+        ipAddress: context.ipAddress ?? null,
+        metadata: {
+          previousEmail: signer.email,
+          previousName: signer.name,
+          signerEmail: nextEmail,
+          signerId,
+          signerName: nextName,
+          signerOrder: signer.signOrder,
+        },
+        userAgent: context.userAgent ?? null,
       },
-      signerEmail: nextEmail,
-      signerId,
-      signerName: nextName,
-      signerOrder: signer.signOrder,
-      userId,
-    } satisfies PersistedSignerCorrection;
-  }, database);
-
-  if (!persisted.invitationNeeded || !persisted.issuedLink) {
-    return correctSentSignerResponseSchema.parse({
-      email: persisted.signerEmail,
-      envelopeId: persisted.envelopeId,
-      invitationSent: false,
-      name: persisted.signerName,
-      signerId: persisted.signerId,
-    });
-  }
-
-  let invitationMessageId: string | undefined;
-
-  try {
-    const mailer = emailService ?? createEmailService();
-
-    invitationMessageId = (
-      await mailer.send(
-        buildSigningInvitationEmail({
-          branding: await getBranding(),
-          envelopeTitle: persisted.envelopeTitle,
-          expiresAt: persisted.envelopeExpiresAt,
-          senderName: context.senderName,
-          signerEmail: persisted.signerEmail,
-          signerName: persisted.signerName,
-          signingUrl: persisted.issuedLink.url,
-        }),
-      )
-    ).messageId;
-  } catch (error) {
-    await revertFailedSignerCorrection(persisted, database).catch(
-      (rollbackError) => {
-        console.error(
-          `Failed to roll back a signer correction for envelope ${persisted.envelopeId} after email delivery failure:`,
-          rollbackError,
-        );
-      },
+      tx,
     );
 
-    throw error;
-  }
-
-  await recordAuditEvent(
-    {
-      actorEmail: context.senderEmail,
-      actorType: "sender",
-      createdAt: Math.floor(Date.now() / 1000),
-      envelopeId: persisted.envelopeId,
-      event: "signer_corrected",
-      ipAddress: context.ipAddress ?? null,
-      metadata: {
-        previousEmail: persisted.previous.email,
-        previousName: persisted.previous.name,
-        signerEmail: persisted.signerEmail,
-        signerId: persisted.signerId,
-        signerName: persisted.signerName,
-        signerOrder: persisted.signerOrder,
-      },
-      userAgent: context.userAgent ?? null,
-    },
-    database,
-  );
-  await recordEmailSent(
-    {
-      envelopeId: persisted.envelopeId,
-      messageId: invitationMessageId,
-      recipient: persisted.signerEmail,
-      signerId: persisted.signerId,
-      template: "signing_invitation",
-    },
-    database,
-  );
-
-  return correctSentSignerResponseSchema.parse({
-    email: persisted.signerEmail,
-    envelopeId: persisted.envelopeId,
-    invitationSent: true,
-    name: persisted.signerName,
-    signerId: persisted.signerId,
-  });
+    return correctSentSignerResponseSchema.parse({
+      email: nextEmail,
+      envelopeId,
+      invitationSent: false,
+      name: nextName,
+      signerId,
+    });
+  }, database);
 }
 
 /**

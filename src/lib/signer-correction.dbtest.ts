@@ -93,6 +93,15 @@ function recordingEmailService(failWith?: Error) {
   return { sent, service };
 }
 
+function deferred<T = void>() {
+  let resolve!: (value: T | PromiseLike<T>) => void;
+  const promise = new Promise<T>((next) => {
+    resolve = next;
+  });
+
+  return { promise, resolve };
+}
+
 async function createOwner() {
   const userId = randomUUID();
   const email = `${userId}@example.test`;
@@ -1091,23 +1100,11 @@ test("a failed invitation does not undo a later correction of the same signer", 
   const envelopeId = await createEnvelope({ userId });
   const signer = await createSigner({ envelopeId });
   const { sent: sentB, service: serviceB } = recordingEmailService();
-  const serviceA: EmailService = {
-    async send() {
-      await correct(
-        userId,
-        envelopeId,
-        signer.signerId,
-        { email: "second@example.test" },
-        serviceB,
-      );
-      throw new Error("mailbox down");
-    },
-    async sendBatch() {
-      throw new Error("not used");
-    },
-  };
+  const { service: serviceA } = recordingEmailService(
+    new Error("mailbox down"),
+  );
 
-  await assert.rejects(
+  const outcomes = await Promise.allSettled([
     correct(
       userId,
       envelopeId,
@@ -1115,7 +1112,22 @@ test("a failed invitation does not undo a later correction of the same signer", 
       { email: "first@example.test" },
       serviceA,
     ),
-    { message: "mailbox down" },
+    correct(
+      userId,
+      envelopeId,
+      signer.signerId,
+      { email: "second@example.test" },
+      serviceB,
+    ),
+  ]);
+
+  assert.equal(
+    outcomes.filter((outcome) => outcome.status === "fulfilled").length,
+    1,
+  );
+  assert.equal(
+    outcomes.filter((outcome) => outcome.status === "rejected").length,
+    1,
   );
 
   const stored = await readSigner(signer.signerId);
@@ -1135,7 +1147,139 @@ test("a failed invitation does not undo a later correction of the same signer", 
   assert.equal((csv.body.match(/Signer corrected/g) ?? []).length, 1);
   assert.match(
     csv.body,
-    /Signer email corrected from first@example\.test to second@example\.test/,
+    new RegExp(
+      `Signer email corrected from ${signer.email.replaceAll(".", "\\.")} to second@example\\.test`,
+    ),
+  );
+});
+
+test("two overlapping failed invitations restore the original signer and link", async () => {
+  const { userId } = await createOwner();
+  const envelopeId = await createEnvelope({ userId });
+  const signer = await createSigner({
+    envelopeId,
+    extra: { consentedAt: unixNow() - 20 },
+  });
+  const originalConsentedAt = (await readSigner(signer.signerId)).consented_at;
+  const { service: serviceA } = recordingEmailService(
+    new Error("mailbox down"),
+  );
+  const { service: serviceB } = recordingEmailService(
+    new Error("mailbox down"),
+  );
+
+  const outcomes = await Promise.allSettled([
+    correct(
+      userId,
+      envelopeId,
+      signer.signerId,
+      { email: "first@example.test" },
+      serviceA,
+    ),
+    correct(
+      userId,
+      envelopeId,
+      signer.signerId,
+      { email: "second@example.test" },
+      serviceB,
+    ),
+  ]);
+
+  assert.equal(
+    outcomes.filter((outcome) => outcome.status === "rejected").length,
+    2,
+  );
+
+  const stored = await readSigner(signer.signerId);
+  assert.equal(stored.email, signer.email);
+  assert.equal(stored.signing_token_hash, signer.tokenHash);
+  assert.equal(stored.consented_at, originalConsentedAt);
+  assert.deepEqual(await auditEvents(envelopeId), []);
+  await getSigningPayloadForToken(signer.token!, { database });
+});
+
+test("overlapping successful corrections record audit events in save order", async () => {
+  const { userId } = await createOwner();
+  const envelopeId = await createEnvelope({ userId });
+  const signer = await createSigner({ envelopeId });
+  const firstStarted = deferred();
+  const firstMayFinish = deferred();
+  const sentFirst: TransactionalEmailMessage[] = [];
+  const { sent: sentSecond, service: serviceSecond } = recordingEmailService();
+  const serviceFirst: EmailService = {
+    async send(message) {
+      firstStarted.resolve();
+      await firstMayFinish.promise;
+      sentFirst.push(message);
+
+      return { accepted: [message.to], messageId: "m-first", rejected: [] };
+    },
+    async sendBatch() {
+      throw new Error("not used");
+    },
+  };
+
+  const firstCorrection = correct(
+    userId,
+    envelopeId,
+    signer.signerId,
+    { email: "first@example.test" },
+    serviceFirst,
+  );
+  await firstStarted.promise;
+
+  const secondCorrection = correct(
+    userId,
+    envelopeId,
+    signer.signerId,
+    { email: "second@example.test" },
+    serviceSecond,
+  );
+
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  assert.equal(sentSecond.length, 0);
+  assert.equal((await readSigner(signer.signerId)).email, signer.email);
+
+  firstMayFinish.resolve();
+  await Promise.all([firstCorrection, secondCorrection]);
+
+  const stored = await readSigner(signer.signerId);
+  assert.equal(stored.email, "second@example.test");
+  assert.equal(sentFirst.length, 1);
+  assert.equal(sentSecond.length, 1);
+  assert.deepEqual(await auditEvents(envelopeId), [
+    "signer_corrected",
+    "email_sent",
+    "signer_corrected",
+    "email_sent",
+  ]);
+
+  const recorded = await listAuditEventsForEnvelope(envelopeId, database);
+  const corrections = recorded.filter(
+    (event) => event.event === "signer_corrected",
+  );
+  assert.equal(corrections[0]?.metadata?.signerEmail, "first@example.test");
+  assert.equal(corrections[0]?.metadata?.previousEmail, signer.email);
+  assert.equal(corrections[1]?.metadata?.signerEmail, "second@example.test");
+  assert.equal(corrections[1]?.metadata?.previousEmail, "first@example.test");
+  assert.equal((await verifyAuditChain(envelopeId, database)).ok, true);
+
+  const match = sentSecond[0]?.textBody.match(/\/sign\/([A-Za-z0-9_-]+)/);
+  assert.ok(match?.[1]);
+  await consent(match[1]!);
+
+  const { full } = await renderCorrectionCertificates(envelopeId);
+  const signersSection = (full.split("Audit events")[0] ?? "").replace(
+    /\s+/g,
+    " ",
+  );
+  const compactSigners = signersSection.replaceAll(" ", "");
+
+  assert.ok(
+    compactSigners.includes(
+      `disclosure${ELECTRONIC_RECORDS_DISCLOSURE_VERSION}`,
+    ),
+    signersSection,
   );
 });
 
