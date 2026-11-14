@@ -141,6 +141,31 @@
     cursor: pointer;
   }
 
+  /*
+   * Every select draws the same chevron instead of the browser's own caret,
+   * which sits flush against the right edge and differs between browsers.
+   * The SVG is the Lucide chevron-down used elsewhere, in the secondary ink.
+   */
+  select {
+    appearance: none;
+    -webkit-appearance: none;
+    -moz-appearance: none;
+    cursor: pointer;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23575a6e' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right 0.875rem center;
+    background-size: 1rem 1rem;
+    padding-right: 2.75rem;
+  }
+
+  select:disabled {
+    cursor: not-allowed;
+  }
+
+  select::-ms-expand {
+    display: none;
+  }
+
   input::placeholder,
   textarea::placeholder {
     color: var(--placeholder);
@@ -321,6 +346,16 @@
     transition:
       border-color 120ms ease,
       box-shadow 120ms ease;
+  }
+
+  /* .field-input's background shorthand clears the chevron, so add it back. */
+  select.field-input {
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23575a6e' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right 0.875rem center;
+    background-size: 1rem 1rem;
+    padding-right: 2.75rem;
+    text-overflow: ellipsis;
   }
 
   .field-input:hover {
