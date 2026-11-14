@@ -1,6 +1,12 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { createHash, generateKeyPairSync, sign, verify } from "node:crypto";
+import {
+  constants,
+  createHash,
+  generateKeyPairSync,
+  sign,
+  verify,
+} from "node:crypto";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -10,6 +16,13 @@ import { promisify } from "node:util";
 import { PDFDocument, PDFName, StandardFonts } from "pdf-lib";
 
 import type { FieldRecord } from "../schemas/field.ts";
+import {
+  algorithm,
+  contextTag,
+  der,
+  encode,
+  encodeSmallInteger,
+} from "./der.ts";
 import { fillSignature, findSignatures } from "./pdf-incremental.ts";
 import {
   addLongTermValidation,
@@ -27,9 +40,12 @@ import { buildCadesSignature, requestDocumentTimestamp } from "./pdf-seal.ts";
 import { startTestPki, type TestPki } from "./pki-test-support.ts";
 import {
   addSignatureTimestamp,
+  assembleSignedData,
+  buildSignedAttributes,
   certificateHolderNames,
   certificateMatchesName,
   checkSignerSignature,
+  CMS_OIDS,
   ecdsaSignatureAsDer,
   SignerSignatureError,
 } from "./signer-cms.ts";
@@ -506,6 +522,70 @@ test("a certificate matches the name a signer was sent the document under", asyn
     }
 
     assert.equal(certificateMatchesName(national, "Kadri Männik"), false);
+
+    // An apostrophe joins the letters around it, however it is typed.
+    const irish = parseCertificate(
+      pki.issueSigner({ commonName: "Alice O'Connor" }).certificate,
+    );
+
+    for (const name of ["Alice OConnor", "Alice O’Connor", "alice o'connor"]) {
+      assert.equal(certificateMatchesName(irish, name), true, name);
+    }
+
+    assert.equal(certificateMatchesName(irish, "Alice Connor"), false);
+  });
+});
+
+test("an RSA-PSS signature is checked only with a mask it says it uses", async () => {
+  await withPki(async (pki) => {
+    const alice = pki.issueSigner({ commonName: "Alice Example" });
+    const digest = createHash("sha256").update("revision bytes").digest();
+    const signedAttributes = buildSignedAttributes({
+      certificate: alice.certificate,
+      contentDigest: digest,
+    });
+    // SHA-256, MGF1 with SHA-256, a 32-byte salt.
+    const signature = sign("sha256", signedAttributes, {
+      key: alice.privateKeyPem,
+      padding: constants.RSA_PKCS1_PSS_PADDING,
+      saltLength: 32,
+    });
+    const cmsDeclaring = (maskHash: string) =>
+      assembleSignedData({
+        certificates: [alice.certificate, pki.caCertificate],
+        signature,
+        signatureAlgorithm: der.sequence(
+          der.oid(CMS_OIDS.rsaPss),
+          der.sequence(
+            encode(contextTag(0), algorithm(CMS_OIDS.sha256)),
+            encode(
+              contextTag(1),
+              der.sequence(der.oid(CMS_OIDS.mgf1), algorithm(maskHash)),
+            ),
+            encode(contextTag(2), encodeSmallInteger(32)),
+          ),
+        ),
+        signedAttributes,
+      });
+
+    assert.match(
+      checkSignerSignature(cmsDeclaring(CMS_OIDS.sha256), digest, {
+        level: "advanced",
+      }).subject,
+      /Alice Example/,
+    );
+    // The same signature, declaring a mask over SHA-1: not checked as one.
+    assert.throws(
+      () =>
+        checkSignerSignature(cmsDeclaring(CMS_OIDS.sha1), digest, {
+          level: "advanced",
+        }),
+      (error: unknown) =>
+        error instanceof SignerSignatureError &&
+        /RSA-PSS signature uses parameters that cannot be checked/.test(
+          error.message,
+        ),
+    );
   });
 });
 

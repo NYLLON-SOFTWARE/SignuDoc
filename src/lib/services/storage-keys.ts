@@ -143,15 +143,21 @@ export function buildEnvelopeCertificateKey(
   );
 }
 
+/**
+ * A drawn signature, under a key of its own for each submission: of two
+ * submissions by the same signer at once, the one that fails then deletes
+ * only its own pictures, never the ones the other saved.
+ */
 export function buildSignatureImageKey(
   input: EnvelopeStorageIdentity & {
     fieldId: string;
+    submissionId: string;
   },
 ): string {
   return path.posix.join(
     buildEnvelopePrefix(input),
     "signatures",
-    `${input.fieldId}.png`,
+    `${input.fieldId}-${input.submissionId}.png`,
   );
 }
 

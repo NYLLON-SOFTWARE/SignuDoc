@@ -41,6 +41,7 @@ export const CMS_OIDS = {
   ecdsaSha512: "1.2.840.10045.4.3.4",
   ecPublicKey: "1.2.840.10045.2.1",
   messageDigest: "1.2.840.113549.1.9.4",
+  mgf1: "1.2.840.113549.1.1.8",
   qcCompliance: "0.4.0.1862.1.1",
   qcSscd: "0.4.0.1862.1.4",
   qcTypeSignature: "0.4.0.1862.1.6.1",
@@ -414,6 +415,59 @@ function findSigner(
   return match;
 }
 
+/**
+ * RSASSA-PSS-params (RFC 4055): [0] the hash, [1] the mask generation
+ * function, [2] the salt length and [3] the trailer, each SHA-1, MGF1 with
+ * SHA-1, 20 and 1 when left out. Node checks a PSS signature with MGF1 over
+ * the same hash as the message, so a signature that declares any other mask
+ * is refused rather than checked as something it does not say it is.
+ */
+function readPssParameters(
+  bytes: Buffer,
+  parameters: Tlv | null,
+): { hash: string; saltLength: number } {
+  let hash: string | undefined = "sha1";
+  let maskHash: string | undefined = "sha1";
+  let saltLength = 20;
+  let trailer = 1;
+  const readNumber = (value: Tlv) => {
+    const content = contentBytes(bytes, value);
+
+    return content.length > 0 && content.length <= 6
+      ? content.readUIntBE(0, content.length)
+      : -1;
+  };
+
+  for (const field of parameters ? children(bytes, parameters) : []) {
+    const value = children(bytes, field)[0];
+
+    if (!value) {
+      maskHash = undefined;
+    } else if (field.tag === contextTag(0)) {
+      hash = HASHES[readOid(bytes, children(bytes, value)[0]!)];
+    } else if (field.tag === contextTag(1)) {
+      const [mask, maskParameters] = children(bytes, value);
+
+      maskHash =
+        mask && maskParameters && readOid(bytes, mask) === CMS_OIDS.mgf1
+          ? HASHES[readOid(bytes, children(bytes, maskParameters)[0]!)]
+          : undefined;
+    } else if (field.tag === contextTag(2)) {
+      saltLength = readNumber(value);
+    } else if (field.tag === contextTag(3)) {
+      trailer = readNumber(value);
+    }
+  }
+
+  if (!hash || maskHash !== hash || saltLength < 0 || trailer !== 1) {
+    throw new SignerSignatureError(
+      "The RSA-PSS signature uses parameters that cannot be checked (its mask has to use the same hash as the signature).",
+    );
+  }
+
+  return { hash, saltLength };
+}
+
 function verifyValue(info: ParsedSignerInfo, key: KeyObject): boolean {
   const { bytes, signatureAlgorithm, signature, signedAttributes } = info;
   const digestHash = HASHES[info.digestAlgorithm];
@@ -445,24 +499,10 @@ function verifyValue(info: ParsedSignerInfo, key: KeyObject): boolean {
       );
     }
     case CMS_OIDS.rsaPss: {
-      // RSASSA-PSS-params: [0] hash, [1] mask generation, [2] salt length.
-      let hash = "sha1";
-      let saltLength = 20;
-
-      for (const field of signatureAlgorithm.parameters
-        ? children(bytes, signatureAlgorithm.parameters)
-        : []) {
-        if (field.tag === contextTag(0)) {
-          hash =
-            HASHES[
-              readOid(bytes, children(bytes, children(bytes, field)[0]!)[0]!)
-            ] ?? "";
-        } else if (field.tag === contextTag(2)) {
-          const value = contentBytes(bytes, children(bytes, field)[0]!);
-
-          saltLength = value.readUIntBE(0, Math.min(6, value.length));
-        }
-      }
+      const { hash, saltLength } = readPssParameters(
+        bytes,
+        signatureAlgorithm.parameters,
+      );
 
       return verifySignature(
         hash,
@@ -666,10 +706,15 @@ export function certificateHolderNames(certificate: Certificate): string[] {
   ];
 }
 
-/** A name's words, without case, accents, punctuation or numbers. */
+/**
+ * A name's words, without case, accents, punctuation or numbers. An
+ * apostrophe joins the letters around it, so O'Connor and OConnor are the
+ * same word; other punctuation, such as a hyphen, separates words.
+ */
 function nameWords(name: string): Set<string> {
   return new Set(
     name
+      .replace(/['`\u00B4\u2018\u2019\u02BC]/gu, "")
       .normalize("NFKD")
       .replace(/\p{M}+/gu, "")
       .toLocaleLowerCase("en")

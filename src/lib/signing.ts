@@ -1923,6 +1923,8 @@ async function commitProviderRevision(
   now: number,
 ): Promise<string | null> {
   // Locked, so the revision read here is the one the update below replaces.
+  // The lock an UPDATE takes, as in lockSentEnvelope: a stronger one would
+  // also stop audit events being added to this envelope meanwhile.
   const current = await queryOne<{ revisionKey: string | null }>(
     tx,
     `
@@ -1930,7 +1932,7 @@ async function commitProviderRevision(
       FROM envelopes
       WHERE id = $1
         AND revision_sha256 IS NOT DISTINCT FROM $2
-      FOR UPDATE
+      FOR NO KEY UPDATE
     `,
     [envelopeId, completion.baseSha256],
   );
@@ -1975,6 +1977,35 @@ async function deleteReplacedRevision(
 ) {
   if (key) {
     await storageService.deleteObject(key).catch(() => undefined);
+  }
+}
+
+/**
+ * Refuses a submission once the signer has signed, read while the envelope
+ * is locked. The last signer's submission makes the envelope's final files,
+ * which have fixed keys, only after this, under that lock. So of two by the
+ * same signer at once (a double click, or two returns from a signing
+ * provider), the second waits and stops here: it never writes over, or
+ * deletes, the files the first one saved.
+ */
+async function assertStillSignersTurn(
+  envelopeId: string,
+  signerId: string,
+  tx: DbExecutor,
+) {
+  const turn = await tx.query(
+    `
+      SELECT 1 FROM signers
+      WHERE id = $1 AND envelope_id = $2 AND status = 'notified'
+    `,
+    [signerId, envelopeId],
+  );
+
+  if (turn.rowCount !== 1) {
+    throw new SigningMutationError(
+      "This signing link is no longer active.",
+      409,
+    );
   }
 }
 
@@ -2034,6 +2065,8 @@ function buildSignerSubmission(
     relevantSubmissions.set(submission.fieldId, submission);
   }
 
+  // Names this submission's drawn signatures apart from any other's.
+  const submissionId = randomUUID();
   const localDateValue = formatLocalSigningDate(
     submittedAt,
     parsedInput.clientTimezoneOffsetMinutes,
@@ -2079,6 +2112,7 @@ function buildSignerSubmission(
       const imageKey = buildSignatureImageKey({
         envelopeId: context.envelope.id,
         fieldId: field.id,
+        submissionId,
         userId: context.envelope.userId,
       });
 
@@ -2521,26 +2555,10 @@ export async function submitSigningForToken(
       context.envelope.id,
       database,
     );
-    const finalArtifacts = await finalizeEnvelope(
-      {
-        auditEvents: [
-          ...(await listAuditEventsForEnvelope(context.envelope.id, database)),
-          signedAuditEvent,
-        ],
-        copyRecipients,
-        envelope: context.envelope,
-        fields: completedFields,
-        signers: completedSigners,
-        sourcePdf: {
-          bucketName: sourcePdfHead.bucketName,
-          key: context.envelope.sourcePdfKey,
-        },
-      },
-      {
-        signedRevision: providerSignature?.revision.bytes,
-        storageService,
-      },
-    );
+    const auditEvents = [
+      ...(await listAuditEventsForEnvelope(context.envelope.id, database)),
+      signedAuditEvent,
+    ];
     const storageIdentity = {
       envelopeId: context.envelope.id,
       userId: context.envelope.userId,
@@ -2557,9 +2575,36 @@ export async function submitSigningForToken(
       }),
     ];
 
+    // Set once this submission may have stored the final files.
+    let finalArtifactsStored = false;
+    let finalArtifacts: Awaited<ReturnType<typeof finalizeEnvelope>>;
+
     try {
-      await withTransaction(async (tx) => {
+      finalArtifacts = await withTransaction(async (tx) => {
         await lockSentEnvelope(context.envelope.id, tx);
+        await assertStillSignersTurn(context.envelope.id, currentSignerId, tx);
+
+        // Made while the envelope is locked: the files have fixed keys, and
+        // a second submission at the same time waits, then stops above.
+        finalArtifactsStored = true;
+
+        const artifacts = await finalizeEnvelope(
+          {
+            auditEvents,
+            copyRecipients,
+            envelope: context.envelope,
+            fields: completedFields,
+            signers: completedSigners,
+            sourcePdf: {
+              bucketName: sourcePdfHead.bucketName,
+              key: context.envelope.sourcePdfKey,
+            },
+          },
+          {
+            signedRevision: providerSignature?.revision.bytes,
+            storageService,
+          },
+        );
 
         if (providerSignature) {
           replacedRevisionKey = await commitProviderRevision(
@@ -2645,14 +2690,14 @@ export async function submitSigningForToken(
               AND status = 'sent'
           `,
           [
-            finalArtifacts.signedPdf.key,
-            finalArtifacts.certificate.key,
-            finalArtifacts.generatedAt,
-            finalArtifacts.generatedAt,
+            artifacts.signedPdf.key,
+            artifacts.certificate.key,
+            artifacts.generatedAt,
+            artifacts.generatedAt,
             context.envelope.id,
-            finalArtifacts.signedPdf.sha256,
-            finalArtifacts.certificate.sha256,
-            finalArtifacts.recipientCertificate.sha256,
+            artifacts.signedPdf.sha256,
+            artifacts.certificate.sha256,
+            artifacts.recipientCertificate.sha256,
           ],
         );
 
@@ -2682,22 +2727,27 @@ export async function submitSigningForToken(
           {
             actorEmail: null,
             actorType: "system",
-            createdAt: finalArtifacts.generatedAt,
+            createdAt: artifacts.generatedAt,
             envelopeId: context.envelope.id,
             event: "completed",
             metadata: null,
           },
           tx,
         );
+
+        return artifacts;
       }, database);
       signingStatePersisted = true;
       await deleteReplacedRevision(replacedRevisionKey, storageService);
     } catch (error) {
-      await Promise.all(
-        storedArtifactKeys.map((key) =>
-          storageService.deleteObject(key).catch(() => undefined),
-        ),
-      );
+      if (finalArtifactsStored) {
+        await Promise.all(
+          storedArtifactKeys.map((key) =>
+            storageService.deleteObject(key).catch(() => undefined),
+          ),
+        );
+      }
+
       throw error;
     }
 

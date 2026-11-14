@@ -38,6 +38,7 @@ import {
   type ProviderStandIns,
 } from "./services/signing-provider-test-support.ts";
 import { issueSigningLink } from "./services/signing-links.ts";
+import { getRecipientCertificateKey } from "./services/storage-keys.ts";
 import {
   createStorageService,
   type StorageService,
@@ -97,6 +98,11 @@ before(async () => {
   });
   setEnv({
     APP_URL: "https://sign.example.test",
+    // Only the eID Easy stand-in: a CSC provider set in the shell would
+    // otherwise be the one these tests use, or find when none is set.
+    CSC_API_URL: undefined,
+    CSC_CLIENT_ID: undefined,
+    CSC_CLIENT_SECRET: undefined,
     EIDEASY_API_URL: standIns.eidEasyUrl,
     EIDEASY_CLIENT_ID: STAND_IN_CLIENT.id,
     EIDEASY_SECRET: STAND_IN_CLIENT.secret,
@@ -777,6 +783,153 @@ test("an ended session keeps no secrets, and the daily cleanup ends abandoned on
     rows.rows.map((row) => row.secret_data),
     ["", ""],
   );
+});
+
+test("two submissions by the last signer at once finish the envelope once, and keep its files", async () => {
+  const draft = await createDraft();
+
+  await send(draft, "simple");
+  await submitSigningForToken(
+    await linkFor(draft.riley.id),
+    submissionFor(draft.riley),
+    { database, storageService },
+  );
+
+  // Casey presses Finish twice.
+  const caseyToken = await linkFor(draft.casey.id);
+  const results = await Promise.allSettled(
+    [1, 2].map(() =>
+      submitSigningForToken(caseyToken, submissionFor(draft.casey), {
+        database,
+        storageService,
+      }),
+    ),
+  );
+
+  assert.deepEqual(results.map((result) => result.status).sort(), [
+    "fulfilled",
+    "rejected",
+  ]);
+  assert.ok(
+    results.some(
+      (result) =>
+        result.status === "rejected" &&
+        result.reason instanceof SigningMutationError,
+    ),
+  );
+
+  const finished = (
+    await database.query<{
+      evidence_key: string;
+      signed_pdf_key: string;
+      status: string;
+    }>(
+      `select evidence_key, signed_pdf_key, status from envelopes where id = $1`,
+      [draft.envelopeId],
+    )
+  ).rows[0]!;
+
+  assert.equal(finished.status, "completed");
+
+  // The submission that lost deleted none of the files the other saved.
+  for (const key of [
+    finished.signed_pdf_key,
+    finished.evidence_key,
+    getRecipientCertificateKey(finished.evidence_key),
+  ]) {
+    assert.equal(await stored(key), true, key);
+  }
+});
+
+test("a revision the cleanup cannot delete is tried again, and the current one is kept", async () => {
+  const draft = await createDraft();
+
+  await send(draft, "advanced");
+
+  const rileyToken = await linkFor(draft.riley.id);
+  const abandoned = await signAtProvider(rileyToken, draft.riley);
+  const sessionRow = async (id: string) =>
+    (
+      await database.query<{
+        expires_at: string;
+        revision_key: string;
+        state: string;
+      }>(
+        `select expires_at, revision_key, state from provider_signing_sessions where id = $1`,
+        [id],
+      )
+    ).rows[0]!;
+  const abandonedId = abandoned.query.get("state") ?? "";
+  const abandonedBefore = await sessionRow(abandonedId);
+  const expiresAt = Number(abandonedBefore.expires_at);
+  // Storage refuses to delete the abandoned session's revision, once.
+  const failingStorage: StorageService = {
+    ...storageService,
+    deleteObject: async (key) => {
+      if (key === abandonedBefore.revision_key) {
+        throw new Error("Storage is unavailable.");
+      }
+
+      await storageService.deleteObject(key);
+    },
+  };
+
+  await runRetentionSweep({
+    database,
+    now: expiresAt,
+    storageService: failingStorage,
+  });
+
+  // Ended, but the revision and the key that finds it are both kept.
+  assert.equal((await sessionRow(abandonedId)).state, "failed");
+  assert.equal(
+    (await sessionRow(abandonedId)).revision_key,
+    abandonedBefore.revision_key,
+  );
+  assert.equal(await stored(abandonedBefore.revision_key), true);
+
+  await runRetentionSweep({ database, now: expiresAt, storageService });
+
+  assert.equal((await sessionRow(abandonedId)).revision_key, "");
+  assert.equal(await stored(abandonedBefore.revision_key), false);
+
+  // Riley and Casey sign. Riley's revision is deleted once Casey's replaces
+  // it; here that delete is taken to have failed, so the file is back.
+  const riley = await signAtProvider(rileyToken, draft.riley);
+
+  await riley.finish();
+
+  const rileyRevision = await sessionRow(riley.query.get("state") ?? "");
+  const rileyBytes = (
+    await storageService.getObject(rileyRevision.revision_key)
+  ).body;
+  const casey = await signAtProvider(
+    await linkFor(draft.casey.id),
+    draft.casey,
+  );
+
+  await casey.finish();
+  await storageService.putObject({
+    body: rileyBytes,
+    contentType: "application/pdf",
+    key: rileyRevision.revision_key,
+  });
+
+  const caseyRevision = await sessionRow(casey.query.get("state") ?? "");
+
+  await runRetentionSweep({ database, now: expiresAt, storageService });
+
+  // The replaced revision goes, the envelope's current one stays.
+  assert.equal(
+    (await sessionRow(riley.query.get("state") ?? "")).revision_key,
+    "",
+  );
+  assert.equal(await stored(rileyRevision.revision_key), false);
+  assert.equal(
+    (await sessionRow(casey.query.get("state") ?? "")).revision_key,
+    caseyRevision.revision_key,
+  );
+  assert.equal(await stored(caseyRevision.revision_key), true);
 });
 
 test("a certificate in someone else's name does not sign for the invited signer", async () => {

@@ -198,6 +198,7 @@ async function listFieldImagesForEnvelopeIds(
       SELECT envelope_id, revision_key
       FROM provider_signing_sessions
       WHERE envelope_id IN (${placeholders})
+        AND revision_key <> ''
     `,
     envelopeIds,
   );
@@ -298,36 +299,90 @@ async function deleteExpiredRecipientDownloadTokens(
 /** How long past its expiry a claimed signing session is given up on. */
 const CLAIMED_PROVIDER_SESSION_GRACE_SECONDS = 60 * 60;
 
+/** How many unused revisions one cleanup deletes, at most. */
+const UNUSED_PROVIDER_REVISIONS_PER_SWEEP = 500;
+
 /**
  * Ends the trips to a signing provider that will not finish: sessions the
  * signer never came back to, past their expiry, and sessions a return
  * claimed but never finished (it stopped with its function), an hour past
- * their expiry. Their prepared revisions and their secrets (the signing
- * link, the submission and the provider's state) go with them. Neither kind
- * holds the envelope's current revision, which only a completed session
- * sets.
+ * their expiry. Their secrets (the signing link, the submission and the
+ * provider's state) go at once, and their prepared revisions with the
+ * other unused ones below.
  */
 async function endAbandonedProviderSessions(
   now: number,
   database: DbExecutor,
   storageService: StorageService,
 ): Promise<number> {
-  const ended = await database.query<{ revisionKey: string }>(
+  const ended = await database.query(
     `
       UPDATE provider_signing_sessions
       SET state = 'failed', secret_data = ''
       WHERE (state = 'pending' AND expires_at <= $1)
         OR (state = 'signing' AND expires_at <= $2)
-      RETURNING revision_key AS "revisionKey"
     `,
     [now, now - CLAIMED_PROVIDER_SESSION_GRACE_SECONDS],
   );
 
-  for (const row of ended.rows) {
-    await storageService.deleteObject(row.revisionKey).catch(() => undefined);
-  }
+  await deleteUnusedProviderRevisions(database, storageService);
 
   return ended.rowCount ?? 0;
+}
+
+/**
+ * Deletes the signer revisions nothing needs any more: those of sessions
+ * that failed, and those a later signer's revision replaced (it contains
+ * them). Each is deleted when that happens, and again here in case that
+ * delete failed. A session's key is cleared only once its file is gone, so a
+ * delete that fails now is tried again at the next cleanup. The envelope's
+ * current revision is never one of them: only a completed session sets it,
+ * in the same transaction that completes the session.
+ */
+async function deleteUnusedProviderRevisions(
+  database: DbExecutor,
+  storageService: StorageService,
+) {
+  const unused = await queryMany<{ id: string; revisionKey: string }>(
+    database,
+    `
+      SELECT sessions.id, sessions.revision_key AS "revisionKey"
+      FROM provider_signing_sessions sessions
+      JOIN envelopes ON envelopes.id = sessions.envelope_id
+      WHERE sessions.revision_key <> ''
+        AND (
+          sessions.state = 'failed'
+          OR (
+            sessions.state = 'completed'
+            AND envelopes.revision_key IS DISTINCT FROM sessions.revision_key
+          )
+        )
+      ORDER BY sessions.created_at
+      LIMIT $1
+    `,
+    [UNUSED_PROVIDER_REVISIONS_PER_SWEEP],
+  );
+
+  for (const session of unused) {
+    try {
+      await storageService.deleteObject(session.revisionKey);
+    } catch (error) {
+      console.error(
+        `Failed to delete the unused signer revision of session ${session.id}:`,
+        error,
+      );
+      continue;
+    }
+
+    await database.query(
+      `
+        UPDATE provider_signing_sessions
+        SET revision_key = ''
+        WHERE id = $1 AND revision_key = $2
+      `,
+      [session.id, session.revisionKey],
+    );
+  }
 }
 
 function getClosureSchedule(requestedAt = getCurrentUnixTimestamp()) {
