@@ -87,6 +87,10 @@ export const voidEnvelopeResponseSchema = z.object({
   voidedAt: unixTimestampSchema,
 });
 
+export const copyEnvelopeResponseSchema = z.object({
+  id: idSchema,
+});
+
 export const manualNudgeResponseSchema = z.object({
   envelopeId: idSchema,
   nextAvailableAt: unixTimestampSchema,
@@ -182,6 +186,7 @@ export type ChangeRemindersResponse = z.infer<
   typeof changeRemindersResponseSchema
 >;
 export type VoidEnvelopeResponse = z.infer<typeof voidEnvelopeResponseSchema>;
+export type CopyEnvelopeResponse = z.infer<typeof copyEnvelopeResponseSchema>;
 export type ManualNudgeResponse = z.infer<typeof manualNudgeResponseSchema>;
 export type EnvelopeListFilters = z.infer<typeof envelopeListFiltersSchema>;
 export type DownloadRequest = z.infer<typeof downloadRequestSchema>;

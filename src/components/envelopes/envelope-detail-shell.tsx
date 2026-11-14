@@ -71,6 +71,7 @@ type EnvelopeDetailRecord = {
 type ModalState =
   | "change-deadline"
   | "change-reminders"
+  | "copy-draft"
   | "delete-draft"
   | "save-template"
   | "void-envelope"
@@ -129,6 +130,7 @@ export function EnvelopeDetailShell({
   const [actionError, setActionError] = useState<string | null>(null);
   const [isChangingDeadline, setIsChangingDeadline] = useState(false);
   const [isChangingReminders, setIsChangingReminders] = useState(false);
+  const [isCopyingDraft, setIsCopyingDraft] = useState(false);
   const [isDeletingDraft, setIsDeletingDraft] = useState(false);
   const [isSendingReminder, setIsSendingReminder] = useState(false);
   const [isVoidingEnvelope, setIsVoidingEnvelope] = useState(false);
@@ -312,6 +314,39 @@ export function EnvelopeDetailShell({
     }
   }
 
+  async function handleConfirmCopyDraft() {
+    setActionError(null);
+    setIsCopyingDraft(true);
+
+    try {
+      const response = await fetch(`/api/envelopes/${envelopeId}/copy`, {
+        method: "POST",
+      });
+      const payload = (await response.json().catch(() => null)) as {
+        error?: string;
+        id?: string;
+      } | null;
+
+      if (response.ok && typeof payload?.id === "string") {
+        // A full page load so the new draft is fetched from the server.
+        // eslint-disable-next-line @next/next/no-location-assign-relative-destination
+        window.location.assign(`/envelopes/${encodeURIComponent(payload.id)}`);
+        return;
+      }
+
+      if (response.status === 404) {
+        window.location.reload();
+        return;
+      }
+
+      setActionError(payload?.error ?? "Unable to copy this envelope.");
+    } catch {
+      setActionError("Unable to copy this envelope.");
+    } finally {
+      setIsCopyingDraft(false);
+    }
+  }
+
   async function handleConfirmDeleteDraft() {
     setActionError(null);
     setIsDeletingDraft(true);
@@ -483,18 +518,29 @@ export function EnvelopeDetailShell({
             ) : null}
 
             {activeRecord.status !== "draft" ? (
-              <ShellButton
-                onClick={() =>
-                  // A file download from an API route, not a page navigation.
-                  // eslint-disable-next-line @next/next/no-location-assign-relative-destination
-                  window.location.assign(
-                    `/api/envelopes/${encodeURIComponent(envelopeId)}/audit`,
-                  )
-                }
-                variant="secondary"
-              >
-                Export audit trail
-              </ShellButton>
+              <>
+                <ShellButton
+                  onClick={() => {
+                    setActionError(null);
+                    setActiveModal("copy-draft");
+                  }}
+                  variant="secondary"
+                >
+                  Copy to new draft
+                </ShellButton>
+                <ShellButton
+                  onClick={() =>
+                    // A file download from an API route, not a page navigation.
+                    // eslint-disable-next-line @next/next/no-location-assign-relative-destination
+                    window.location.assign(
+                      `/api/envelopes/${encodeURIComponent(envelopeId)}/audit`,
+                    )
+                  }
+                  variant="secondary"
+                >
+                  Export audit trail
+                </ShellButton>
+              </>
             ) : null}
           </div>
         </div>
@@ -748,6 +794,15 @@ export function EnvelopeDetailShell({
         />
       ) : null}
 
+      {activeModal === "copy-draft" ? (
+        <CopyDraftDialog
+          errorMessage={actionError}
+          onCancel={() => setActiveModal(null)}
+          onConfirm={handleConfirmCopyDraft}
+          processing={isCopyingDraft}
+        />
+      ) : null}
+
       {activeModal === "save-template" ? (
         <SaveTemplateDialog
           envelopeId={envelopeId}
@@ -811,6 +866,72 @@ export function EnvelopeDetailShell({
         </ConfirmationDialog>
       ) : null}
     </div>
+  );
+}
+
+type CopyDraftDialogProps = {
+  errorMessage?: string | null;
+  onCancel: () => void;
+  onConfirm: () => void | Promise<void>;
+  processing?: boolean;
+};
+
+function CopyDraftDialog({
+  errorMessage,
+  onCancel,
+  onConfirm,
+  processing = false,
+}: CopyDraftDialogProps) {
+  return (
+    <Dialog
+      open
+      onOpenChange={(open) => {
+        if (!open && !processing) {
+          onCancel();
+        }
+      }}
+    >
+      <DialogContent className="max-w-md sm:p-8" showCloseButton={false}>
+        <div className="space-y-4">
+          <DialogHeader className="space-y-3">
+            <DialogTitle>Copy to a new draft</DialogTitle>
+            <DialogDescription asChild>
+              <div className="space-y-2 text-sm leading-6 text-(--secondary)">
+                <p>
+                  This starts a new draft with the same document, the same
+                  people and the same fields. Nothing that was filled in is
+                  copied.
+                </p>
+                <p>
+                  Access codes are not copied: they are stored hashed, so they
+                  cannot be brought across. You can set new ones before sending.
+                </p>
+                <p>Nobody is emailed, and this envelope is left as it is.</p>
+              </div>
+            </DialogDescription>
+          </DialogHeader>
+
+          {errorMessage ? (
+            <div className="notice notice-danger" role="alert">
+              <p>{errorMessage}</p>
+            </div>
+          ) : null}
+
+          <div className="flex flex-col-reverse gap-3 pt-2 sm:flex-row sm:justify-end">
+            <ShellButton
+              disabled={processing}
+              onClick={onCancel}
+              variant="secondary"
+            >
+              Cancel
+            </ShellButton>
+            <ShellButton loading={processing} onClick={onConfirm}>
+              {processing ? "Copying..." : "Copy to new draft"}
+            </ShellButton>
+          </div>
+        </div>
+      </DialogContent>
+    </Dialog>
   );
 }
 
