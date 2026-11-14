@@ -46,6 +46,22 @@ Add your domain to the project in Vercel (Settings, Domains), then deploy once m
 
 A new install is claimed by whoever opens it first. That is normally you, seconds after the deployment finishes. If its address will be known to others before you get there, add a `SETUP_TOKEN` environment variable in Vercel with a secret of your own and deploy again: the setup page then asks for it.
 
+### Database variables marked "Needs Attention"
+
+After the deploy, the Neon variables in your Vercel project (`DATABASE_URL`, `PGPASSWORD`, the `POSTGRES_*` ones and the rest, all but `NEON_PROJECT_ID`) carry a yellow "Needs Attention" badge. Nothing is broken and the site works as it is. Vercel shows the badge on any value that looks like a password but is stored so that project members can still read it, and the Deploy button can only connect Neon that way, because a connection that includes the Development environment cannot store its values as Secrets.
+
+To clear it, make the database's values write-only. This stays inside Vercel:
+
+1. Open the project in Vercel, then **Storage**, then the Neon database, then **Settings**.
+2. Under **Allowed Environments**, choose **Production only** and save. Vercel removes the Preview and Development connections and stores the values as Secrets.
+3. On the same page, under **Secure This Resource**, click **Rotate Secrets**, so the database password that was readable before stops working.
+4. While you are in the project, add a `BETTER_AUTH_SECRET` environment variable (Production, as a Secret) with a value from `openssl rand -hex 32`, so later password changes leave sign-ins alone.
+5. Open **Deployments** and redeploy the latest production deployment.
+
+Do this right after the deploy, before people use the site. Unless `BETTER_AUTH_SECRET` was already set, the site's own secret comes from the database password, so step 3 (and step 4) changes it: everyone is signed out, the site makes a new key for sealing documents (PDFs sealed before still verify, under the old certificate), and anyone in the middle of signing with an outside signing provider has to start that step again.
+
+After this, preview deployments have no database and open on the page that asks you to connect one. That only matters if you build changes on branches before putting them live.
+
 ### Keep your install up to date
 
 The Deploy button makes a copy of this repository, and a copy does not receive new versions by itself. To take a new version, bring the changes into your copy and push. Vercel builds the push, and the build applies any new database migrations.
