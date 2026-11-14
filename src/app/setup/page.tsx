@@ -16,14 +16,27 @@ import {
   resolveSettings,
 } from "@/lib/settings";
 import { resolveSetupView } from "@/lib/setup";
-import { isHostedMode } from "@/lib/utils/env";
+import { isHostedMode, resolveAppUrl } from "@/lib/utils/env";
+
+function readSiteHost(): string | null {
+  try {
+    const appUrl = resolveAppUrl(process.env);
+
+    return appUrl ? new URL(appUrl).hostname : null;
+  } catch {
+    return null;
+  }
+}
 
 export const metadata: Metadata = {
   description: "Create the administrator account for this site.",
   title: "Set up",
 };
 
-async function loadView(): Promise<SetupShellView> {
+async function loadView(): Promise<{
+  storedSupportAddress: string | null;
+  view: SetupShellView;
+}> {
   try {
     const state = await getSetupState();
     // Only an install that already has accounts cares who is signed in.
@@ -37,8 +50,9 @@ async function loadView(): Promise<SetupShellView> {
         ? await readStoredSettings()
         : null;
 
-    return resolveSetupView(state, {
-      storedSupportAddress: stored?.supportAddress ?? null,
+    const storedSupportAddress = stored?.supportAddress ?? null;
+    const view = resolveSetupView(state, {
+      storedSupportAddress,
       sessionUser: session
         ? {
             email: session.user.email,
@@ -47,10 +61,12 @@ async function loadView(): Promise<SetupShellView> {
           }
         : null,
     });
+
+    return { storedSupportAddress, view };
   } catch (error) {
     // No database connected at all. The page can still say so.
     if (error instanceof ServiceConfigurationError) {
-      return { view: "no_database" };
+      return { storedSupportAddress: null, view: { view: "no_database" } };
     }
 
     throw error;
@@ -62,7 +78,7 @@ async function loadView(): Promise<SetupShellView> {
 export default async function SetupPage() {
   await connection();
 
-  const view = await loadView();
+  const { storedSupportAddress, view } = await loadView();
 
   if (view.view === "complete") {
     redirect("/login");
@@ -74,6 +90,11 @@ export default async function SetupPage() {
       <SetupShell
         hosted={isHostedMode()}
         onVercel={process.env.VERCEL === "1"}
+        knownSupportAddress={
+          process.env.SUPPORT_EMAIL?.trim() || storedSupportAddress
+        }
+        resendDomain={process.env.RESEND_EMAIL_DOMAIN?.trim() || null}
+        siteHost={readSiteHost()}
         view={view}
       />
     </BrandingProvider>

@@ -3,6 +3,7 @@ import { NextResponse } from "next/server";
 
 import { getAuth, getAuthSessionFromHeaders } from "@/lib/auth/server";
 import { runAsSetup } from "@/lib/auth/setup-context";
+import { addEmailDomain } from "@/lib/email-status";
 import { rejectBots } from "@/lib/security/botid";
 import { logRouteError, logSecurityEvent } from "@/lib/security/logging";
 import {
@@ -56,6 +57,38 @@ async function createAdminAccount(input: {
     }
 
     throw error;
+  }
+}
+
+// Adds the new sending domain to Resend straight away, so the Settings page
+// that setup ends on already lists the DNS records to add. Anything that
+// goes wrong here (no Resend key yet, a key that may only send, the free
+// plan's domain limit) is left for that page to explain, where the
+// administrator can try again.
+// It is given a few seconds at most: the account already exists by now,
+// and a slow answer from Resend must not turn a finished setup into an
+// error the administrator cannot retry.
+const ADD_SENDER_DOMAIN_TIMEOUT_MS = 4_000;
+
+async function addSenderDomain(): Promise<void> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+
+  try {
+    await Promise.race([
+      addEmailDomain(),
+      new Promise<void>((resolve) => {
+        timer = setTimeout(() => {
+          console.error(
+            "Setup stopped waiting for Resend to add the sending domain.",
+          );
+          resolve();
+        }, ADD_SENDER_DOMAIN_TIMEOUT_MS);
+      }),
+    ]);
+  } catch (error) {
+    console.error("Setup could not add the sending domain to Resend:", error);
+  } finally {
+    clearTimeout(timer);
   }
 }
 
@@ -114,6 +147,10 @@ export async function POST(request: Request) {
       path: getRequestPathname(request),
       userId: result.userId,
     });
+
+    if (typeof body?.senderAddress === "string" && body.senderAddress.trim()) {
+      await addSenderDomain();
+    }
 
     if (result.mode === "create") {
       // Sign the new administrator in, so setup ends inside the app rather
