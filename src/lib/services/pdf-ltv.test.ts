@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { createServer } from "node:http";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -15,7 +16,16 @@ import {
   StandardFonts,
 } from "pdf-lib";
 
-import { children, contentBytes, readOid, readTlv } from "./der.ts";
+import {
+  children,
+  contentBytes,
+  der,
+  encode,
+  encodeSmallInteger,
+  readOid,
+  readTlv,
+  TAG,
+} from "./der.ts";
 import { findSignatures, hasDocumentSecurityStore } from "./pdf-incremental.ts";
 import {
   addLongTermValidation,
@@ -433,6 +443,50 @@ test("one lookup budget covers the whole document, archive timestamp included", 
   });
 });
 
+test("a redirect's body is not read", async () => {
+  let streaming: ReturnType<typeof setInterval> | undefined;
+  let redirectClosed = false;
+  const server = createServer((request, response) => {
+    if (request.url === "/start") {
+      // A body that never ends, sent with the redirect.
+      response.writeHead(302, { location: "/final" });
+      streaming = setInterval(() => response.write(Buffer.alloc(65_536)), 1);
+      response.on("close", () => {
+        clearInterval(streaming);
+        redirectClosed = true;
+      });
+      return;
+    }
+
+    response.writeHead(200).end("final");
+  });
+
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+
+  try {
+    const address = server.address();
+    const port = typeof address === "object" && address ? address.port : 0;
+    const body = await createValidationFetch({
+      allowPrivateAddresses: true,
+      maxBytes: 1024,
+      timeoutMs: 2000,
+    })(`http://127.0.0.1:${String(port)}/start`);
+
+    assert.equal(body.toString(), "final");
+
+    // The redirect's connection is closed, not left downloading.
+    for (let wait = 0; wait < 20 && !redirectClosed; wait += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+
+    assert.equal(redirectClosed, true);
+  } finally {
+    clearInterval(streaming);
+    server.closeAllConnections();
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+  }
+});
+
 test("a host name that resolves to a private address is not fetched", async () => {
   await withPki(async (pki) => {
     const port = new URL(pki.timestampUrl).port;
@@ -517,6 +571,78 @@ test("out-of-date revocation answers are refused", async () => {
     assert.match(data.problems.join(" "), /OCSP answer is out of date/);
     assert.match(data.problems.join(" "), /revocation list is out of date/);
   });
+});
+
+/** A critical revocation list extension, as the test CA adds it. */
+function criticalExtension(oid: string, value: Buffer): Buffer {
+  return der.sequence(
+    der.oid(oid),
+    encode(TAG.boolean, Buffer.from([0xff])),
+    der.octets(value),
+  );
+}
+
+test("revocation lists that may leave a certificate out are refused", async () => {
+  const lists: { expect: RegExp | null; extension: Buffer; name: string }[] = [
+    {
+      // A delta list only has what changed since its base list.
+      expect: /delta list/,
+      extension: criticalExtension("2.5.29.27", encodeSmallInteger(1)),
+      name: "delta",
+    },
+    {
+      // Only key compromise.
+      expect: /only some certificates or reasons/,
+      extension: criticalExtension(
+        "2.5.29.28",
+        der.sequence(encode(0x83, Buffer.from([0x07, 0x40]))),
+      ),
+      name: "some reasons",
+    },
+    {
+      expect: /only some certificates or reasons/,
+      extension: criticalExtension(
+        "2.5.29.28",
+        der.sequence(encode(0x82, Buffer.from([0xff]))),
+      ),
+      name: "CA certificates only",
+    },
+    {
+      expect: /critical extension 1\.2\.3\.4/,
+      extension: criticalExtension("1.2.3.4", Buffer.from([0x05, 0x00])),
+      name: "unknown critical extension",
+    },
+    {
+      // A list of end-entity certificates covers the seal certificate.
+      expect: null,
+      extension: criticalExtension(
+        "2.5.29.28",
+        der.sequence(encode(0x81, Buffer.from([0xff]))),
+      ),
+      name: "user certificates only",
+    },
+  ];
+
+  for (const list of lists) {
+    await withPki(async (pki) => {
+      pki.state.ocspDown = true;
+      pki.state.crlExtensions = [list.extension];
+
+      const data = await collectValidationData(
+        findSignatures(await sealedWith(pki, { timestamp: false })).map(
+          (signature) => signature.contents,
+        ),
+        { fetch: localFetch },
+      );
+
+      if (list.expect) {
+        assert.equal(data.crls.length, 0, list.name);
+        assert.match(data.problems.join(" "), list.expect, list.name);
+      } else {
+        assert.equal(data.crls.length, 1, list.name);
+      }
+    });
+  }
 });
 
 test("revocation answers dated in the future are refused", async () => {

@@ -168,6 +168,8 @@ export type TestPki = {
   state: {
     caFetches: number;
     crlFetches: number;
+    /** Extensions put in the revocation list, each an Extension, DER. */
+    crlExtensions: Buffer[];
     ocspDown: boolean;
     ocspRequests: number;
     /**
@@ -290,6 +292,7 @@ export async function startTestPki(): Promise<TestPki> {
   );
   const state: TestPki["state"] = {
     caFetches: 0,
+    crlExtensions: [],
     crlFetches: 0,
     ocspDown: false,
     ocspRequests: 0,
@@ -367,6 +370,9 @@ export async function startTestPki(): Promise<TestPki> {
       utcTime(now),
       utcTime(new Date(now.getTime() + 24 * 60 * 60 * 1000)),
       ...(entries.length > 0 ? [der.sequence(...entries)] : []),
+      ...(state.crlExtensions.length > 0
+        ? [encode(0xa0, der.sequence(...state.crlExtensions))]
+        : []),
     );
 
     return der.sequence(

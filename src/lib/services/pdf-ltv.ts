@@ -47,12 +47,17 @@ import {
 // outside this install.
 
 const OIDS = {
+  authorityKeyIdentifier: "2.5.29.35",
   caIssuers: "1.3.6.1.5.5.7.48.2",
   crlDistributionPoints: "2.5.29.31",
+  crlNumber: "2.5.29.20",
+  deltaCrlIndicator: "2.5.29.27",
   ecdsaSha256: "1.2.840.10045.4.3.2",
   ecdsaSha384: "1.2.840.10045.4.3.3",
   ecdsaSha512: "1.2.840.10045.4.3.4",
+  freshestCrl: "2.5.29.46",
   infoAccess: "1.3.6.1.5.5.7.1.1",
+  issuingDistributionPoint: "2.5.29.28",
   ocsp: "1.3.6.1.5.5.7.48.1",
   ocspBasic: "1.3.6.1.5.5.7.48.1.1",
   ocspNoCheck: "1.3.6.1.5.5.7.48.1.5",
@@ -474,7 +479,8 @@ function fetchOnce(
         const location = response.headers.location ?? null;
 
         if (status >= 300 && status < 400) {
-          response.resume();
+          // Not read: the next hop is fetched on its own connection.
+          response.destroy();
           resolve({ body: Buffer.alloc(0), location, status });
           return;
         }
@@ -846,6 +852,82 @@ export function readOcspResponse(
 }
 
 /** Reads a revocation list from `issuer`, and whether it lists `certificate`. */
+/** The CRL extensions this reader understands, critical or not. */
+const KNOWN_CRL_EXTENSIONS = new Set<string>([
+  OIDS.authorityKeyIdentifier,
+  OIDS.crlNumber,
+  OIDS.freshestCrl,
+  OIDS.issuingDistributionPoint,
+]);
+
+/**
+ * Refuses a list that may leave out a revoked certificate (RFC 5280, 5.2
+ * and 6.3.3): a delta list, which only has what changed since its base
+ * list; a list for some reasons only, or for certificates of others (an
+ * indirect list); a list for the other kind of certificate (CA or end
+ * entity); and any list with a critical extension this reader does not
+ * know.
+ */
+function assertCompleteList(
+  body: Buffer,
+  wrapper: Tlv | undefined,
+  certificate: Certificate,
+) {
+  if (!wrapper) {
+    return;
+  }
+
+  const list = expectTag(
+    children(body, wrapper)[0],
+    TAG.sequence,
+    "revocation list extensions",
+  );
+
+  for (const extension of children(body, list)) {
+    const parts = children(body, extension);
+    const id = readOid(body, parts[0]!);
+    const critical =
+      parts.length === 3 &&
+      parts[1]!.tag === TAG.boolean &&
+      contentBytes(body, parts[1]!)[0] !== 0;
+    const value = parts[parts.length - 1]!;
+
+    if (id === OIDS.deltaCrlIndicator) {
+      throw new LongTermValidationError(
+        "The revocation list is a delta list, which needs its base list.",
+      );
+    }
+
+    if (id === OIDS.issuingDistributionPoint) {
+      const point = readTlv(body, value.contentStart, value.end);
+
+      for (const item of children(body, point)) {
+        // [1] only user certificates, [2] only CA certificates, [3] only
+        // some reasons, [4] indirect, [5] only attribute certificates.
+        const number = item.tag & 0x1f;
+        const set = contentBytes(body, item)[0] !== 0;
+        const isCa = certificate.x509.ca;
+
+        if (
+          (number === 1 && set && isCa) ||
+          (number === 2 && set && !isCa) ||
+          number === 3 ||
+          (number === 4 && set) ||
+          (number === 5 && set)
+        ) {
+          throw new LongTermValidationError(
+            "The revocation list covers only some certificates or reasons.",
+          );
+        }
+      }
+    } else if (critical && !KNOWN_CRL_EXTENSIONS.has(id)) {
+      throw new LongTermValidationError(
+        `The revocation list has a critical extension ${id} that is not understood.`,
+      );
+    }
+  }
+}
+
 export function readCrl(
   body: Buffer,
   certificate: Certificate,
@@ -893,6 +975,11 @@ export function readCrl(
     now,
     what: "revocation list",
   });
+  assertCompleteList(
+    body,
+    rest.find((field) => field.tag === contextTag(0)),
+    certificate,
+  );
   const revoked = rest.find((field) => field.tag === TAG.sequence);
   const listed = (revoked ? children(body, revoked) : []).some((entry) =>
     contentBytes(body, children(body, entry)[0]!).equals(certificate.serial),
