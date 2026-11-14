@@ -19,6 +19,7 @@ import {
   DEFAULT_SENDER_LOCAL_PART,
   DEFAULT_SENDING_SUBDOMAIN,
   joinSendingDomain,
+  readResendEmailDomain,
   suggestSendingRootDomain,
   type SenderAddressParts,
 } from "@/lib/sending-domain";
@@ -33,6 +34,8 @@ export type SetupShellView =
 type SetupShellProps = {
   hosted: boolean;
   onVercel: boolean;
+  /** RESEND_EMAIL_DOMAIN, set by the Resend integration on Vercel. */
+  resendDomain: string | null;
   /** The host this site answers on, used to guess the sending domain. */
   siteHost: string | null;
   view: SetupShellView;
@@ -62,6 +65,7 @@ const emptyValues: SetupValues = {
 export function SetupShell({
   hosted,
   onVercel,
+  resendDomain,
   siteHost,
   view,
 }: SetupShellProps) {
@@ -80,6 +84,7 @@ export function SetupShell({
             <SetupContent
               hosted={hosted}
               onVercel={onVercel}
+              resendDomain={resendDomain}
               siteHost={siteHost}
               view={view}
             />
@@ -92,7 +97,13 @@ export function SetupShell({
   );
 }
 
-function SetupContent({ hosted, onVercel, siteHost, view }: SetupShellProps) {
+function SetupContent({
+  hosted,
+  onVercel,
+  resendDomain,
+  siteHost,
+  view,
+}: SetupShellProps) {
   if (view.view === "no_database") {
     return (
       <SetupNotice title="Connect a database">
@@ -176,7 +187,14 @@ function SetupContent({ hosted, onVercel, siteHost, view }: SetupShellProps) {
     return null;
   }
 
-  return <SetupForm hosted={hosted} siteHost={siteHost} view={view} />;
+  return (
+    <SetupForm
+      hosted={hosted}
+      resendDomain={resendDomain}
+      siteHost={siteHost}
+      view={view}
+    />
+  );
 }
 
 function SetupNotice({
@@ -222,22 +240,33 @@ type SenderErrors = Partial<Record<keyof SenderAddressParts, string>>;
 
 function SetupForm({
   hosted,
+  resendDomain,
   siteHost,
   view,
 }: {
   hosted: boolean;
+  resendDomain: string | null;
   siteHost: string | null;
   view: Extract<SetupShellView, { view: "claim" | "create" }>;
 }) {
   const [values, setValues] = useState<SetupValues>(emptyValues);
-  const [sender, setSender] = useState<SenderAddressParts>({
-    localPart: DEFAULT_SENDER_LOCAL_PART,
-    rootDomain: "",
-    subdomain: DEFAULT_SENDING_SUBDOMAIN,
-  });
-  // Until the administrator types a domain of their own, it follows what
+  // The domain the Resend integration set up comes first. Without one,
+  // until the administrator types a domain of their own, it follows what
   // setup can tell from the site's address and the emails typed above.
-  const [rootDomainEdited, setRootDomainEdited] = useState(false);
+  const [integrationSender] = useState(() =>
+    readResendEmailDomain(resendDomain),
+  );
+  const [sender, setSender] = useState<SenderAddressParts>(
+    () =>
+      integrationSender ?? {
+        localPart: DEFAULT_SENDER_LOCAL_PART,
+        rootDomain: "",
+        subdomain: DEFAULT_SENDING_SUBDOMAIN,
+      },
+  );
+  const [rootDomainEdited, setRootDomainEdited] = useState(
+    integrationSender !== null,
+  );
   const [senderErrors, setSenderErrors] = useState<SenderErrors>({});
   const [errors, setErrors] = useState<SetupErrors>({});
   const [bannerMessage, setBannerMessage] = useState<string | null>(null);
@@ -468,7 +497,14 @@ function SetupForm({
             onChange={handleSenderChange}
             parts={senderParts}
             serverError={errors.senderAddress}
-            suggested={!rootDomainEdited && suggestedRootDomain !== null}
+            source={
+              integrationSender &&
+              sender.rootDomain === integrationSender.rootDomain
+                ? "integration"
+                : !rootDomainEdited && suggestedRootDomain !== null
+                  ? "guess"
+                  : null
+            }
           />
         ) : null}
 
@@ -536,7 +572,7 @@ function SenderFields({
   onChange,
   parts,
   serverError,
-  suggested,
+  source,
 }: {
   disabled: boolean;
   errors: SenderErrors;
@@ -545,7 +581,8 @@ function SenderFields({
   ) => (event: ChangeEvent<HTMLInputElement>) => void;
   parts: SenderAddressParts;
   serverError?: string;
-  suggested: boolean;
+  /** Where the domain shown came from, if setup filled it in. */
+  source: "guess" | "integration" | null;
 }) {
   const built = buildSenderAddress(parts);
   const rootDomain = parts.rootDomain.trim().toLowerCase();
@@ -593,9 +630,11 @@ function SenderFields({
           id="setup-sender-domain-description"
         >
           {rootError ??
-            (suggested
-              ? "Filled in from this site's address and the emails above. Change it if your organization uses another domain."
-              : "The domain your organization's email uses, such as acmecorp.com.")}
+            (source === "integration"
+              ? "The domain the Resend integration was set up with on Vercel."
+              : source === "guess"
+                ? "Filled in from this site's address and the emails above. Change it if your organization uses another domain."
+                : "The domain your organization's email uses, such as acmecorp.com.")}
         </p>
       </div>
 

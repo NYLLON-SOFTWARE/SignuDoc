@@ -222,3 +222,35 @@ export function buildSenderAddress(
     sendingDomain,
   };
 }
+
+/**
+ * The Resend integration on the Vercel Marketplace asks for a domain when it
+ * is installed, sets it up in Resend and hands it to the project as
+ * RESEND_EMAIL_DOMAIN. Setup starts from that domain as it is, since its
+ * DNS records may already be in place. One that begins with "sign." is
+ * shown as that subdomain of its parent, so the form reads the same way.
+ */
+export function readResendEmailDomain(
+  value: string | null | undefined,
+): SenderAddressParts | null {
+  const domain = value ? normalizeEmailDomain(value) : null;
+
+  if (!domain || !isOwnableDomain(domain)) {
+    return null;
+  }
+
+  const prefix = `${DEFAULT_SENDING_SUBDOMAIN}.`;
+  const parent = domain.startsWith(prefix) ? domain.slice(prefix.length) : null;
+
+  return parent && isOwnableDomain(parent)
+    ? {
+        localPart: DEFAULT_SENDER_LOCAL_PART,
+        rootDomain: parent,
+        subdomain: DEFAULT_SENDING_SUBDOMAIN,
+      }
+    : {
+        localPart: DEFAULT_SENDER_LOCAL_PART,
+        rootDomain: domain,
+        subdomain: "",
+      };
+}

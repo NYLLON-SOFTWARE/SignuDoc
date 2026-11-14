@@ -84,6 +84,7 @@ export default async function SetupPage() {
       <SetupShell
         hosted={isHostedMode()}
         onVercel={process.env.VERCEL === "1"}
+        resendDomain={process.env.RESEND_EMAIL_DOMAIN?.trim() || null}
         siteHost={readSiteHost()}
         view={view}
       />

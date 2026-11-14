@@ -5,6 +5,7 @@ import {
   buildSenderAddress,
   isOwnableDomain,
   normalizeSubdomain,
+  readResendEmailDomain,
   suggestSendingRootDomain,
 } from "./sending-domain.ts";
 
@@ -117,4 +118,19 @@ test("no domain means deciding later, and bad parts name their field", () => {
     }).error?.field,
     "localPart",
   );
+});
+
+test("the domain the Resend integration set up is used as it is", () => {
+  assert.deepEqual(readResendEmailDomain("sign.kevinrose.com"), {
+    localPart: "notifications",
+    rootDomain: "kevinrose.com",
+    subdomain: "sign",
+  });
+  assert.deepEqual(readResendEmailDomain("mail.acme.com"), {
+    localPart: "notifications",
+    rootDomain: "mail.acme.com",
+    subdomain: "",
+  });
+  assert.equal(readResendEmailDomain(""), null);
+  assert.equal(readResendEmailDomain("acme.vercel.app"), null);
 });
