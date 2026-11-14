@@ -25,6 +25,9 @@ jobs:
       - run: npm ci
       - run: npm run typecheck
       - run: npm run lint
+      # Poppler's pdfsig, so the seal tests check signatures the way a PDF
+      # reader does instead of skipping that part.
+      - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends poppler-utils
       - run: npm test
       # With nothing configured, as on a first deployment whose database
       # has not been connected yet: the build must not need any of it.

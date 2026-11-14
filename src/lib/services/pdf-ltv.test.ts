@@ -1,0 +1,408 @@
+import assert from "node:assert/strict";
+import { execFile } from "node:child_process";
+import { createHash } from "node:crypto";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+import test from "node:test";
+import { promisify } from "node:util";
+
+import {
+  PDFArray,
+  PDFDict,
+  PDFDocument,
+  PDFName,
+  StandardFonts,
+} from "pdf-lib";
+
+import { children, contentBytes, readOid, readTlv } from "./der.ts";
+import { findSignatures, hasDocumentSecurityStore } from "./pdf-incremental.ts";
+import {
+  addLongTermValidation,
+  collectValidationData,
+  createValidationFetch,
+  describePadesLevel,
+  readCms,
+  resetValidationCache,
+} from "./pdf-ltv.ts";
+import {
+  createSelfSignedSealIdentity,
+  requestDocumentTimestamp,
+  saveSealedPdf,
+} from "./pdf-seal.ts";
+import { sealForTheLongTerm } from "./seal-identity.ts";
+import { startTestPki, type TestPki } from "./pki-test-support.ts";
+
+const run = promisify(execFile);
+const localFetch = createValidationFetch({ allowPrivateAddresses: true });
+
+async function makePdf(): Promise<PDFDocument> {
+  const pdf = await PDFDocument.create();
+  const page = pdf.addPage([612, 792]);
+
+  page.drawText("Signed agreement", {
+    font: await pdf.embedFont(StandardFonts.Helvetica),
+    x: 72,
+    y: 700,
+  });
+
+  return pdf;
+}
+
+async function sealedWith(pki: TestPki, { timestamp = true } = {}) {
+  return saveSealedPdf(await makePdf(), pki.seal, {
+    name: "Harbour & Finch",
+    reason: "Signed with SignuDoc",
+    timestampUrl: timestamp ? pki.timestampUrl : null,
+  });
+}
+
+async function withPki(run: (pki: TestPki) => Promise<void>) {
+  resetValidationCache();
+
+  const pki = await startTestPki();
+
+  try {
+    await run(pki);
+  } finally {
+    await pki.close();
+  }
+}
+
+/** The bytes each signature's byte range covers hash to what it signed. */
+function assertSignaturesCoverTheirRanges(bytes: Uint8Array) {
+  for (const signature of findSignatures(bytes)) {
+    const [a, b, c, d] = signature.byteRange;
+    const covered = Buffer.concat([
+      Buffer.from(bytes.subarray(a, a + b)),
+      Buffer.from(bytes.subarray(c, c + d)),
+    ]);
+    const digest = createHash("sha256").update(covered).digest();
+    const contents = signature.contents;
+    // ContentInfo > SignedData > encapContentInfo or signerInfos.
+    const signedData = children(
+      contents,
+      children(contents, readTlv(contents))[1]!,
+    )[0]!;
+    const parts = children(contents, signedData);
+    const encapsulated = parts[2]!;
+    const [type, wrapped] = children(contents, encapsulated);
+
+    if (readOid(contents, type!) === "1.2.840.113549.1.9.16.1.4") {
+      // A document timestamp: TSTInfo's messageImprint is the digest.
+      const octets = children(contents, wrapped!)[0]!;
+      const tstInfo = readTlv(contents, octets.contentStart, octets.end);
+      const imprint = children(contents, tstInfo)[2]!;
+
+      assert.deepEqual(
+        contentBytes(contents, children(contents, imprint)[1]!),
+        digest,
+      );
+    } else {
+      const signerInfo = children(contents, parts[parts.length - 1]!)[0]!;
+      const attributes = children(contents, children(contents, signerInfo)[3]!);
+      const messageDigest = attributes.find(
+        (attribute) =>
+          readOid(contents, children(contents, attribute)[0]!) ===
+          "1.2.840.113549.1.9.4",
+      )!;
+      const value = children(
+        contents,
+        children(contents, messageDigest)[1]!,
+      )[0]!;
+
+      assert.deepEqual(contentBytes(contents, value), digest);
+    }
+
+    // Nothing after a signature's range but later updates' bytes.
+    assert.ok(c + d <= bytes.length);
+  }
+}
+
+async function dssCounts(bytes: Uint8Array) {
+  const document = await PDFDocument.load(bytes, { updateMetadata: false });
+  const dss = document.catalog.lookup(PDFName.of("DSS"), PDFDict);
+  const count = (key: string) =>
+    dss.lookupMaybe(PDFName.of(key), PDFArray)?.size() ?? 0;
+
+  return { certs: count("Certs"), crls: count("CRLs"), ocsps: count("OCSPs") };
+}
+
+test("a CA-issued seal gets its chain, OCSP answers and an archive timestamp (B-LTA)", async (t) => {
+  await withPki(async (pki) => {
+    const sealed = await sealedWith(pki);
+
+    assert.equal(await describePadesLevel(sealed), "B-T");
+
+    const result = await addLongTermValidation(sealed, {
+      fetch: localFetch,
+      timestamp: (digest) => requestDocumentTimestamp(digest, pki.timestampUrl),
+    });
+
+    assert.deepEqual(result.problems, []);
+    assert.deepEqual(result.revoked, []);
+    assert.equal(await describePadesLevel(result.bytes), "B-LTA");
+    // The seal's issuer is not in the seal, but the time-stamping
+    // service sends it with its tokens.
+    assert.equal(pki.state.caFetches, 0);
+    // The seal and the time-stamping certificates each got an answer.
+    assert.equal(pki.state.ocspRequests, 2);
+
+    const counts = await dssCounts(result.bytes);
+
+    // Seal, CA, time-stamping authority.
+    assert.equal(counts.certs, 3);
+    assert.equal(counts.ocsps, 2);
+    assert.equal(counts.crls, 0);
+
+    // The first bytes are the sealed file, unchanged.
+    assert.deepEqual(
+      Buffer.from(result.bytes.subarray(0, sealed.length)),
+      Buffer.from(sealed),
+    );
+    assert.equal(findSignatures(result.bytes).length, 2);
+    assertSignaturesCoverTheirRanges(result.bytes);
+
+    // pdf-lib still reads the file, as later steps do.
+    await PDFDocument.load(result.bytes, { updateMetadata: false });
+
+    try {
+      await run("pdfsig", ["-v"]);
+    } catch {
+      t.diagnostic("pdfsig is not installed; skipped the poppler check");
+      return;
+    }
+
+    const directory = await mkdtemp(path.join(os.tmpdir(), "ltv-"));
+
+    try {
+      const file = path.join(directory, "lta.pdf");
+
+      await writeFile(file, result.bytes);
+
+      const { stdout } = await run("pdfsig", ["-nocert", file]);
+
+      // Poppler checks the seal, and lists the archive timestamp, which it
+      // cannot check itself.
+      assert.equal(
+        stdout.match(/Signature Validation: Signature is Valid\./g)?.length,
+        1,
+        stdout,
+      );
+      assert.match(stdout, /SignuDoc archive timestamp/);
+
+      // OpenSSL checks the archive timestamp against the bytes it covers
+      // and the test CA.
+      const archive = findSignatures(result.bytes).at(-1)!;
+      const [a, b, c, d] = archive.byteRange;
+      const covered = path.join(directory, "covered.bin");
+      const token = path.join(directory, "token.der");
+      const caFile = path.join(directory, "ca.pem");
+
+      await writeFile(
+        covered,
+        Buffer.concat([
+          Buffer.from(result.bytes.subarray(a, a + b)),
+          Buffer.from(result.bytes.subarray(c, c + d)),
+        ]),
+      );
+      await writeFile(token, archive.contents);
+      await writeFile(
+        caFile,
+        `-----BEGIN CERTIFICATE-----\n${pki.caCertificate.toString("base64")}\n-----END CERTIFICATE-----\n`,
+      );
+
+      const verified = await run("openssl", [
+        "ts",
+        "-verify",
+        "-data",
+        covered,
+        "-in",
+        token,
+        "-token_in",
+        "-CAfile",
+        caFile,
+      ]).catch((error: { stderr?: string; stdout?: string }) => ({
+        stdout: `${error.stdout ?? ""}${error.stderr ?? ""}`,
+      }));
+
+      assert.match(verified.stdout, /Verification: OK/);
+    } finally {
+      await rm(directory, { force: true, recursive: true });
+    }
+  });
+});
+
+test("without OCSP, the revocation list is used", async () => {
+  await withPki(async (pki) => {
+    pki.state.ocspDown = true;
+
+    const result = await addLongTermValidation(
+      await sealedWith(pki, { timestamp: false }),
+      {
+        fetch: localFetch,
+      },
+    );
+    const counts = await dssCounts(result.bytes);
+
+    assert.deepEqual(result.revoked, []);
+    assert.equal(counts.ocsps, 0);
+    assert.equal(counts.crls, 1);
+    assert.equal(pki.state.crlFetches, 1);
+    // With no timestamp token to bring it, the seal's issuer came from the
+    // address the seal certificate names.
+    assert.equal(pki.state.caFetches, 1);
+    assert.match(result.problems.join(" "), /OCSP at .* failed/);
+    // A seal without a timestamp is B-B, whatever validation data it has.
+    assert.equal(await describePadesLevel(result.bytes), "B-B");
+  });
+});
+
+test("a revoked seal certificate is reported", async () => {
+  await withPki(async (pki) => {
+    pki.state.revoked.add("1001");
+
+    const result = await addLongTermValidation(
+      await sealedWith(pki, { timestamp: false }),
+      {
+        fetch: localFetch,
+      },
+    );
+
+    assert.equal(result.revoked.length, 1);
+    assert.match(result.revoked[0]!, /Harbour & Finch document seal/);
+  });
+});
+
+test("adding the same validation data twice changes nothing", async () => {
+  await withPki(async (pki) => {
+    const once = await addLongTermValidation(await sealedWith(pki), {
+      fetch: localFetch,
+    });
+    const twice = await addLongTermValidation(once.bytes, {
+      fetch: localFetch,
+    });
+
+    assert.equal(twice.bytes.length, once.bytes.length);
+  });
+});
+
+test("a time-stamping service that fails leaves the validation data in place", async () => {
+  await withPki(async (pki) => {
+    const result = await addLongTermValidation(await sealedWith(pki), {
+      fetch: localFetch,
+      timestamp: async () => {
+        throw new Error("down");
+      },
+    });
+
+    assert.equal(await describePadesLevel(result.bytes), "B-LT");
+    assert.match(result.problems.join(" "), /archive timestamp failed: down/);
+  });
+});
+
+test("the timestamp tokens and certificates inside a seal are found", async () => {
+  await withPki(async (pki) => {
+    const [signature] = findSignatures(await sealedWith(pki));
+    const contents = readCms(signature!.contents);
+
+    assert.equal(contents.certificates.length, 1);
+    assert.equal(contents.timestampTokens.length, 1);
+  });
+});
+
+test("addresses on this machine or a private network are not fetched", async () => {
+  const guarded = createValidationFetch();
+
+  for (const url of [
+    "http://127.0.0.1/ca.cer",
+    "http://localhost/ca.cer",
+    "http://10.1.2.3/ocsp",
+    "http://192.168.0.4/ocsp",
+    "http://169.254.169.254/latest",
+    "http://[::1]/ocsp",
+    "http://[::ffff:127.0.0.1]/ocsp",
+    "file:///etc/passwd",
+  ]) {
+    await assert.rejects(guarded(url), /Refused/, url);
+  }
+});
+
+test("the install's seal is B-LTA with a CA certificate and a time-stamping service", async () => {
+  await withPki(async (pki) => {
+    const sealed = await sealForTheLongTerm(
+      await makePdf(),
+      pki.seal,
+      {
+        name: "Harbour & Finch",
+        reason: "Signed",
+        timestampUrl: pki.timestampUrl,
+      },
+      { fetch: localFetch },
+    );
+
+    assert.equal(await describePadesLevel(sealed), "B-LTA");
+  });
+});
+
+test("with the time-stamping service down, a CA seal still gets its validation data", async () => {
+  await withPki(async (pki) => {
+    const original = console.error;
+
+    console.error = () => {};
+
+    try {
+      const sealed = await sealForTheLongTerm(
+        await makePdf(),
+        pki.seal,
+        {
+          name: "Harbour & Finch",
+          reason: "Signed",
+          timestampUrl: pki.timestampUrl.replace("/tsa", "/missing"),
+        },
+        { fetch: localFetch },
+      );
+
+      assert.equal(await describePadesLevel(sealed), "B-B");
+      assert.equal(await hasDocumentSecurityStore(sealed), true);
+    } finally {
+      console.error = original;
+    }
+  });
+});
+
+test("a self-made seal without a timestamp is left as it is", async () => {
+  const { generateKeyPairSync } = await import("node:crypto");
+  const { privateKey, publicKey } = generateKeyPairSync("rsa", {
+    modulusLength: 2048,
+    privateKeyEncoding: { format: "pem", type: "pkcs8" },
+    publicKeyEncoding: { format: "pem", type: "spki" },
+  });
+  const identity = createSelfSignedSealIdentity({
+    commonName: "Test seal",
+    privateKeyPem: privateKey,
+    publicKeyPem: publicKey,
+  });
+  const sealed = await sealForTheLongTerm(await makePdf(), identity, {
+    name: "SignuDoc",
+    reason: "Signed",
+  });
+
+  assert.equal(await describePadesLevel(sealed), "B-B");
+  assert.equal(await hasDocumentSecurityStore(sealed), false);
+  assert.equal(findSignatures(sealed).length, 1);
+});
+
+test("a certificate authority that does not answer is given up on in time", async () => {
+  await withPki(async (pki) => {
+    const sealed = await sealedWith(pki, { timestamp: false });
+    const started = Date.now();
+    const data = await collectValidationData(
+      findSignatures(sealed).map((signature) => signature.contents),
+      { budgetMs: 300, fetch: () => new Promise<Buffer>(() => {}) },
+    );
+
+    assert.ok(Date.now() - started < 3_000);
+    assert.match(data.problems.join(" "), /Ran out of time/);
+  });
+});

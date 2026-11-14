@@ -118,21 +118,21 @@ DocuSign does more, and charges for it per user. SignuDoc does the everyday sign
 
 ### The signing loop
 
-|                                              | SignuDoc                                                                                         | DocuSign eSignature                                                          |
-| -------------------------------------------- | ------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------- |
-| **Signing without an account**               | ✅                                                                                               | ✅                                                                           |
-| **Signing order**                            | ✅ in order, up to 10 signers                                                                    | ✅ in order, at the same time, or mixed                                      |
-| **People who only get a copy**               | ✅                                                                                               | ✅ and more roles: approvers, editors, in-person signers                     |
-| **Field types**                              | ✅ signature, initials, date, text, number, checkbox, dropdown, radio, each required or optional | ✅ more types; dropdown, radio and signer attachments need Business Pro      |
-| **Templates**                                | ✅                                                                                               | ✅ from Personal, shared from Standard                                       |
-| **Deadlines and automatic reminders**        | ✅                                                                                               | ✅                                                                           |
-| **Access code and emailed one-time code**    | ✅                                                                                               | ✅ plus SMS, phone, knowledge-based questions and ID checks, as paid add-ons |
-| **Consent to electronic records**            | ✅ versioned, recorded in the audit trail                                                        | ✅                                                                           |
-| **Sealed PDF and certificate of completion** | ✅ PAdES seal, self-signed by default or your own trusted certificate                            | ✅ seal trusted by PDF readers                                               |
-| **Audit trail**                              | ✅ hash-chained                                                                                  | ✅                                                                           |
-| **Checking a signed copy**                   | ✅ the seal in a PDF reader, and a public Verify page on your own site                           | ✅ the seal in a PDF reader                                                  |
-| **Retention rules and signer data requests** | ✅ built in                                                                                      | ✅                                                                           |
-| **Phones**                                   | ✅ in the browser                                                                                | ✅ native iPhone and Android apps                                            |
+|                                              | SignuDoc                                                                                                                    | DocuSign eSignature                                                          |
+| -------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------- |
+| **Signing without an account**               | ✅                                                                                                                          | ✅                                                                           |
+| **Signing order**                            | ✅ in order, up to 10 signers                                                                                               | ✅ in order, at the same time, or mixed                                      |
+| **People who only get a copy**               | ✅                                                                                                                          | ✅ and more roles: approvers, editors, in-person signers                     |
+| **Field types**                              | ✅ signature, initials, date, text, number, checkbox, dropdown, radio, each required or optional                            | ✅ more types; dropdown, radio and signer attachments need Business Pro      |
+| **Templates**                                | ✅                                                                                                                          | ✅ from Personal, shared from Standard                                       |
+| **Deadlines and automatic reminders**        | ✅                                                                                                                          | ✅                                                                           |
+| **Access code and emailed one-time code**    | ✅                                                                                                                          | ✅ plus SMS, phone, knowledge-based questions and ID checks, as paid add-ons |
+| **Consent to electronic records**            | ✅ versioned, recorded in the audit trail                                                                                   | ✅                                                                           |
+| **Sealed PDF and certificate of completion** | ✅ PAdES seal, self-signed by default or your own trusted certificate, long-term validation (B-LTA) with a timestamp server | ✅ seal trusted by PDF readers                                               |
+| **Audit trail**                              | ✅ hash-chained                                                                                                             | ✅                                                                           |
+| **Checking a signed copy**                   | ✅ the seal in a PDF reader, and a public Verify page on your own site                                                      | ✅ the seal in a PDF reader                                                  |
+| **Retention rules and signer data requests** | ✅ built in                                                                                                                 | ✅                                                                           |
+| **Phones**                                   | ✅ in the browser                                                                                                           | ✅ native iPhone and Android apps                                            |
 
 ### Where DocuSign does more
 

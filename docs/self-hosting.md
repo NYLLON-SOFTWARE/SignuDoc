@@ -83,7 +83,7 @@ A deployment made with the button needs no environment variables. These are ther
 | `HOSTED_MODE`                          | `1` runs SignuDoc as a public service under its own name. See [Hosted mode](#hosted-mode).                                                                  |
 | `RESEND_REGION`                        | Where Resend sends from when the app adds your domain, for example `eu-west-1`. See [Running in the EU](#running-in-the-eu).                                |
 | `SEAL_P12_BASE64`, `SEAL_P12_PASSWORD` | Seal finished PDFs with a certificate from a certificate authority instead of the install's own. See [Signed PDFs and the seal](#signed-pdfs-and-the-seal). |
-| `SEAL_TIMESTAMP_URL`                   | An RFC 3161 timestamp server that adds a trusted time to each seal.                                                                                         |
+| `SEAL_TIMESTAMP_URL`                   | An RFC 3161 timestamp server that adds a trusted time to each seal, and long-term validation. See [Long-term validation](#long-term-validation).            |
 
 ## Set the site up
 
@@ -116,6 +116,28 @@ Validating the install is up to your organization. The [Part 11 validation pack]
 Every finished PDF and audit certificate is sealed with a PAdES signature, so any change after signing shows in Adobe Acrobat and other PDF readers, and its SHA-256 is recorded. Anyone can check a copy at `/verify`. The audit trail in the database is a hash chain, so an edited or deleted row shows too.
 
 By default each install makes its own seal key and self-signed certificate the first time it seals, and keeps the key encrypted in the database with a key derived from `BETTER_AUTH_SECRET` (or the database password, when that is unset). Keep that secret stable: a new one makes a new seal key, and old PDFs still verify but under the old certificate. Readers show a self-signed seal as "validity unknown" until the certificate is trusted. For a seal readers trust on sight, buy a document-signing certificate and set `SEAL_P12_BASE64` and `SEAL_P12_PASSWORD`. `SEAL_TIMESTAMP_URL` adds a trusted time from a timestamp server.
+
+### Long-term validation
+
+A seal is easy to check while its certificates are valid and their certificate authority still answers. Years later, neither may be true. So when `SEAL_TIMESTAMP_URL` is set, every seal is made to PAdES B-LTA, the level meant for records kept for years:
+
+1. The seal gets a timestamp from the timestamp server (B-T).
+2. The certificates of the seal and of the timestamp server, and an answer from each certificate authority that none of them is revoked (an OCSP response, or the revocation list when there is no OCSP), are added to the PDF's document security store (B-LT).
+3. An archive timestamp is added over all of that (B-LTA), so a reader can show the evidence was there at that time, after the certificates have expired.
+
+Each step only adds to the file, so the seal from step 1 stays intact. With a certificate from a certificate authority but no timestamp server, step 2 still runs, which lets readers check the certificate later, but the seal stays at B-B: a PAdES level above that needs a trusted time. A self-signed seal without a timestamp server is left as it is, since there is no one to ask about it.
+
+The lookups go to the timestamp server and the certificate authorities, outside Vercel. All of a document's lookups together stop after 15 seconds, and if one fails the document keeps the seal it has and the function log says what was missing, so signing never waits on them for long. An archive timestamp keeps the evidence checkable until the timestamp server's own certificate expires, usually years later. Adding a new archive timestamp before then is not automatic yet.
+
+### An advanced electronic seal (eIDAS)
+
+Under eIDAS, a seal is the organization's counterpart of a signature. A seal that meets the four tests of Article 36 (linked only to your organization, identifying it, made with a key under its control, and showing any later change) is an **advanced electronic seal**. To get one:
+
+- Buy a seal certificate that names your organization from a certificate authority, such as an eIDAS seal certificate or an organization-validated document-signing certificate. Choose one on the [EU trusted lists](https://esignature.ec.europa.eu/efda/tl-browser) or Adobe's Approved Trust List, so readers show your organization's name as verified.
+- Get it as a PKCS#12 file with an RSA key (SignuDoc does not read EC keys from a file yet), and set it as `SEAL_P12_BASE64` (the file in base64) and `SEAL_P12_PASSWORD`. Keep the file somewhere safe outside Vercel too: the key in it is what makes the seal yours.
+- Set `SEAL_TIMESTAMP_URL`, so the seal gets long-term validation as above. A timestamp server run by a qualified trust service provider gives a qualified electronic time stamp, which a court presumes accurate (Article 41).
+
+What this gives you: each finished PDF and certificate carries your organization's advanced seal, showing it came from you unchanged. What it does not: the signers' own signatures stay simple electronic signatures, and the seal is not a qualified seal, which needs a qualified certificate held on a qualified device, usually a trust service provider's remote signing service rather than a file. This is not legal advice: whether a seal is enough for a document is for your own counsel.
 
 ## Running in the EU
 
