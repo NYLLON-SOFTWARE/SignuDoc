@@ -91,6 +91,8 @@ import {
 } from "./services/storage.ts";
 import {
   assertThumbnailImage,
+  buildThumbnailEtag,
+  matchesEtag,
   THUMBNAIL_CONTENT_TYPE,
 } from "./services/thumbnails.ts";
 import {
@@ -1590,6 +1592,12 @@ export async function getDraftEnvelopeDocumentForUser(
 /**
  * Keeps the picture of the first page that the sender's browser drew. The
  * bytes are checked before they are stored: see services/thumbnails.ts.
+ *
+ * An envelope keeps the first picture it is given. Its document never
+ * changes, so there is nothing a later picture could show that the first
+ * does not, and a browser is told its copy is still good by the envelope
+ * alone (buildThumbnailEtag), which only holds while the picture stays the
+ * same.
  */
 export async function saveEnvelopeThumbnailForUser(
   userId: string,
@@ -1620,6 +1628,7 @@ export async function saveEnvelopeThumbnailForUser(
   await storageService.putObject({
     body,
     contentType: THUMBNAIL_CONTENT_TYPE,
+    keepExisting: true,
     key,
   });
 
@@ -1642,32 +1651,52 @@ export async function saveEnvelopeThumbnailForUser(
   }
 }
 
-/** Streams the stored first-page picture, or says there is none (404). */
+export type EnvelopeThumbnail =
+  | { etag: string; isNotModified: true }
+  | { etag: string; isNotModified: false; picture: StorageObjectStream };
+
+/**
+ * Streams the stored first-page picture, or says there is none (404).
+ *
+ * A browser that already holds the picture sends the name it was given
+ * (`ifNoneMatch`). The account is checked first, as always, and then the
+ * answer is "your copy is still good" without a read from file storage.
+ */
 export async function getEnvelopeThumbnailForUser(
   userId: string,
   envelopeId: string,
   {
     database = getDb(),
+    ifNoneMatch,
     storageService = createStorageService(),
   }: {
     database?: DbExecutor;
+    ifNoneMatch?: string | null;
     storageService?: StorageService;
   } = {},
-): Promise<StorageObjectStream> {
+): Promise<EnvelopeThumbnail> {
   const envelope = await getEnvelopeByIdForUser(userId, envelopeId, database);
 
   if (!envelope) {
     throw new EnvelopeDocumentAccessError("Envelope not found.", 404);
   }
 
+  const etag = buildThumbnailEtag(envelope.id);
+
+  if (matchesEtag(ifNoneMatch, etag)) {
+    return { etag, isNotModified: true };
+  }
+
   try {
-    return await storageService.getObjectStream(
+    const picture = await storageService.getObjectStream(
       buildEnvelopeThumbnailKey({
         envelopeId: envelope.id,
         sourcePdfKey: envelope.sourcePdfKey,
         userId,
       }),
     );
+
+    return { etag, isNotModified: false, picture };
   } catch (error) {
     if (error instanceof StorageObjectNotFoundError) {
       throw new EnvelopeDocumentAccessError(

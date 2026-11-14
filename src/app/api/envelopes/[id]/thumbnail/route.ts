@@ -28,6 +28,15 @@ type EnvelopeThumbnailRouteContext = {
 
 const privateNoStore = { "cache-control": "private, no-store" };
 
+// The picture itself. The browser may keep its copy, but must ask here
+// before showing it again, so every showing still takes a signed-in request
+// from the account that owns the envelope. When the copy is still good the
+// answer is a 304 with no picture in it, and nothing is read from file
+// storage. A dashboard of twenty documents would otherwise take twenty reads
+// each time it opens, out of the 10,000 a month that Vercel Blob's free
+// plan allows before it stops serving files.
+const privateRevalidate = { "cache-control": "private, no-cache" };
+
 // The picture of a document's first page that the dashboard shows. Only the
 // account that owns the envelope can read or write it.
 export async function GET(
@@ -46,25 +55,33 @@ export async function GET(
   try {
     const thumbnail = await getEnvelopeThumbnailForUser(session.user.id, id, {
       database: getDb(),
+      ifNoneMatch: request.headers.get("if-none-match"),
     });
+
+    if (thumbnail.isNotModified) {
+      return new Response(null, {
+        headers: { ...privateRevalidate, etag: thumbnail.etag },
+        status: 304,
+      });
+    }
+
+    const { picture } = thumbnail;
     const headers = new Headers({
-      // As private as the document it was drawn from, and served the same
-      // way: the browser keeps no copy, so showing it always takes a
-      // signed-in request from the account that owns the envelope.
-      ...privateNoStore,
+      ...privateRevalidate,
       "content-disposition": "inline",
       // Stored as a JPEG whatever the upload claimed to be, and served as
       // nothing else.
       "content-security-policy": "default-src 'none'; sandbox",
       "content-type": THUMBNAIL_CONTENT_TYPE,
+      etag: thumbnail.etag,
       "x-content-type-options": "nosniff",
     });
 
-    if (typeof thumbnail.contentLength === "number") {
-      headers.set("content-length", String(thumbnail.contentLength));
+    if (typeof picture.contentLength === "number") {
+      headers.set("content-length", String(picture.contentLength));
     }
 
-    return new Response(thumbnail.stream, { headers, status: 200 });
+    return new Response(picture.stream, { headers, status: 200 });
   } catch (error) {
     if (error instanceof EnvelopeDocumentAccessError) {
       return NextResponse.json(

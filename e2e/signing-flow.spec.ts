@@ -619,8 +619,8 @@ test("a new install is set up, a sender sends a PDF and a recipient signs it", a
       .toBeGreaterThan(0);
 
     // The picture is stored beside the PDF, as a JPEG, and only the account
-    // that sent the document can read it. The browser is told to keep no
-    // copy, as it is for the document itself.
+    // that sent the document can read it. The browser may keep its copy,
+    // but has to ask before showing it again.
     await expect
       .poll(async () => (await page.request.get(thumbnailPath)).status())
       .toBe(200);
@@ -628,13 +628,32 @@ test("a new install is set up, a sender sends a PDF and a recipient signs it", a
     const thumbnailHeaders = (await page.request.get(thumbnailPath)).headers();
 
     expect(thumbnailHeaders["content-type"]).toBe("image/jpeg");
-    expect(thumbnailHeaders["cache-control"]).toBe("private, no-store");
+    expect(thumbnailHeaders["cache-control"]).toBe("private, no-cache");
+    expect(thumbnailHeaders["etag"]).toBeTruthy();
 
+    // Asking again with the picture's name is answered "still good", with
+    // no picture in the answer.
+    const revalidation = await page.request.get(thumbnailPath, {
+      headers: { "if-none-match": thumbnailHeaders["etag"] },
+    });
+
+    expect(revalidation.status()).toBe(304);
+    expect((await revalidation.body()).byteLength).toBe(0);
+    expect(revalidation.headers()["cache-control"]).toBe("private, no-cache");
+
+    // Signed out, the same question gets no answer at all.
     const anonymousContext = await browser.newContext();
 
     expect((await anonymousContext.request.get(thumbnailPath)).status()).toBe(
       401,
     );
+    expect(
+      (
+        await anonymousContext.request.get(thumbnailPath, {
+          headers: { "if-none-match": thumbnailHeaders["etag"] },
+        })
+      ).status(),
+    ).toBe(401);
     await anonymousContext.close();
   });
 

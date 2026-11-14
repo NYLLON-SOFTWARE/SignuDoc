@@ -1,6 +1,14 @@
 import { randomUUID } from "node:crypto";
 import { createReadStream } from "node:fs";
-import { mkdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
+import {
+  link,
+  mkdir,
+  readFile,
+  rename,
+  rm,
+  stat,
+  writeFile,
+} from "node:fs/promises";
 import path from "node:path";
 import { Readable } from "node:stream";
 
@@ -51,6 +59,24 @@ async function writeFileAtomically(
     await rm(temporaryPath, { force: true });
 
     throw error;
+  }
+}
+
+// Writes the file only if there is none. A hard link cannot replace a file
+// that is there, and the file it makes is whole from its first moment, so of
+// two writers that arrive together exactly one is kept.
+async function writeFileIfAbsent(filePath: string, data: Uint8Array | string) {
+  const temporaryPath = `${filePath}.${randomUUID()}.tmp`;
+
+  try {
+    await writeFile(temporaryPath, data);
+    await link(temporaryPath, filePath);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "EEXIST") {
+      throw error;
+    }
+  } finally {
+    await rm(temporaryPath, { force: true });
   }
 }
 
@@ -186,16 +212,20 @@ export function createLocalStorageService({
     async putObject(input) {
       const { normalizedKey, objectPath } = resolveObjectPath(input.key);
 
+      const write = input.keepExisting
+        ? writeFileIfAbsent
+        : writeFileAtomically;
+
       await mkdir(path.dirname(objectPath), { recursive: true });
       // Metadata first: once the object itself is visible, its content type
       // is already there to be read.
-      await writeFileAtomically(
+      await write(
         `${objectPath}${METADATA_SUFFIX}`,
         JSON.stringify({
           contentType: input.contentType,
         } satisfies LocalObjectMetadata),
       );
-      await writeFileAtomically(objectPath, input.body);
+      await write(objectPath, input.body);
 
       return {
         bucketName: LOCAL_BUCKET_NAME,
