@@ -863,11 +863,35 @@ const KNOWN_CRL_EXTENSIONS = new Set<string>([
 /**
  * Refuses a list that may leave out a revoked certificate (RFC 5280, 5.2
  * and 6.3.3): a delta list, which only has what changed since its base
- * list; a list for some reasons only, or for certificates of others (an
+ * list; a list for one distribution point that is not one the certificate
+ * names; a list for some reasons only, or for certificates of others (an
  * indirect list); a list for the other kind of certificate (CA or end
  * entity); and any list with a critical extension this reader does not
  * know.
  */
+/**
+ * A list for one distribution point covers only the certificates that name
+ * it. Its full name must hold an address from the certificate's own CRL
+ * distribution points; a name relative to the issuer is not matched.
+ */
+function assertNamedPoint(body: Buffer, point: Tlv, certificate: Certificate) {
+  const name = children(body, point)[0];
+  const addresses: string[] = [];
+
+  // DistributionPointName: [0] fullName, or [1] nameRelativeToCRLIssuer.
+  if (name && (name.tag & 0x1f) === 0) {
+    for (const general of children(body, name)) {
+      uriNames(body, general, addresses);
+    }
+  }
+
+  if (!addresses.some((address) => certificate.crlUrls.includes(address))) {
+    throw new LongTermValidationError(
+      "The revocation list is for a distribution point the certificate does not name.",
+    );
+  }
+}
+
 function assertCompleteList(
   body: Buffer,
   wrapper: Tlv | undefined,
@@ -905,6 +929,12 @@ function assertCompleteList(
         // [1] only user certificates, [2] only CA certificates, [3] only
         // some reasons, [4] indirect, [5] only attribute certificates.
         const number = item.tag & 0x1f;
+
+        if (number === 0) {
+          assertNamedPoint(body, item, certificate);
+          continue;
+        }
+
         const set = contentBytes(body, item)[0] !== 0;
         const isCa = certificate.x509.ca;
 
@@ -1180,6 +1210,12 @@ export async function collectValidationData(
     if (answer.status === "revoked") {
       result.revoked.push(name);
     }
+  }
+
+  if (queue.some((certificate) => !done.has(certificate.fingerprint))) {
+    result.problems.push(
+      `Stopped after ${String(MAX_CHAIN_CERTIFICATES)} certificates; the rest were not checked.`,
+    );
   }
 
   return result;

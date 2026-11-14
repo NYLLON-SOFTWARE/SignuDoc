@@ -583,7 +583,19 @@ function criticalExtension(oid: string, value: Buffer): Buffer {
 }
 
 test("revocation lists that may leave a certificate out are refused", async () => {
-  const lists: { expect: RegExp | null; extension: Buffer; name: string }[] = [
+  /** An issuing distribution point for one address, [0] fullName. */
+  const forPoint = (url: string) =>
+    criticalExtension(
+      "2.5.29.28",
+      der.sequence(
+        encode(0xa0, encode(0xa0, encode(0x86, Buffer.from(url, "latin1")))),
+      ),
+    );
+  const lists: {
+    expect: RegExp | null;
+    extension: Buffer | ((crlUrl: string) => Buffer);
+    name: string;
+  }[] = [
     {
       // A delta list only has what changed since its base list.
       expect: /delta list/,
@@ -621,12 +633,28 @@ test("revocation lists that may leave a certificate out are refused", async () =
       ),
       name: "user certificates only",
     },
+    {
+      // A list for another partition of the CA's certificates.
+      expect: /distribution point the certificate does not name/,
+      extension: () => forPoint("http://127.0.0.1:1/other-partition.crl"),
+      name: "another distribution point",
+    },
+    {
+      // The list the certificate points to.
+      expect: null,
+      extension: (crlUrl) => forPoint(crlUrl),
+      name: "the certificate's distribution point",
+    },
   ];
 
   for (const list of lists) {
     await withPki(async (pki) => {
       pki.state.ocspDown = true;
-      pki.state.crlExtensions = [list.extension];
+      pki.state.crlExtensions = [
+        typeof list.extension === "function"
+          ? list.extension(new URL("/ca.crl", pki.timestampUrl).toString())
+          : list.extension,
+      ];
 
       const data = await collectValidationData(
         findSignatures(await sealedWith(pki, { timestamp: false })).map(
