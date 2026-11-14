@@ -99,6 +99,10 @@ test("every picture and page the README and the guides link to is in the reposit
     "README.md",
     "docs/self-hosting.md",
     "docs/development.md",
+    "docs/part11/README.md",
+    "docs/part11/traceability-matrix.md",
+    "docs/part11/known-gaps.md",
+    "docs/part11/change-control.md",
   ]) {
     const text = readFileSync(path.join(repoRoot, document), "utf8");
     const targets = [...text.matchAll(localTarget)].map(
