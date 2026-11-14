@@ -8,7 +8,7 @@ import { after, before, test } from "node:test";
 import { promisify } from "node:util";
 
 import { PDFDocument, StandardFonts } from "pdf-lib";
-import type pg from "pg";
+import pg from "pg";
 
 import { openTestDatabase } from "./db/test-database.ts";
 import { ELECTRONIC_RECORDS_DISCLOSURE_VERSION } from "./electronic-records-disclosure.ts";
@@ -26,9 +26,11 @@ import {
   startProviderSigning,
 } from "./provider-signing.ts";
 import { runRetentionSweep } from "./retention.ts";
+import { invalidateSettingsCache } from "./settings.ts";
 import { verifyAuditChain } from "./services/audit.ts";
 import { findSignatures } from "./services/pdf-incremental.ts";
 import { resetValidationCache } from "./services/pdf-ltv.ts";
+import { resetSealIdentityCache } from "./services/seal-identity.ts";
 import { startTestPki, type TestPki } from "./services/pki-test-support.ts";
 import { checkSignerSignature } from "./services/signer-cms.ts";
 import {
@@ -838,6 +840,50 @@ test("two submissions by the last signer at once finish the envelope once, and k
     getRecipientCertificateKey(finished.evidence_key),
   ]) {
     assert.equal(await stored(key), true, key);
+  }
+});
+
+test("the last signature needs no second connection while it holds the envelope", async () => {
+  // A pool of one connection: anything that needed another one while the
+  // envelope is locked would wait for it, and give up after 3 seconds.
+  const single = new pg.Pool({
+    connectionString: (database as unknown as { options: pg.PoolConfig })
+      .options.connectionString,
+    connectionTimeoutMillis: 3000,
+    max: 1,
+  });
+  const draft = await createDraft();
+
+  globalThis.__signudocPgPool = single;
+
+  try {
+    await send(draft, "simple");
+    await submitSigningForToken(
+      await linkFor(draft.riley.id),
+      submissionFor(draft.riley),
+      { database: single, storageService },
+    );
+
+    const caseyToken = await linkFor(draft.casey.id);
+
+    // Nothing the seal reads from the database is cached.
+    invalidateSettingsCache();
+    resetSealIdentityCache();
+
+    await submitSigningForToken(caseyToken, submissionFor(draft.casey), {
+      database: single,
+      storageService,
+    });
+
+    const finished = await database.query<{ status: string }>(
+      `select status from envelopes where id = $1`,
+      [draft.envelopeId],
+    );
+
+    assert.equal(finished.rows[0]!.status, "completed");
+  } finally {
+    globalThis.__signudocPgPool = database;
+    await single.end();
   }
 });
 

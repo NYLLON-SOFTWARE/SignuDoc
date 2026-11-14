@@ -11,6 +11,7 @@ import {
 import { PDFDocument } from "pdf-lib";
 
 import { getDb, withTransaction, type DbPool } from "../db/connection.ts";
+import type { Branding } from "../branding.ts";
 import { getBranding } from "../settings.ts";
 import {
   isProduction,
@@ -249,13 +250,19 @@ export async function saveInstallSealedPdf(
   pdfDocument: PDFDocument,
   purpose: SealPurpose,
   {
+    branding: givenBranding,
     database,
     env = process.env,
     identity,
-  }: { database?: DbPool; env?: EnvSource; identity?: SealIdentity } = {},
+  }: {
+    branding?: Branding;
+    database?: DbPool;
+    env?: EnvSource;
+    identity?: SealIdentity;
+  } = {},
 ): Promise<Uint8Array> {
   const sealIdentity = identity ?? (await getSealIdentity({ database, env }));
-  const branding = await getBranding(env);
+  const branding = givenBranding ?? (await getBranding(env));
   const timestampUrl = readEnv(env, "SEAL_TIMESTAMP_URL") ?? null;
   const options: SealOptions = {
     contactInfo: branding.supportAddress ?? "",

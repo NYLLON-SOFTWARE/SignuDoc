@@ -65,6 +65,7 @@ import { withUserEmailLegalFooter } from "./services/email-legal-footer.ts";
 import { hashOpaqueToken } from "./services/opaque-tokens.ts";
 import {
   finalizeEnvelope,
+  loadInstallSealer,
   storeEnvelopeCertificatePdf,
   storeRecipientEnvelopeCertificatePdf,
 } from "./services/pdf-finalize.ts";
@@ -2575,6 +2576,9 @@ export async function submitSigningForToken(
       }),
     ];
 
+    // The seal's key and the install's name, read before the transaction:
+    // sealing inside it then needs no second connection from the pool.
+    const seal = await loadInstallSealer();
     // Set once this submission may have stored the final files.
     let finalArtifactsStored = false;
     let finalArtifacts: Awaited<ReturnType<typeof finalizeEnvelope>>;
@@ -2601,6 +2605,7 @@ export async function submitSigningForToken(
             },
           },
           {
+            seal,
             signedRevision: providerSignature?.revision.bytes,
             storageService,
           },

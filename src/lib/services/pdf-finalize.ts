@@ -14,8 +14,10 @@ import { canonicalJson } from "../utils/canonical-json.ts";
 import { normalizedRectToPdfRect } from "../utils/pdf-coords.ts";
 import { embedTextFaces, type TextFace } from "./pdf-fonts.ts";
 import { sha256Hex } from "./pdf-seal.ts";
+import { getBranding } from "../settings.ts";
 import {
   finishSignerSignedPdf,
+  getSealIdentity,
   saveInstallSealedPdf,
   type SealPurpose,
 } from "./seal-identity.ts";
@@ -54,6 +56,20 @@ export type PdfSealer = (
 
 const defaultSealer: PdfSealer = (pdfDocument, purpose) =>
   saveInstallSealedPdf(pdfDocument, purpose);
+
+/**
+ * The install's sealer, with what it reads from the database (the seal key
+ * and the install's name) read now. Sealing with it then needs no database
+ * connection, so a caller can seal while it holds one in a transaction
+ * without waiting on a pool that its own concurrent requests have filled.
+ */
+export async function loadInstallSealer(): Promise<PdfSealer> {
+  const identity = await getSealIdentity();
+  const branding = await getBranding();
+
+  return (pdfDocument, purpose) =>
+    saveInstallSealedPdf(pdfDocument, purpose, { branding, identity });
+}
 
 const CERTIFICATE_FINGERPRINT_VERSION = 1;
 
