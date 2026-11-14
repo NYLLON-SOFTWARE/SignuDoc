@@ -19,6 +19,7 @@ import {
   DEFAULT_SENDER_LOCAL_PART,
   DEFAULT_SENDING_SUBDOMAIN,
   joinSendingDomain,
+  normalizeSubdomain,
   readResendEmailDomain,
   suggestSendingRootDomain,
   type SenderAddressParts,
@@ -586,7 +587,8 @@ function SenderFields({
 }) {
   const built = buildSenderAddress(parts);
   const rootDomain = parts.rootDomain.trim().toLowerCase();
-  const subdomain = parts.subdomain.trim().toLowerCase().replace(/\.+$/, "");
+  // The same tidying the saved address gets, so the preview matches it.
+  const subdomain = normalizeSubdomain(parts.subdomain) ?? "";
   const sendingDomain = rootDomain
     ? joinSendingDomain(rootDomain, subdomain)
     : null;
