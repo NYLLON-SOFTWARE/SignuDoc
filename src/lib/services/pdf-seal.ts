@@ -6,6 +6,8 @@ import { Signer, SUBFILTER_ETSI_CADES_DETACHED } from "@signpdf/utils";
 import forge from "node-forge";
 import type { PDFDocument } from "pdf-lib";
 
+import { children, elementBytes, readTlv } from "./der.ts";
+
 // A PAdES baseline (B-B, or B-T with a timestamp) seal on a finished PDF.
 //
 // The seal is a CMS signature over the whole file, made with this install's
@@ -265,6 +267,25 @@ async function requestTimestampToken(
   timestampUrl: string,
 ): Promise<forge.asn1.Asn1> {
   const imprint = createHash("sha256").update(signatureValue).digest();
+
+  return (await fetchTimestampToken(imprint, timestampUrl)).asn1;
+}
+
+/**
+ * An RFC 3161 token for a SHA-256 digest, byte for byte as the service sent
+ * it, for a document timestamp.
+ */
+export async function requestDocumentTimestamp(
+  digest: Buffer,
+  timestampUrl: string,
+): Promise<Buffer> {
+  return (await fetchTimestampToken(digest, timestampUrl)).der;
+}
+
+async function fetchTimestampToken(
+  imprint: Buffer,
+  timestampUrl: string,
+): Promise<{ asn1: forge.asn1.Asn1; der: Buffer }> {
   const nonce = randomBytes(8);
 
   nonce[0] = nonce[0]! & 0x7f;
@@ -306,9 +327,14 @@ async function requestTimestampToken(
 
   const body = Buffer.from(await response.arrayBuffer());
   let parsed: forge.asn1.Asn1;
+  let tokenDer: Buffer | null = null;
 
   try {
     parsed = asn1.fromDer(body.toString("binary"));
+
+    const [, token] = children(body, readTlv(body));
+
+    tokenDer = token ? elementBytes(body, token) : null;
   } catch (error) {
     throw new PdfSealError(
       "The time-stamping service sent an unreadable answer.",
@@ -328,13 +354,13 @@ async function requestTimestampToken(
       : -1;
 
   // 0 = granted, 1 = granted with modifications.
-  if ((status !== 0 && status !== 1) || !parts[1]) {
+  if ((status !== 0 && status !== 1) || !parts[1] || !tokenDer) {
     throw new PdfSealError("The time-stamping service refused the request.");
   }
 
   assertTokenMatchesRequest(parts[1], imprint, nonce);
 
-  return parts[1];
+  return { asn1: parts[1], der: tokenDer };
 }
 
 class CadesSigner extends Signer {

@@ -1,4 +1,5 @@
 import {
+  X509Certificate,
   createCipheriv,
   createDecipheriv,
   generateKeyPairSync,
@@ -18,7 +19,14 @@ import {
   type EnvSource,
 } from "../utils/env.ts";
 import {
+  addLongTermValidation,
+  isSelfSigned,
+  parseCertificate,
+  type ValidationFetch,
+} from "./pdf-ltv.ts";
+import {
   createSelfSignedSealIdentity,
+  requestDocumentTimestamp,
   saveSealedPdf,
   sealIdentityFromPkcs12,
   type SealIdentity,
@@ -248,24 +256,107 @@ export async function saveInstallSealedPdf(
     timestampUrl,
   };
 
+  return sealForTheLongTerm(pdfDocument, sealIdentity, options);
+}
+
+/**
+ * Seals the document (PAdES B-B, or B-T with a time-stamping service), then
+ * adds what keeps the seal checkable for years: the certificates and
+ * revocation answers (B-LT) and an archive timestamp over them (B-LTA).
+ * Each step after the first only adds to the file, and is skipped with a
+ * logged reason when a service it needs cannot be reached.
+ */
+export async function sealForTheLongTerm(
+  pdfDocument: PDFDocument,
+  identity: SealIdentity,
+  options: SealOptions,
+  { fetch }: { fetch?: ValidationFetch } = {},
+): Promise<Uint8Array> {
+  const timestampUrl = options.timestampUrl ?? null;
+  // A self-made certificate has no issuer to ask about, so without a
+  // timestamp there is nothing to add for it.
+  const fromAuthority = isCertificateAuthoritySeal(identity);
+
   if (!timestampUrl) {
-    return saveSealedPdf(pdfDocument, sealIdentity, options);
+    const sealed = await saveSealedPdf(pdfDocument, identity, options);
+
+    return fromAuthority ? withLongTermValidation(sealed, null, fetch) : sealed;
   }
 
+  let sealed: Uint8Array;
+
   try {
-    return await saveSealedPdf(
+    sealed = await saveSealedPdf(
       await clonePdf(pdfDocument),
-      sealIdentity,
+      identity,
       options,
     );
   } catch (error) {
     // A time-stamping service that is down must not stop a signing. The
     // document is still sealed, only without the independent time.
     console.error("[seal] Timestamping failed; sealing without it.", error);
-    return saveSealedPdf(pdfDocument, sealIdentity, {
+    sealed = await saveSealedPdf(pdfDocument, identity, {
       ...options,
       timestampUrl: null,
     });
+
+    return fromAuthority ? withLongTermValidation(sealed, null, fetch) : sealed;
+  }
+
+  return withLongTermValidation(sealed, timestampUrl, fetch);
+}
+
+/** Whether the seal certificate was issued by someone else. */
+function isCertificateAuthoritySeal(identity: SealIdentity): boolean {
+  try {
+    return !isSelfSigned(
+      parseCertificate(
+        new X509Certificate(identity.certificateChainPem[0]!).raw,
+      ),
+    );
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Adds long-term validation (PAdES B-LT) and, with a time-stamping service,
+ * an archive timestamp (B-LTA). It only adds to a seal already made, so
+ * when a certificate authority or the time-stamping service cannot be
+ * reached the document keeps the seal it has, and the reason is logged.
+ */
+async function withLongTermValidation(
+  sealed: Uint8Array,
+  timestampUrl: string | null,
+  fetch: ValidationFetch | undefined,
+): Promise<Uint8Array> {
+  try {
+    const result = await addLongTermValidation(sealed, {
+      fetch,
+      timestamp: timestampUrl
+        ? (digest) => requestDocumentTimestamp(digest, timestampUrl)
+        : null,
+    });
+
+    if (result.revoked.length > 0) {
+      console.error(
+        `[seal] A certificate authority says these certificates are revoked: ${result.revoked.join("; ")}. Readers will not accept the seal. Replace SEAL_P12_BASE64.`,
+      );
+    }
+
+    if (result.problems.length > 0) {
+      console.warn(
+        `[seal] Long-term validation is incomplete: ${result.problems.join(" ")}`,
+      );
+    }
+
+    return result.bytes;
+  } catch (error) {
+    console.error(
+      "[seal] Adding long-term validation failed; keeping the seal without it.",
+      error,
+    );
+    return sealed;
   }
 }
 
