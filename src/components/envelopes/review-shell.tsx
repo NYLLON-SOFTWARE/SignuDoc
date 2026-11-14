@@ -67,6 +67,19 @@ type ReviewSigner = {
 
 type SendPhase = "error" | "idle" | "sending";
 
+type SignatureLevel = "advanced" | "qualified" | "simple";
+
+function describeSignatureLevel(level: SignatureLevel, providerName: string) {
+  switch (level) {
+    case "advanced":
+      return `Advanced electronic signatures through ${providerName}`;
+    case "qualified":
+      return `Qualified electronic signatures through ${providerName}`;
+    default:
+      return "SignuDoc signatures";
+  }
+}
+
 function buildSuccessMessage(firstSignerName: string) {
   return `Envelope sent. ${firstSignerName} has been notified.`;
 }
@@ -82,6 +95,8 @@ export function ReviewShell({
   const [reminderDays, setReminderDays] = useState<number | null>(
     DEFAULT_ENVELOPE_REMINDER_DAYS,
   );
+  const [signatureLevel, setSignatureLevel] =
+    useState<SignatureLevel>("simple");
   const [isConfirmationOpen, setIsConfirmationOpen] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
   const [sendPhase, setSendPhase] = useState<SendPhase>("idle");
@@ -131,6 +146,7 @@ export function ReviewShell({
           expiresInDays: deadlineDays,
           permittedUseConfirmed: true,
           reminderIntervalDays: reminderDays,
+          ...(record?.signingProvider ? { signatureLevel } : {}),
         }),
         headers: {
           "content-type": "application/json",
@@ -412,6 +428,40 @@ export function ReviewShell({
                 later from the envelope.
               </p>
             </div>
+
+            {record.signingProvider ? (
+              <div className="well mt-4 p-4">
+                <label className="grid gap-1.5">
+                  <span className="text-[0.8125rem] font-semibold text-(--secondary)">
+                    Signature type
+                  </span>
+                  <select
+                    className="field-input"
+                    disabled={sendPhase === "sending" || Boolean(notice)}
+                    onChange={(event) =>
+                      setSignatureLevel(event.target.value as SignatureLevel)
+                    }
+                    value={signatureLevel}
+                  >
+                    {(["simple", "advanced", "qualified"] as const).map(
+                      (level) => (
+                        <option key={level} value={level}>
+                          {describeSignatureLevel(
+                            level,
+                            record.signingProvider!.name,
+                          )}
+                        </option>
+                      ),
+                    )}
+                  </select>
+                </label>
+                <p className="mt-3 text-sm leading-6 text-(--secondary)">
+                  {signatureLevel === "simple"
+                    ? "Signers sign here, and the finished PDF is sealed by this install."
+                    : `Each signer proves who they are at ${record.signingProvider.name} and signs with a certificate in their own name. ${signatureLevel === "qualified" ? "A qualified signature needs a qualified certificate, which not every signer has. " : ""}Which type a document needs is a legal question; this is not legal advice.`}
+                </p>
+              </div>
+            ) : null}
           </article>
         </div>
 
@@ -442,6 +492,14 @@ export function ReviewShell({
           isSending={sendPhase === "sending"}
           onCancel={closeConfirmation}
           onConfirm={handleConfirmSend}
+          signatureType={
+            record.signingProvider && signatureLevel !== "simple"
+              ? describeSignatureLevel(
+                  signatureLevel,
+                  record.signingProvider.name,
+                )
+              : null
+          }
           signerCount={activeRecord.signers.length}
           title={activeRecord.title}
         />
@@ -457,6 +515,8 @@ type SendConfirmationDialogProps = {
   isSending: boolean;
   onCancel: () => void;
   onConfirm: () => void;
+  /** Set when signers sign through the install's signing provider. */
+  signatureType: string | null;
   signerCount: number;
   title: string;
 };
@@ -468,6 +528,7 @@ function SendConfirmationDialog({
   isSending,
   onCancel,
   onConfirm,
+  signatureType,
   signerCount,
   title,
 }: SendConfirmationDialogProps) {
@@ -496,6 +557,12 @@ function SendConfirmationDialog({
                     : `The first signer (${firstSignerName}) will be notified immediately.`}{" "}
                   The request expires in {deadlineDays} days.
                 </p>
+                {signatureType ? (
+                  <p>
+                    Signature type: {signatureType}. It cannot be changed once
+                    the envelope is sent.
+                  </p>
+                ) : null}
               </div>
             </DialogDescription>
           </DialogHeader>

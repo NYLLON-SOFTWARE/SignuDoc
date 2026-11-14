@@ -9,7 +9,10 @@ import type {
   SigningVerificationState,
 } from "@/lib/schemas/signing";
 import { SignerVerificationScreen } from "./signer-verification-screen";
-import { SigningLiveShell } from "./signing-live-shell";
+import {
+  SigningLiveShell,
+  type ProviderSignatureProblem,
+} from "./signing-live-shell";
 
 type SigningUnavailableState =
   "already-signed" | "declined" | "error" | "expired" | "voided";
@@ -17,6 +20,8 @@ type SigningUnavailableState =
 type SigningShellProps = {
   initialState?: SigningUnavailableState;
   record?: SigningPayload;
+  /** Set when the signer came back from a signing provider without signing. */
+  signatureProblem?: ProviderSignatureProblem | null;
   token: string;
   verification?: SigningVerificationState;
 };
@@ -53,11 +58,14 @@ const tokenStateCopy: Record<
 export function SigningShell({
   initialState,
   record,
+  signatureProblem,
   token,
   verification,
 }: SigningShellProps) {
   if (record) {
-    return <SigningLiveShell record={record} />;
+    return (
+      <SigningLiveShell record={record} signatureProblem={signatureProblem} />
+    );
   }
 
   if (verification) {

@@ -50,6 +50,8 @@ export const reminderIntervalDaysSchema = z
 export const sendEnvelopeOptionsSchema = z.object({
   expiresInDays: deadlineDaysSchema.optional(),
   reminderIntervalDays: reminderIntervalDaysSchema.optional(),
+  /** Simple unless the install has a signing provider. */
+  signatureLevel: z.enum(["simple", "advanced", "qualified"]).optional(),
 });
 
 export const changeRemindersSchema = z.object({
@@ -125,6 +127,11 @@ export const auditEventRecordSchema = z.object({
   createdAt: unixTimestampSchema,
 });
 
+/** How the signers sign. See provider-signing.ts. */
+export const signatureLevelSchema = z.enum(["simple", "advanced", "qualified"]);
+
+export type EnvelopeSignatureLevel = z.infer<typeof signatureLevelSchema>;
+
 export const envelopeRecordSchema = z.object({
   id: idSchema,
   userId: idSchema,
@@ -150,6 +157,15 @@ export const envelopeRecordSchema = z.object({
   reminderIntervalDays: reminderIntervalDaysSchema.optional(),
   /** Sent in Part 11 mode. See part11.ts. */
   part11: z.boolean().optional(),
+  /**
+   * Simple, or signed by each signer with a certificate in their own name
+   * through a signing provider. See provider-signing.ts.
+   */
+  signatureLevel: signatureLevelSchema.optional(),
+  signatureProvider: z.string().trim().min(1).nullable().optional(),
+  /** The PDF as the last signer signed it, for provider signatures. */
+  revisionKey: z.string().trim().min(1).nullable().optional(),
+  revisionSha256: sourcePdfHashSchema.nullable().optional(),
   createdAt: unixTimestampSchema,
   updatedAt: unixTimestampSchema,
 });

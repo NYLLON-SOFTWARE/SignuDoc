@@ -84,6 +84,11 @@ import {
   buildEnvelopeThumbnailKey,
 } from "./services/storage-keys.ts";
 import {
+  configuredSigningProvider,
+  signingProviderById,
+  type SigningProviderId,
+} from "./services/signing-providers.ts";
+import {
   createStorageService,
   StorageObjectNotFoundError,
   type StorageObjectStream,
@@ -123,6 +128,11 @@ type SendDraftEnvelopeInput = {
   expiresInDays?: number;
   /** Days between automatic reminders. Null or left out means none. */
   reminderIntervalDays?: number | null;
+  /**
+   * Advanced or qualified: each signer signs with a certificate in their
+   * own name through the install's signing provider. Simple by default.
+   */
+  signatureLevel?: "advanced" | "qualified" | "simple";
   ipAddress?: string | null;
   senderEmail: string;
   senderName: string;
@@ -157,6 +167,8 @@ type EnvelopeRow = {
   pageCount: number;
   part11: boolean;
   sentAt: number | null;
+  signatureLevel: "advanced" | "qualified" | "simple";
+  signatureProvider: string | null;
   signedPdfKey: string | null;
   sourcePdfFilename: string;
   sourcePdfHash: string;
@@ -287,6 +299,11 @@ export type ReviewSignerSummary = {
 
 export type ReviewEnvelopeData = {
   canSend: boolean;
+  /**
+   * The install's signing provider, when the sender may choose signatures
+   * in the signers' own names. Null without one, or in Part 11 mode.
+   */
+  signingProvider: { name: string } | null;
   copyRecipients: readonly CopyRecipientRecord[];
   disabledReason: string | null;
   envelopeId: string;
@@ -372,6 +389,11 @@ export type EnvelopeDetailData = {
   manualReminder: EnvelopeDetailManualReminderState | null;
   /** Sent in Part 11 mode: a void needs a reason. */
   part11: boolean;
+  /**
+   * How signers sign, when not with SignuDoc's own simple signature: for
+   * example "Qualified electronic signatures through eID Easy".
+   */
+  signatureTypeLabel: string | null;
   signers: readonly EnvelopeDetailSignerView[];
   status: EnvelopeRecord["status"];
   timeline: readonly EnvelopeDetailTimelineItem[];
@@ -751,6 +773,8 @@ async function getEnvelopeByIdForUser(
         expires_at AS "expiresAt",
         reminder_interval_days AS "reminderIntervalDays",
         part11,
+        signature_level AS "signatureLevel",
+        signature_provider AS "signatureProvider",
         created_at AS "createdAt",
         updated_at AS "updatedAt"
       FROM envelopes
@@ -1171,6 +1195,62 @@ function buildVoidNotificationEmail(input: {
   };
 }
 
+const SIGNATURE_LEVEL_NAMES = {
+  advanced: "advanced electronic signature",
+  qualified: "qualified electronic signature",
+} as const;
+
+function providerName(id: string | null | undefined): string | null {
+  if (!id) {
+    return null;
+  }
+
+  return (
+    signingProviderById(id as SigningProviderId)?.name ??
+    (id === "eideasy" ? "eID Easy" : id)
+  );
+}
+
+function describeSignatureType(envelope: EnvelopeRecord): string | null {
+  const level = envelope.signatureLevel;
+
+  if (!level || level === "simple") {
+    return null;
+  }
+
+  const name = SIGNATURE_LEVEL_NAMES[level];
+  const through = providerName(envelope.signatureProvider);
+
+  return `${name[0]!.toUpperCase()}${name.slice(1)}s${through ? ` through ${through}` : ""}`;
+}
+
+/** "with a qualified electronic signature through eID Easy", or null. */
+function describeProviderSignature(metadata: unknown): string | null {
+  if (typeof metadata !== "object" || metadata === null) {
+    return null;
+  }
+
+  const signature = (metadata as { providerSignature?: unknown })
+    .providerSignature;
+
+  if (typeof signature !== "object" || signature === null) {
+    return null;
+  }
+
+  const { level, provider } = signature as {
+    level?: unknown;
+    provider?: unknown;
+  };
+
+  if (level !== "advanced" && level !== "qualified") {
+    return null;
+  }
+
+  return `with ${level === "advanced" ? "an" : "a"} ${SIGNATURE_LEVEL_NAMES[level]}${
+    typeof provider === "string" ? ` through ${provider}` : ""
+  }`;
+}
+
 function buildTimelineDescription(event: AuditEventRecord): string {
   const signerName =
     typeof event.metadata?.signerName === "string"
@@ -1200,7 +1280,9 @@ function buildTimelineDescription(event: AuditEventRecord): string {
         "meaning" in event.metadata.part11 &&
         typeof event.metadata.part11.meaning === "string"
         ? `Signed by ${targetLabel} (${signatureMeaningLabel(parseSignatureMeaning(event.metadata.part11.meaning)) ?? event.metadata.part11.meaning}, password given again)`
-        : `Signed by ${targetLabel}`;
+        : describeProviderSignature(event.metadata)
+          ? `Signed by ${targetLabel} ${describeProviderSignature(event.metadata)!}`
+          : `Signed by ${targetLabel}`;
     case "declined":
       return declineReason
         ? `Declined by ${targetLabel} — ${declineReason}`
@@ -1364,6 +1446,8 @@ export async function listEnvelopesForUser(
         expires_at AS "expiresAt",
         reminder_interval_days AS "reminderIntervalDays",
         part11,
+        signature_level AS "signatureLevel",
+        signature_provider AS "signatureProvider",
         created_at AS "createdAt",
         updated_at AS "updatedAt"
       FROM envelopes
@@ -1511,6 +1595,7 @@ export async function getEnvelopeDetailDataForUser(
         : null,
     manualReminder,
     part11: Boolean(envelope.part11),
+    signatureTypeLabel: describeSignatureType(envelope),
     signers: signerViews,
     status: envelope.status,
     timeline,
@@ -1773,9 +1858,14 @@ export async function getReviewEnvelopeDataForUser(
   );
   const isEmpty = signers.length === 0 || fields.length === 0;
   const choiceProblem = describeChoiceProblem(signers, fields);
+  const provider = configuredSigningProvider();
+  const part11Mode = provider
+    ? ((await readStoredSettings(database))?.part11Mode ?? false)
+    : false;
 
   return {
     canSend: !isEmpty && !missingSignatureSigner && !choiceProblem,
+    signingProvider: provider && !part11Mode ? { name: provider.name } : null,
     copyRecipients,
     disabledReason: missingSignatureSigner
       ? `Every signer must have at least one Signature field before sending. ${missingSignatureSigner.name} is missing one.`
@@ -1906,6 +1996,30 @@ export async function sendDraftEnvelope(
   // In Part 11 mode each signer signs with their own verified account, and
   // the envelope keeps that rule even if the mode is turned off later.
   const part11 = (await readStoredSettings(database))?.part11Mode ?? false;
+
+  // Signatures in the signers' own names need the install's signing
+  // provider. Part 11 envelopes are signed with the signers' accounts, and
+  // the two are not combined.
+  const signatureLevel = input.signatureLevel ?? "simple";
+  const signingProvider =
+    signatureLevel === "simple" ? null : configuredSigningProvider();
+
+  if (signatureLevel !== "simple") {
+    if (!signingProvider) {
+      throw new EnvelopeMutationError(
+        "This install has no signing provider for advanced or qualified signatures.",
+        400,
+      );
+    }
+
+    if (part11) {
+      throw new EnvelopeMutationError(
+        "Part 11 mode signs with the signers' accounts. Send with simple signatures.",
+        400,
+      );
+    }
+  }
+
   const part11SignerAccounts = new Map<string, string>();
 
   if (part11) {
@@ -2034,6 +2148,17 @@ export async function sendDraftEnvelope(
         [sentAt, envelopeId],
       );
 
+      if (signingProvider) {
+        await tx.query(
+          `
+            UPDATE envelopes
+            SET signature_level = $1, signature_provider = $2
+            WHERE id = $3
+          `,
+          [signatureLevel, signingProvider.id, envelopeId],
+        );
+      }
+
       if (part11) {
         await tx.query(`UPDATE envelopes SET part11 = true WHERE id = $1`, [
           envelopeId,
@@ -2106,6 +2231,12 @@ export async function sendDraftEnvelope(
             permittedUseConfirmed: true,
             permittedUseVersion: PERMITTED_USE_VERSION,
             ...(part11 ? { part11: true } : {}),
+            ...(signingProvider
+              ? {
+                  signatureLevel,
+                  signingProvider: signingProvider.name,
+                }
+              : {}),
             signerEmail: firstSigner.email,
             signerId: firstSigner.id,
             signerName: firstSigner.name,
@@ -2146,6 +2277,8 @@ export async function sendDraftEnvelope(
             expires_at = NULL,
             reminder_interval_days = NULL,
             part11 = false,
+            signature_level = 'simple',
+            signature_provider = NULL,
             updated_at = $1
           WHERE id = $2
             AND user_id = $3

@@ -85,6 +85,18 @@ export const signingPayloadSchema = z.object({
     })
     .nullable()
     .optional(),
+  /**
+   * Set when each signer signs with a certificate in their own name through
+   * a signing provider: Finish takes the signer there instead of submitting.
+   */
+  providerSignature: z
+    .object({
+      level: z.enum(["advanced", "qualified"]),
+      providerName: z.string().trim().min(1),
+      startUrl: z.string().trim().min(1),
+    })
+    .nullable()
+    .optional(),
   senderName: z.string().trim().min(1).max(320),
   signer: z.object({
     email: emailSchema,

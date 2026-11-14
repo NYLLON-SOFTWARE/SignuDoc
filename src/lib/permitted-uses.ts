@@ -3,7 +3,7 @@
 // version is stored with each send, so the record shows which list the
 // sender confirmed.
 
-export const PERMITTED_USE_VERSION = "2026-11-13";
+export const PERMITTED_USE_VERSION = "2026-11-14";
 export const PERMITTED_USE_PATH = "/electronic-signatures";
 
 export type UseSection = { heading: string; items: string[] };
@@ -27,7 +27,7 @@ export const EU_LIMITS: string[] = [
   "Contracts creating or transferring rights in real estate (other than rental), which most member states require in notarial form.",
   "Contracts that by law need a court, public authority or notary.",
   "Suretyship and guarantee contracts given by consumers, and family or succession law matters, in many member states.",
-  "Anything your law requires to carry a qualified electronic signature (QES): Signudoc does not produce one.",
+  "Anything your law requires to carry a qualified electronic signature (QES), unless this install has a signing provider and the envelope is sent with qualified signatures, each signer holding a qualified certificate.",
 ];
 
 export const WHAT_IT_IS: UseSection = {
@@ -42,7 +42,7 @@ export const WHAT_IT_IS: UseSection = {
 export const WHAT_IT_IS_NOT: UseSection = {
   heading: "What Signudoc is not",
   items: [
-    "Not an advanced (AdES) or qualified (QES) electronic signature under eIDAS. The seal on finished PDFs is not a qualified seal: it is the install's own, or, with a seal certificate the organization buys, an advanced electronic seal for the organization, not for the signers.",
+    "Not an advanced (AdES) or qualified (QES) electronic signature under eIDAS as it comes. An install can add a signing provider, and then a sender can ask each signer to sign with an advanced or qualified signature in their own name through it; without one, the seal on finished PDFs is the install's own or, with a seal certificate the organization buys, an advanced electronic seal for the organization, not for the signers.",
     "Not a validated FDA 21 CFR Part 11 system as it comes. An administrator can turn on Part 11 mode (signers sign with their own confirmed accounts and password, and each signature shows its meaning), but your organization still has to validate the install, write and follow its own procedures, and certify its electronic signatures to the FDA.",
     "Not a HIPAA-covered service. Do not send protected health information unless your organization has its own agreements and controls for every service the install uses.",
     "Not a consumer-disclosure system beyond the electronic-records agreement each signer gives. If a law requires you to deliver specific consumer notices electronically, check that its own rules are met.",

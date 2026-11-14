@@ -1023,3 +1023,152 @@ test("in Part 11 mode a verified account signs, with its password and a stated m
     ).toBe(200);
   });
 });
+
+test("a signer signs with a qualified signature in their own name, through the signing provider", async ({
+  browser,
+  page,
+}, testInfo) => {
+  const runId = String(Date.now());
+  const signerEmail = `qualified+${runId}@example.com`;
+  const signerName = "Quinn Qualified";
+  const signatureType = "Qualified electronic signatures through eID Easy";
+  const database = new pg.Client({ connectionString: e2eDatabaseUrl });
+  let adminEmail = "";
+
+  await database.connect();
+
+  try {
+    const admin = await database.query<{ email: string }>(
+      `select email from public."user" where role = 'admin' limit 1`,
+    );
+
+    adminEmail = admin.rows[0]?.email ?? "";
+  } finally {
+    await database.end();
+  }
+
+  expect(adminEmail).not.toBe("");
+
+  let envelopeId = "";
+
+  await test.step("the sender asks for qualified signatures", async () => {
+    const pdfPath = await writeSamplePdf(testInfo.outputPath("supply.pdf"));
+
+    await page.goto("/login");
+    await page.getByLabel("Email").fill(adminEmail);
+    await page.getByLabel("Password").fill(PASSWORD);
+    await page.getByRole("button", { name: "Log in" }).click();
+    await expect(page).toHaveURL(/\/dashboard$/);
+
+    await page.goto("/envelopes/new");
+    await page.getByLabel("Envelope title").fill("Supply agreement");
+    await page.getByLabel("Upload PDF").setInputFiles(pdfPath);
+    await page.getByRole("button", { name: "Next ->" }).click();
+    await expect(page).toHaveURL(/\/envelopes\/[^/]+\/signers$/);
+    envelopeId = /\/envelopes\/([^/]+)\/signers$/.exec(page.url())?.[1] ?? "";
+
+    await page.getByLabel("Signer 1 name").fill(signerName);
+    await page.getByLabel("Signer 1 email").fill(signerEmail);
+    await page.getByRole("button", { name: "Next →" }).click();
+    await expect(page).toHaveURL(/\/prepare$/);
+
+    await page.getByRole("button", { exact: true, name: "Signature" }).click();
+
+    const placementTarget = page.getByLabel("Place Signature on page 1");
+    const box = await placementTarget.boundingBox();
+
+    await placementTarget.click({
+      position: { x: box!.width * 0.3, y: box!.height * 0.6 },
+    });
+    await expect(page.getByRole("status")).toHaveText("Saved");
+    await page.getByRole("button", { name: "Next →" }).click();
+    await expect(page).toHaveURL(/\/review$/);
+
+    await page.getByLabel("Signature type").selectOption("qualified");
+    await expect(page.getByText(/this is not legal advice/)).toBeVisible();
+    await page.getByRole("button", { name: "Send envelope" }).click();
+
+    const confirmation = page.getByRole("dialog", {
+      name: "Send this envelope?",
+    });
+
+    await expect(
+      confirmation.getByText(`Signature type: ${signatureType}.`),
+    ).toBeVisible();
+    await confirmation.getByRole("checkbox").check();
+    await confirmation.getByRole("button", { name: "Send now" }).click();
+    await expect(page).toHaveURL(new RegExp(`/envelopes/${envelopeId}$`));
+    await expect(page.getByText(signatureType)).toBeVisible();
+  });
+
+  await test.step("the signer fills in the document, then signs at the provider", async () => {
+    const invitation = await waitForEmail({
+      template: "signing_invitation",
+      to: signerEmail,
+    });
+    const signerContext = await browser.newContext({
+      viewport: { height: 900, width: 1440 },
+    });
+    const signerPage = await signerContext.newPage();
+    const providerRequests: string[] = [];
+
+    signerPage.on("request", (request) => {
+      if (request.url().includes("/eideasy/")) {
+        providerRequests.push(new URL(request.url()).pathname);
+      }
+    });
+
+    await signerPage.goto(extractLink(invitation.text, "/sign/"));
+
+    const consent = signerPage.getByRole("dialog", { name: "Before you sign" });
+
+    await consent
+      .getByRole("checkbox", {
+        name: "I agree to use electronic records and signatures",
+      })
+      .check();
+    await consent.getByRole("button", { name: "Agree and continue" }).click();
+    await signerPage
+      .getByRole("button", { exact: true, name: "Signature" })
+      .click();
+    await signerPage
+      .getByRole("dialog", { name: "Add your signature" })
+      .getByRole("button", { name: "Apply signature" })
+      .click();
+    await signerPage.getByRole("button", { name: "Finish" }).click();
+
+    const finish = signerPage.getByRole("dialog", { name: "Finish signing?" });
+
+    await expect(
+      finish.getByText(/asks for a qualified electronic signature/),
+    ).toBeVisible();
+    await finish.getByRole("button", { name: "Continue to eID Easy" }).click();
+    await expect(signerPage).toHaveURL(/\/sign\/[^/]+\/done/);
+    // The browser went to the provider and came back.
+    expect(providerRequests).toContain("/eideasy/sign_contract_external");
+    await signerContext.close();
+  });
+
+  await test.step("the signed PDF carries the signer's own signature", async () => {
+    await waitForEmail({ template: "completion_notification", to: adminEmail });
+
+    const signed = await page.request.get(
+      `/api/envelopes/${envelopeId}/download?type=signed`,
+    );
+
+    await expectPdfResponse(signed);
+
+    const text = (await signed.body()).toString("latin1");
+
+    expect(text).toContain("/SubFilter /ETSI.CAdES.detached");
+    // No install seal on top: the signer's signature covers the document.
+    expect(text.match(/\/ByteRange/g)?.length).toBe(1);
+
+    await page.goto(`/envelopes/${envelopeId}`);
+    await expect(
+      page.getByText(
+        `Signed by ${signerName} with a qualified electronic signature through eID Easy`,
+      ),
+    ).toBeVisible();
+  });
+});

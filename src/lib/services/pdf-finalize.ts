@@ -14,7 +14,13 @@ import { canonicalJson } from "../utils/canonical-json.ts";
 import { normalizedRectToPdfRect } from "../utils/pdf-coords.ts";
 import { embedTextFaces, type TextFace } from "./pdf-fonts.ts";
 import { sha256Hex } from "./pdf-seal.ts";
-import { saveInstallSealedPdf, type SealPurpose } from "./seal-identity.ts";
+import { getBranding } from "../settings.ts";
+import {
+  finishSignerSignedPdf,
+  getSealIdentity,
+  saveInstallSealedPdf,
+  type SealPurpose,
+} from "./seal-identity.ts";
 import {
   buildEnvelopeCertificateKey,
   buildEnvelopeSignedPdfKey,
@@ -50,6 +56,20 @@ export type PdfSealer = (
 
 const defaultSealer: PdfSealer = (pdfDocument, purpose) =>
   saveInstallSealedPdf(pdfDocument, purpose);
+
+/**
+ * The install's sealer, with what it reads from the database (the seal key
+ * and the install's name) read now. Sealing with it then needs no database
+ * connection, so a caller can seal while it holds one in a transaction
+ * without waiting on a pool that its own concurrent requests have filled.
+ */
+export async function loadInstallSealer(): Promise<PdfSealer> {
+  const identity = await getSealIdentity();
+  const branding = await getBranding();
+
+  return (pdfDocument, purpose) =>
+    saveInstallSealedPdf(pdfDocument, purpose, { branding, identity });
+}
 
 const CERTIFICATE_FINGERPRINT_VERSION = 1;
 
@@ -240,7 +260,7 @@ function getFieldPadding(widthPt: number, heightPt: number): number {
   return Math.max(2, Math.min(widthPt, heightPt) * 0.12);
 }
 
-function shouldStampField(field: FieldRecord): boolean {
+export function shouldStampField(field: FieldRecord): boolean {
   if (field.type === "checkbox" || field.type === "radio") {
     return typeof field.checked === "boolean";
   }
@@ -363,7 +383,7 @@ function buildCertificateAuditEvents(input: {
   );
 }
 
-async function stampFieldValue(
+export async function stampFieldValue(
   field: FieldRecord,
   page: PDFPage,
   fonts: {
@@ -791,6 +811,70 @@ function readStringArray(value: unknown): string[] {
     : [];
 }
 
+/**
+ * A signature the signer made with their own certificate through the
+ * install's signing provider: its level, the provider, and the certificate.
+ */
+function describeProviderSignatureEvidence(
+  signed: AuditEventRecord | undefined,
+  redacted: boolean,
+): string[] {
+  const value = signed?.metadata?.providerSignature;
+
+  if (!value || typeof value !== "object") {
+    return [];
+  }
+
+  const signature = value as Record<string, unknown>;
+  const level =
+    signature.level === "qualified"
+      ? "a qualified electronic signature"
+      : signature.level === "advanced"
+        ? "an advanced electronic signature"
+        : null;
+
+  if (!level) {
+    return [];
+  }
+
+  const provider =
+    typeof signature.provider === "string"
+      ? ` through ${signature.provider}`
+      : "";
+  const method =
+    typeof signature.method === "string" ? ` (${signature.method})` : "";
+  const details = [
+    `Signed with ${level}${provider}${method}; the signature is in the signed PDF`,
+  ];
+
+  if (!redacted && typeof signature.certificateSubject === "string") {
+    const issuer =
+      typeof signature.certificateIssuer === "string"
+        ? `, issued by ${signature.certificateIssuer}`
+        : "";
+    const serial =
+      typeof signature.certificateSerialNumber === "string"
+        ? `, serial ${signature.certificateSerialNumber}`
+        : "";
+    const validTo =
+      typeof signature.certificateValidTo === "number"
+        ? `, valid to ${formatAuditTimestamp(signature.certificateValidTo)}`
+        : "";
+
+    details.push(
+      `Signing certificate: ${signature.certificateSubject}${issuer}${serial}${validTo}`,
+    );
+  }
+
+  if (signature.timestamped === true) {
+    details.push(
+      "The signature carries a timestamp from a time-stamping service",
+    );
+  }
+
+  return details;
+}
+
 /** What the record shows about how one signer was identified and agreed. */
 function describeSignerEvidence(
   signer: SignerRecord,
@@ -850,6 +934,8 @@ function describeSignerEvidence(
   if (methods.length > 0) {
     details.push(`Signature adopted by: ${methods.join(", ")}`);
   }
+
+  details.push(...describeProviderSignatureEvidence(signed, redacted));
 
   if (!redacted && signed?.ipAddress) {
     details.push(`Signed from IP ${signed.ipAddress}`);
@@ -1272,8 +1358,14 @@ export async function finalizeEnvelope(
   },
   {
     seal,
+    signedRevision,
     storageService = createStorageService(),
   }: SealOption & {
+    /**
+     * The last signer's revision, when the signers signed with their own
+     * certificates: it is the signed document, and gets validation data.
+     */
+    signedRevision?: Uint8Array;
     storageService?: StorageService;
   } = {},
 ): Promise<FinalizedEnvelopeArtifacts> {
@@ -1282,21 +1374,23 @@ export async function finalizeEnvelope(
     envelopeId: input.envelope.id,
     userId: input.envelope.userId,
   };
-  const signedPdfBytes = await renderFinalizedEnvelopePdf(
-    {
-      auditEvents: input.auditEvents,
-      completedAt: generatedAt,
-      copyRecipients: input.copyRecipients,
-      envelope: input.envelope,
-      fields: input.fields,
-      signers: input.signers,
-      sourcePdfKey: input.sourcePdf.key,
-    },
-    {
-      seal,
-      storageService,
-    },
-  );
+  const signedPdfBytes = signedRevision
+    ? await finishSignerSignedPdf(signedRevision)
+    : await renderFinalizedEnvelopePdf(
+        {
+          auditEvents: input.auditEvents,
+          completedAt: generatedAt,
+          copyRecipients: input.copyRecipients,
+          envelope: input.envelope,
+          fields: input.fields,
+          signers: input.signers,
+          sourcePdfKey: input.sourcePdf.key,
+        },
+        {
+          seal,
+          storageService,
+        },
+      );
   const signedPdfSha256 = sha256Hex(signedPdfBytes);
   const completedEnvelope = {
     ...input.envelope,

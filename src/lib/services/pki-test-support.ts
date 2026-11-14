@@ -98,26 +98,48 @@ function sortedSet(items: Buffer[]): Buffer {
   return der.set(...[...items].sort(Buffer.compare));
 }
 
+/** A subject attribute, as UTF8String when it is not plain ASCII. */
+function subjectAttribute(
+  type: string,
+  value: string,
+): forge.pki.CertificateField {
+  return /^[\x00-\x7f]*$/.test(value)
+    ? { type, value }
+    : {
+        type,
+        // forge writes a UTF8String's value as UTF-8 itself.
+        value,
+        // forge reads this as the value's tag, though its types say class.
+        valueTagClass: forge.asn1.Type.UTF8 as unknown as forge.asn1.Class,
+      };
+}
+
 function issueCertificate({
   ca = false,
   commonName,
   extensions = [],
+  givenName,
   issuer,
   keys,
   serial,
+  surname,
 }: {
   ca?: boolean;
   commonName: string;
   extensions?: object[];
+  givenName?: string;
   issuer: { certificate: forge.pki.Certificate | null; keys: KeyPair };
   keys: KeyPair;
   serial: string;
+  surname?: string;
 }): forge.pki.Certificate {
   const certificate = forge.pki.createCertificate();
   const notBefore = new Date(Date.now() - 24 * 60 * 60 * 1000);
   const notAfter = new Date(Date.now() + 365 * 24 * 60 * 60 * 1000);
   const subject = [
-    { name: "commonName", value: commonName },
+    subjectAttribute("2.5.4.3", commonName),
+    ...(surname ? [subjectAttribute("2.5.4.4", surname)] : []),
+    ...(givenName ? [subjectAttribute("2.5.4.42", givenName)] : []),
     { name: "organizationName", value: "Harbour & Finch Test CA" },
   ];
 
@@ -161,6 +183,17 @@ export type TestPki = {
   close: () => Promise<void>;
   /** The CA certificate, DER. */
   caCertificate: Buffer;
+  /**
+   * A person's signing certificate from the CA, as a signing provider would
+   * hold it; `qualified` adds the qualified certificate statements.
+   */
+  issueSigner: (options: {
+    commonName: string;
+    /** Given name and surname, as national eID certificates carry them. */
+    givenName?: string;
+    qualified?: boolean;
+    surname?: string;
+  }) => SealIdentity & { certificate: Buffer };
   /** A seal identity issued by the CA, its chain holding only itself. */
   seal: SealIdentity;
   sealCertificate: Buffer;
@@ -480,9 +513,55 @@ export async function startTestPki(): Promise<TestPki> {
     }
   };
 
+  let signerSerial = 0x4000;
+  const issueSigner: TestPki["issueSigner"] = ({
+    commonName,
+    givenName,
+    qualified,
+    surname,
+  }) => {
+    const keys = makeKeys();
+    // QCStatements: QcCompliance, QcSSCD, QcType esign (ETSI EN 319 412-5).
+    const qcStatements = {
+      id: "1.3.6.1.5.5.7.1.3",
+      value: binary(
+        der.sequence(
+          der.sequence(der.oid("0.4.0.1862.1.1")),
+          der.sequence(der.oid("0.4.0.1862.1.4")),
+          der.sequence(
+            der.oid("0.4.0.1862.1.6"),
+            der.sequence(der.oid("0.4.0.1862.1.6.1")),
+          ),
+        ),
+      ),
+    };
+
+    signerSerial += 1;
+
+    const certificate = issueCertificate({
+      commonName,
+      extensions: [infoAccess, crlPoints, ...(qualified ? [qcStatements] : [])],
+      givenName,
+      issuer: { certificate: ca, keys: caKeys },
+      keys,
+      serial: signerSerial.toString(16),
+      surname,
+    });
+
+    return {
+      certificate: certificateDer(certificate),
+      certificateChainPem: [
+        forge.pki.certificateToPem(certificate),
+        forge.pki.certificateToPem(ca),
+      ],
+      privateKeyPem: keys.privateKeyPem,
+    };
+  };
+
   return {
     caCertificate: caDer,
     close: () => new Promise<void>((resolve) => server.close(() => resolve())),
+    issueSigner,
     seal: {
       certificateChainPem: [forge.pki.certificateToPem(sealCertificate)],
       privateKeyPem: sealKeys.privateKeyPem,

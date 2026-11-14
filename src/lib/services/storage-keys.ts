@@ -85,6 +85,24 @@ export function buildEnvelopeThumbnailKey(
 }
 
 /**
+ * One signer's revision of the PDF, when signers sign with their own
+ * certificates through a signing provider: prepared, then signed. It sits
+ * beside the original, for the same reason as the thumbnail.
+ */
+export function buildSignerRevisionKey(
+  input: EnvelopeStorageIdentity & {
+    sessionId: string;
+    sourcePdfKey: string;
+  },
+): string {
+  return path.posix.join(
+    path.posix.dirname(buildEnvelopeThumbnailKey(input)),
+    "revisions",
+    `${input.sessionId}.pdf`,
+  );
+}
+
+/**
  * A template's own copy of its document. It is a copy, not the file of the
  * envelope it was made from, so neither can take the other's file with it
  * when it is deleted.
@@ -125,15 +143,21 @@ export function buildEnvelopeCertificateKey(
   );
 }
 
+/**
+ * A drawn signature, under a key of its own for each submission: of two
+ * submissions by the same signer at once, the one that fails then deletes
+ * only its own pictures, never the ones the other saved.
+ */
 export function buildSignatureImageKey(
   input: EnvelopeStorageIdentity & {
     fieldId: string;
+    submissionId: string;
   },
 ): string {
   return path.posix.join(
     buildEnvelopePrefix(input),
     "signatures",
-    `${input.fieldId}.png`,
+    `${input.fieldId}-${input.submissionId}.png`,
   );
 }
 
