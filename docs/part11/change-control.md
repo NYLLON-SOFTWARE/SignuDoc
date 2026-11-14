@@ -16,8 +16,10 @@ For a commit, the run on the GitHub Actions page is your test evidence. Save its
 1. **Identify** the commit you want, and list the commits between it and the one you run now (`git log <current>..<new> --oneline`).
 2. **Assess** which ones touch the files in the [traceability matrix](traceability-matrix.md). Any database migration (`db/migrations/`) is a change to the record structure and needs a closer look.
 3. **Check** that CI passed for the new commit, and file the run link.
-4. **Test** on a separate test install, not on production:
-   - Deploy the new commit to a Vercel preview or a second project with its own database.
+4. **Test** on a separate test install with **its own database and Blob store**, never on production data:
+   - Use a second Vercel project with its own Neon database and Blob store, or set the Preview environment's database and storage variables to separate test resources. By default a preview deployment uses the same database as production, so testing on one would change real records.
+   - A preview build does not apply migrations unless `MIGRATE_ON_PREVIEW=1` is set for the Preview environment. Set it only when previews have their own database.
+   - Deploy the new commit there, and check in the build log that the migrations ran.
    - Re-run the [OQ](operational-qualification.md) scripts for every requirement a changed file touches.
    - Re-run OQ-04 and OQ-07 for any change at all.
 5. **Approve** the change: who reviewed it, what was tested, any deviations, and the decision.
