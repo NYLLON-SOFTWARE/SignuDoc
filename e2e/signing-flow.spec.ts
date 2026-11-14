@@ -362,30 +362,52 @@ test("a new install is set up, a sender sends a PDF and a recipient signs it", a
   await test.step("add a signer", async () => {
     await page.getByLabel("Signer 1 name").fill("Riley Recipient");
     await page.getByLabel("Signer 1 email").fill(signerEmail);
-    // One extra check per signer: picking the access code shows its field,
-    // and picking another option hides it again.
-    const accessCode = page.getByLabel("Signer 1 access code");
-    await expect(
-      page.getByLabel("Signer 1 check: No extra check"),
-    ).toBeChecked();
-    await expect(accessCode).toHaveCount(0);
-    await page
-      .getByLabel(
-        "Signer 1 check: Ask for an access code you give them yourself",
-      )
-      .check();
-    await expect(accessCode).toBeVisible();
-    await page
-      .getByLabel(
-        "Signer 1 check: Email them a one-time code when they open the link",
-      )
-      .check();
-    await expect(accessCode).toHaveCount(0);
-    await page.getByLabel("Signer 1 check: No extra check").check();
     // Someone who gets the finished document without signing it.
     await page.getByRole("button", { name: "+ Add a copy recipient" }).click();
     await page.getByLabel("Copy recipient 1 name").fill("Casey Copy");
     await page.getByLabel("Copy recipient 1 email").fill(copyEmail);
+
+    // One extra check per signer. Each choice is saved, read back, and
+    // replaced by the next one; the recipient later signs with no check,
+    // which shows the server dropped the earlier ones.
+    const accessCode = page.getByLabel("Signer 1 access code");
+    const choice = (label: string) =>
+      page.getByLabel(`Signer 1 check: ${label}`);
+    const none = choice("No extra check");
+    const emailCode = choice(
+      "Email them a one-time code when they open the link",
+    );
+    const ownCode = choice("Ask for an access code you give them yourself");
+    const saveAndReopen = async () => {
+      await page.getByRole("button", { name: "Next →" }).click();
+      await expect(page).toHaveURL(/\/prepare$/);
+      await page.goto(`/envelopes/${envelopeId}/signers`);
+    };
+
+    await expect(none).toBeChecked();
+    await expect(accessCode).toHaveCount(0);
+
+    await ownCode.check();
+    await expect(accessCode).toBeVisible();
+    // Picking an access code without typing one blocks the next step.
+    await expect(
+      page.getByText("Type the code you will give them"),
+    ).toBeVisible();
+    await expect(page.getByRole("button", { name: "Next →" })).toBeDisabled();
+    await accessCode.fill("4444");
+    await saveAndReopen();
+    await expect(ownCode).toBeChecked();
+    await expect(page.getByText("(a code is set;")).toBeVisible();
+
+    await emailCode.check();
+    await expect(accessCode).toHaveCount(0);
+    await saveAndReopen();
+    await expect(emailCode).toBeChecked();
+    await expect(ownCode).not.toBeChecked();
+
+    await none.check();
+    await saveAndReopen();
+    await expect(none).toBeChecked();
     await page.getByRole("button", { name: "Next →" }).click();
     await expect(page).toHaveURL(/\/prepare$/);
   });
