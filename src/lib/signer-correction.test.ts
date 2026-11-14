@@ -67,4 +67,18 @@ test("a signer_corrected event is described in plain words", () => {
     }),
     "Signer corrected from Rily <old@example.test> to Riley Recipient <new@example.test>",
   );
+  assert.equal(
+    describeSignerCorrectedEvent({
+      previousName: "Riley Recipient",
+      signerName: "Riley Recipient",
+    }),
+    "Signer email was corrected",
+  );
+  assert.equal(
+    describeSignerCorrectedEvent({
+      previousName: "Rily",
+      signerName: "Riley Recipient",
+    }),
+    "Signer name corrected from Rily to Riley Recipient",
+  );
 });

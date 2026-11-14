@@ -2499,8 +2499,150 @@ type PersistedSignerCorrection = {
   signerEmail: string;
   signerId: string;
   signerName: string;
+  signerOrder: number;
   userId: string;
 };
+
+/**
+ * Puts a notified signer back as they were when sending their new
+ * invitation failed. Another correction of the same person can land while
+ * that send is in flight; restoring then would revive the first link and
+ * drop the second. The row is only written if it still holds this
+ * correction's address and token. If a later audit event is already
+ * chained, the original event stays and a second event records the
+ * reversal so the trail matches the row.
+ */
+async function revertFailedSignerCorrection(
+  persisted: PersistedSignerCorrection,
+  context: CorrectSentEnvelopeSignerContext,
+  database: DbPool,
+): Promise<void> {
+  const issuedLink = persisted.issuedLink;
+
+  if (!issuedLink) {
+    return;
+  }
+
+  await withTransaction(async (tx) => {
+    const envelope = await queryOne<{ id: string }>(
+      tx,
+      `
+        SELECT id
+        FROM envelopes
+        WHERE id = $1 AND user_id = $2 AND status = 'sent'
+        FOR NO KEY UPDATE
+      `,
+      [persisted.envelopeId, persisted.userId],
+    );
+
+    if (!envelope) {
+      return;
+    }
+
+    const restored = await tx.query(
+      `
+        UPDATE signers
+        SET
+          name = $1,
+          email = $2,
+          signing_token_hash = $3,
+          signing_token_expires_at = $4,
+          last_notified_at = $5,
+          consented_at = $6,
+          email_code_hash = $7,
+          email_code_expires_at = $8,
+          email_code_attempts = $9,
+          email_code_sent_at = $10,
+          updated_at = $11
+        WHERE id = $12
+          AND envelope_id = $13
+          AND status = 'notified'
+          AND name = $14
+          AND email = $15
+          AND signing_token_hash = $16
+      `,
+      [
+        persisted.previous.name,
+        persisted.previous.email,
+        persisted.previous.signingTokenHash,
+        persisted.previous.signingTokenExpiresAt,
+        persisted.previous.lastNotifiedAt,
+        persisted.previous.consentedAt,
+        persisted.previous.emailCodeHash,
+        persisted.previous.emailCodeExpiresAt,
+        persisted.previous.emailCodeAttempts,
+        persisted.previous.emailCodeSentAt,
+        persisted.previous.updatedAt,
+        persisted.signerId,
+        persisted.envelopeId,
+        persisted.signerName,
+        persisted.signerEmail,
+        issuedLink.tokenHash,
+      ],
+    );
+
+    if (restored.rowCount !== 1) {
+      return;
+    }
+
+    await lockEnvelopeAuditChain(persisted.envelopeId, tx);
+
+    const deleted = await tx.query(
+      `
+        DELETE FROM audit_events
+        WHERE envelope_id = $1
+          AND id = $2
+          AND sequence = (
+            SELECT max(sequence) FROM audit_events WHERE envelope_id = $1
+          )
+      `,
+      [persisted.envelopeId, persisted.auditEventId],
+    );
+
+    if (deleted.rowCount === 1) {
+      await tx.query(
+        `
+          UPDATE envelopes
+          SET updated_at = $1
+          WHERE id = $2
+        `,
+        [persisted.envelopeUpdatedAt, persisted.envelopeId],
+      );
+      return;
+    }
+
+    const reversedAt = Math.floor(Date.now() / 1000);
+
+    await recordAuditEvent(
+      {
+        actorEmail: context.senderEmail,
+        actorType: "sender",
+        createdAt: reversedAt,
+        envelopeId: persisted.envelopeId,
+        event: "signer_corrected",
+        ipAddress: context.ipAddress ?? null,
+        metadata: {
+          previousEmail: persisted.signerEmail,
+          previousName: persisted.signerName,
+          signerEmail: persisted.previous.email,
+          signerId: persisted.signerId,
+          signerName: persisted.previous.name,
+          signerOrder: persisted.signerOrder,
+        },
+        userAgent: context.userAgent ?? null,
+      },
+      tx,
+    );
+    await tx.query(
+      `
+        UPDATE envelopes
+        SET updated_at = $1
+        WHERE id = $2
+      `,
+      [reversedAt, persisted.envelopeId],
+    );
+  }, database);
+}
 
 /**
  * Fixes the name and/or email of a signer who has not signed or declined on
@@ -2653,6 +2795,7 @@ export async function correctSentEnvelopeSigner(
         signerEmail: signer.email,
         signerId,
         signerName: signer.name,
+        signerOrder: signer.signOrder,
         userId,
       } satisfies PersistedSignerCorrection;
     }
@@ -2797,6 +2940,7 @@ export async function correctSentEnvelopeSigner(
       signerEmail: nextEmail,
       signerId,
       signerName: nextName,
+      signerOrder: signer.signOrder,
       userId,
     } satisfies PersistedSignerCorrection;
   }, database);
@@ -2811,10 +2955,11 @@ export async function correctSentEnvelopeSigner(
     });
   }
 
-  const mailer = emailService ?? createEmailService();
   let invitationMessageId: string | undefined;
 
   try {
+    const mailer = emailService ?? createEmailService();
+
     invitationMessageId = (
       await mailer.send(
         buildSigningInvitationEmail({
@@ -2829,72 +2974,14 @@ export async function correctSentEnvelopeSigner(
       )
     ).messageId;
   } catch (error) {
-    await withTransaction(async (tx) => {
-      await tx.query(
-        `
-          UPDATE envelopes
-          SET updated_at = $1
-          WHERE id = $2
-            AND user_id = $3
-            AND status = 'sent'
-        `,
-        [persisted.envelopeUpdatedAt, persisted.envelopeId, persisted.userId],
-      );
-
-      await tx.query(
-        `
-          UPDATE signers
-          SET
-            name = $1,
-            email = $2,
-            signing_token_hash = $3,
-            signing_token_expires_at = $4,
-            last_notified_at = $5,
-            consented_at = $6,
-            email_code_hash = $7,
-            email_code_expires_at = $8,
-            email_code_attempts = $9,
-            email_code_sent_at = $10,
-            updated_at = $11
-          WHERE id = $12
-            AND envelope_id = $13
-            AND status = 'notified'
-        `,
-        [
-          persisted.previous.name,
-          persisted.previous.email,
-          persisted.previous.signingTokenHash,
-          persisted.previous.signingTokenExpiresAt,
-          persisted.previous.lastNotifiedAt,
-          persisted.previous.consentedAt,
-          persisted.previous.emailCodeHash,
-          persisted.previous.emailCodeExpiresAt,
-          persisted.previous.emailCodeAttempts,
-          persisted.previous.emailCodeSentAt,
-          persisted.previous.updatedAt,
-          persisted.signerId,
-          persisted.envelopeId,
-        ],
-      );
-
-      await lockEnvelopeAuditChain(persisted.envelopeId, tx);
-      await tx.query(
-        `
-          DELETE FROM audit_events
-          WHERE envelope_id = $1
-            AND id = $2
-            AND sequence = (
-              SELECT max(sequence) FROM audit_events WHERE envelope_id = $1
-            )
-        `,
-        [persisted.envelopeId, persisted.auditEventId],
-      );
-    }, database).catch((rollbackError) => {
-      console.error(
-        `Failed to roll back a signer correction for envelope ${persisted.envelopeId} after email delivery failure:`,
-        rollbackError,
-      );
-    });
+    await revertFailedSignerCorrection(persisted, context, database).catch(
+      (rollbackError) => {
+        console.error(
+          `Failed to roll back a signer correction for envelope ${persisted.envelopeId} after email delivery failure:`,
+          rollbackError,
+        );
+      },
+    );
 
     throw error;
   }

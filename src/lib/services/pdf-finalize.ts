@@ -132,6 +132,8 @@ function redactAuditEventMetadataForRecipients(
   delete nextMetadata.signerEmail;
   // Who an email went to is another party's address.
   delete nextMetadata.recipient;
+  // A correction's previous address is the same kind of third-party email.
+  delete nextMetadata.previousEmail;
 
   return Object.keys(nextMetadata).length > 0 ? nextMetadata : null;
 }
@@ -890,7 +892,18 @@ function describeSignerEvidence(
   );
   const details: string[] = [];
   const signed = forSigner.find((event) => event.event === "signed");
-  const consented = forSigner.find((event) => event.event === "consented");
+  // A correction clears the row's consent. The first consented event for
+  // this signer id can still be the previous person's, so only agreement
+  // recorded after the latest correction counts as this recipient's.
+  const latestCorrectionIndex = forSigner.reduce(
+    (found, event, index) =>
+      event.event === "signer_corrected" ? index : found,
+    -1,
+  );
+  const consented = forSigner.find(
+    (event, index) =>
+      event.event === "consented" && index > latestCorrectionIndex,
+  );
   const checks = [
     "possession of the emailed signing link",
     ...readStringArray(signed?.metadata?.authMethods).map(

@@ -54,6 +54,14 @@ export function describeSignerCorrectedEvent(
     return `Signer name corrected from ${previousName} to ${name}`;
   }
 
+  // Recipient certificates strip addresses. Name-only wording still holds;
+  // an email-only change has to be named without the addresses themselves.
+  if (!previousEmail && !email && previousName && name) {
+    return previousName === name
+      ? "Signer email was corrected"
+      : `Signer name corrected from ${previousName} to ${name}`;
+  }
+
   return `Signer corrected from ${formatSignerPerson(previousName, previousEmail)} to ${formatSignerPerson(name, email)}`;
 }
 
@@ -115,7 +123,7 @@ export async function listAuditEventsForEnvelope(
         created_at AS "createdAt"
       FROM audit_events
       WHERE envelope_id = $1
-      ORDER BY created_at ASC, id ASC
+      ORDER BY sequence ASC NULLS FIRST, created_at ASC, id ASC
     `,
     [envelopeId],
   );

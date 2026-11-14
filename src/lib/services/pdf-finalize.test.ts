@@ -264,6 +264,110 @@ test("the certificate names the people who were sent a copy", async () => {
   assert.ok(!(await extractText(without)).includes("Copy recipients"));
 });
 
+test("recipient certificates omit a correction's previous email", async () => {
+  const fixture = await makeFixture();
+  const previousEmail = "previous.signer@hide.test";
+  const auditEvents: AuditEventRecord[] = [
+    {
+      actorEmail: "sam@example.test",
+      actorType: "sender",
+      createdAt: 1_800_000_000 - 50,
+      envelopeId: fixture.envelope.id,
+      event: "signer_corrected",
+      id: "event-correction",
+      metadata: {
+        previousEmail,
+        previousName: SIGNER_NAME,
+        signerEmail: "lukasz@example.com",
+        signerId: "signer-1",
+        signerName: SIGNER_NAME,
+      },
+    },
+    ...fixture.auditEvents,
+  ];
+  const render = (redactForRecipients: boolean) =>
+    renderEnvelopeCertificatePdf(
+      {
+        auditEvents,
+        envelope: fixture.envelope,
+        redactForRecipients,
+        signers: fixture.signers,
+      },
+      { seal: saveUnsealed },
+    ).then(async (bytes) => (await extractText(bytes)).replace(/\s+/g, " "));
+  const full = await render(false);
+  const redacted = await render(true);
+
+  assert.ok(full.includes(previousEmail));
+  assert.ok(full.includes("Signer email corrected from"));
+  assert.ok(!redacted.includes(previousEmail));
+  assert.ok(redacted.includes("Signer email was corrected"));
+});
+
+test("the certificate credits consent recorded after a signer correction", async () => {
+  const fixture = await makeFixture();
+  const auditEvents: AuditEventRecord[] = [
+    {
+      actorEmail: "old@example.com",
+      actorType: "signer",
+      createdAt: 1_799_999_000,
+      envelopeId: fixture.envelope.id,
+      event: "consented",
+      id: "event-old-consent",
+      metadata: {
+        disclosureVersion: "old-version",
+        signerId: "signer-1",
+        signerName: SIGNER_NAME,
+      },
+    },
+    {
+      actorEmail: "sam@example.test",
+      actorType: "sender",
+      createdAt: 1_799_999_010,
+      envelopeId: fixture.envelope.id,
+      event: "signer_corrected",
+      id: "event-correction",
+      metadata: {
+        previousEmail: "old@example.com",
+        previousName: SIGNER_NAME,
+        signerEmail: "lukasz@example.com",
+        signerId: "signer-1",
+        signerName: SIGNER_NAME,
+      },
+    },
+    {
+      actorEmail: "lukasz@example.com",
+      actorType: "signer",
+      createdAt: 1_800_000_050,
+      envelopeId: fixture.envelope.id,
+      event: "consented",
+      id: "event-new-consent",
+      metadata: {
+        disclosureVersion: "new-version",
+        signerId: "signer-1",
+        signerName: SIGNER_NAME,
+      },
+    },
+    ...fixture.auditEvents,
+  ];
+  const text = (
+    await extractText(
+      await renderEnvelopeCertificatePdf(
+        {
+          auditEvents,
+          envelope: fixture.envelope,
+          signers: fixture.signers,
+        },
+        { seal: saveUnsealed },
+      ),
+    )
+  ).replace(/\s+/g, " ");
+  const signersSection = text.split("Audit events")[0] ?? "";
+
+  assert.ok(signersSection.includes("disclosure new-version"));
+  assert.ok(!signersSection.includes("disclosure old-version"));
+});
+
 test("numbers and dropdown choices are stamped as text, radio buttons as rings", async () => {
   const fixture = await makeFixture();
   const base = {
