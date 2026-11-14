@@ -362,6 +362,26 @@ test("a new install is set up, a sender sends a PDF and a recipient signs it", a
   await test.step("add a signer", async () => {
     await page.getByLabel("Signer 1 name").fill("Riley Recipient");
     await page.getByLabel("Signer 1 email").fill(signerEmail);
+    // One extra check per signer: picking the access code shows its field,
+    // and picking another option hides it again.
+    const accessCode = page.getByLabel("Signer 1 access code");
+    await expect(
+      page.getByLabel("Signer 1 check: No extra check"),
+    ).toBeChecked();
+    await expect(accessCode).toHaveCount(0);
+    await page
+      .getByLabel(
+        "Signer 1 check: Ask for an access code you give them yourself",
+      )
+      .check();
+    await expect(accessCode).toBeVisible();
+    await page
+      .getByLabel(
+        "Signer 1 check: Email them a one-time code when they open the link",
+      )
+      .check();
+    await expect(accessCode).toHaveCount(0);
+    await page.getByLabel("Signer 1 check: No extra check").check();
     // Someone who gets the finished document without signing it.
     await page.getByRole("button", { name: "+ Add a copy recipient" }).click();
     await page.getByLabel("Copy recipient 1 name").fill("Casey Copy");
