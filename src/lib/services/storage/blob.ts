@@ -5,6 +5,7 @@ import { ServiceConfigurationError } from "../service-config.ts";
 import { hasBlobCredentials } from "./driver.ts";
 import {
   normalizeStorageKey,
+  type StorageObjectHead,
   StorageObjectNotFoundError,
   type StorageService,
 } from "./types.ts";
@@ -56,6 +57,33 @@ export function createBlobStorageService({
     return { normalizedKey, result };
   }
 
+  async function headObject(key: string): Promise<StorageObjectHead> {
+    const normalizedKey = normalizeStorageKey(key);
+
+    try {
+      const metadata = await client.head(normalizedKey);
+
+      return {
+        bucketName: BLOB_BUCKET_NAME,
+        contentLength: metadata.size,
+        contentType: metadata.contentType,
+        etag: metadata.etag,
+        exists: true,
+        key: normalizedKey,
+      };
+    } catch (error) {
+      if (error instanceof BlobNotFoundError) {
+        return {
+          bucketName: BLOB_BUCKET_NAME,
+          exists: false,
+          key: normalizedKey,
+        };
+      }
+
+      throw error;
+    }
+  }
+
   return {
     async deleteObject(key) {
       await client.del(normalizeStorageKey(key));
@@ -86,51 +114,37 @@ export function createBlobStorageService({
         stream: result.stream,
       };
     },
-    async headObject(key) {
-      const normalizedKey = normalizeStorageKey(key);
-
-      try {
-        const metadata = await client.head(normalizedKey);
-
-        return {
-          bucketName: BLOB_BUCKET_NAME,
-          contentLength: metadata.size,
-          contentType: metadata.contentType,
-          etag: metadata.etag,
-          exists: true,
-          key: normalizedKey,
-        };
-      } catch (error) {
-        if (error instanceof BlobNotFoundError) {
-          return {
-            bucketName: BLOB_BUCKET_NAME,
-            exists: false,
-            key: normalizedKey,
-          };
-        }
-
-        throw error;
-      }
-    },
+    headObject,
     async putObject(input) {
       const normalizedKey = normalizeStorageKey(input.key);
 
-      await client.put(
-        normalizedKey,
-        Buffer.from(
-          input.body.buffer,
-          input.body.byteOffset,
-          input.body.byteLength,
-        ),
-        {
-          access: BLOB_ACCESS,
-          // Keys are complete and deterministic: the same key must always
-          // name the same object, and writing it again replaces it.
-          addRandomSuffix: false,
-          allowOverwrite: true,
-          contentType: input.contentType,
-        },
-      );
+      try {
+        await client.put(
+          normalizedKey,
+          Buffer.from(
+            input.body.buffer,
+            input.body.byteOffset,
+            input.body.byteLength,
+          ),
+          {
+            access: BLOB_ACCESS,
+            // Keys are complete and deterministic: the same key must always
+            // name the same object. Writing it again replaces it, unless the
+            // caller asked for what is there to be kept, and then Blob
+            // itself refuses the write.
+            addRandomSuffix: false,
+            allowOverwrite: !input.keepExisting,
+            contentType: input.contentType,
+          },
+        );
+      } catch (error) {
+        // The SDK has no error of its own for "something is already stored
+        // here", so ask. An object that is there is what was asked for; a
+        // write that failed for any other reason is still a failure.
+        if (!input.keepExisting || !(await headObject(normalizedKey)).exists) {
+          throw error;
+        }
+      }
 
       return {
         bucketName: BLOB_BUCKET_NAME,

@@ -41,6 +41,13 @@ export interface StorageService {
     body: Uint8Array;
     contentType: string;
     key: string;
+    /**
+     * Leave an object that is already stored under this key as it is. The
+     * store itself refuses the second write, so of two writers that arrive
+     * together exactly one is kept. Without this, a write replaces what is
+     * there.
+     */
+    keepExisting?: boolean;
   }): Promise<StorageObjectRef>;
 }
 

@@ -1580,17 +1580,12 @@ export async function saveEnvelopeThumbnailForUser(
     userId,
   });
 
-  // Two uploads that arrive together can both get past this check. Both are
-  // drawn from the same page, so whichever is written last is as good.
-  const stored = await storageService.headObject(key);
-
-  if (!stored.exists) {
-    await storageService.putObject({
-      body,
-      contentType: THUMBNAIL_CONTENT_TYPE,
-      key,
-    });
-  }
+  await storageService.putObject({
+    body,
+    contentType: THUMBNAIL_CONTENT_TYPE,
+    keepExisting: true,
+    key,
+  });
 
   // The envelope may have been deleted while the picture was being written:
   // by its owner, by the cleanup job or with the whole account. Each of
