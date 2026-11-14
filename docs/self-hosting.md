@@ -55,7 +55,10 @@ To clear it, make the database's values write-only. This stays inside Vercel:
 1. Open the project in Vercel, then **Storage**, then the Neon database, then **Settings**.
 2. Under **Allowed Environments**, choose **Production only** and save. Vercel removes the Preview and Development connections and stores the values as Secrets.
 3. On the same page, under **Secure This Resource**, click **Rotate Secrets**, so the database password that was readable before stops working.
-4. Open **Deployments** and redeploy the latest production deployment.
+4. While you are in the project, add a `BETTER_AUTH_SECRET` environment variable (Production, as a Secret) with a value from `openssl rand -hex 32`, so later password changes leave sign-ins alone.
+5. Open **Deployments** and redeploy the latest production deployment.
+
+Do this right after the deploy, before people use the site. Unless `BETTER_AUTH_SECRET` was already set, the site's own secret comes from the database password, so step 3 (and step 4) changes it: everyone is signed out, the site makes a new key for sealing documents (PDFs sealed before still verify, under the old certificate), and anyone in the middle of signing with an outside signing provider has to start that step again.
 
 After this, preview deployments have no database and open on the page that asks you to connect one. That only matters if you build changes on branches before putting them live.
 
