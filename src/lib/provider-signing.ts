@@ -246,7 +246,7 @@ export async function startProviderSigning(
   const earlier = await database.query<{ revisionKey: string }>(
     `
       UPDATE provider_signing_sessions
-      SET state = 'failed'
+      SET state = 'failed', secret_data = ''
       WHERE signer_id = $1 AND state = 'pending'
       RETURNING revision_key AS "revisionKey"
     `,
@@ -287,18 +287,32 @@ export async function startProviderSigning(
   return { redirectUrl: step.redirectUrl };
 }
 
+function alreadyClaimed(token: string): ProviderSigningError {
+  return new ProviderSigningError(
+    "This signing session is already being completed.",
+    "expired",
+    token,
+  );
+}
+
+/**
+ * Ends a session that will not finish, if it is still in the state the
+ * caller saw (`signing` only for the return that claimed it), and deletes
+ * its revision and its secrets.
+ */
 async function failSession(
   session: SessionRow,
   database: DbPool,
   storageService: StorageService,
+  from: "pending" | "signing",
 ) {
   const failed = await database.query(
     `
       UPDATE provider_signing_sessions
-      SET state = 'failed'
-      WHERE id = $1 AND state IN ('pending', 'signing')
+      SET state = 'failed', secret_data = ''
+      WHERE id = $1 AND state = $2
     `,
-    [session.id],
+    [session.id, from],
   );
 
   if (failed.rowCount === 1) {
@@ -375,18 +389,14 @@ export async function resumeProviderSigning(
   // twice) is finishing it. Leave it to finish: failing the session here
   // would delete the revision it is saving.
   if (session.state === "signing" || session.state === "completed") {
-    throw new ProviderSigningError(
-      "This signing session is already being completed.",
-      "expired",
-      secret.token,
-    );
+    throw alreadyClaimed(secret.token);
   }
 
   if (
     session.state !== "pending" ||
     session.expiresAt < Math.floor(Date.now() / 1000)
   ) {
-    await failSession(session, database, storageService);
+    await failSession(session, database, storageService, "pending");
     throw new ProviderSigningError(
       "This signing session has ended.",
       "expired",
@@ -394,10 +404,27 @@ export async function resumeProviderSigning(
     );
   }
 
+  // Each return claims the session before the provider is asked anything,
+  // so the provider's one-time code is used once, and only the return that
+  // claimed the session can fail it. A return that loses the claim stops
+  // here and changes nothing.
+  const claimed = await database.query(
+    `
+      UPDATE provider_signing_sessions
+      SET state = 'signing'
+      WHERE id = $1 AND state = 'pending'
+    `,
+    [session.id],
+  );
+
+  if (claimed.rowCount !== 1) {
+    throw alreadyClaimed(secret.token);
+  }
+
   const provider = signingProviderById(session.provider, env);
 
   if (!provider) {
-    await failSession(session, database, storageService);
+    await failSession(session, database, storageService, "signing");
     throw new ProviderSigningError(
       "The signing provider is not set up any more.",
       "failed",
@@ -417,7 +444,7 @@ export async function resumeProviderSigning(
       state: session.id,
     });
   } catch (error) {
-    await failSession(session, database, storageService);
+    await failSession(session, database, storageService, "signing");
     console.error(`[signing] ${provider.name} did not sign:`, error);
     throw new ProviderSigningError(
       error instanceof SigningProviderError ? error.message : "Signing failed.",
@@ -430,36 +457,17 @@ export async function resumeProviderSigning(
   }
 
   if (step.kind === "redirect") {
+    // On to the provider's next step; the session waits for the next return.
     await database.query(
       `
         UPDATE provider_signing_sessions
-        SET secret_data = $1
-        WHERE id = $2 AND state = 'pending'
+        SET secret_data = $1, state = 'pending'
+        WHERE id = $2 AND state = 'signing'
       `,
       [sealSecret({ ...secret, providerData: step.data }, env), session.id],
     );
 
     return { redirectUrl: step.redirectUrl };
-  }
-
-  // One return finishes the session. A second one (a reload, or the
-  // provider calling back twice) stops here instead of writing the revision
-  // again.
-  const claimed = await database.query(
-    `
-      UPDATE provider_signing_sessions
-      SET state = 'signing'
-      WHERE id = $1 AND state = 'pending'
-    `,
-    [session.id],
-  );
-
-  if (claimed.rowCount !== 1) {
-    throw new ProviderSigningError(
-      "This signing session is already being completed.",
-      "expired",
-      secret.token,
-    );
   }
 
   try {
@@ -537,7 +545,7 @@ export async function resumeProviderSigning(
     // submission deleted it (see commitProviderRevision in signing.ts).
     return { redirectPath: result.redirectPath };
   } catch (error) {
-    await failSession(session, database, storageService);
+    await failSession(session, database, storageService, "signing");
 
     if (error instanceof SignerSignatureError) {
       console.error("[signing] The provider's signature was refused:", error);

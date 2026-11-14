@@ -25,6 +25,7 @@ import {
   resumeProviderSigning,
   startProviderSigning,
 } from "./provider-signing.ts";
+import { runRetentionSweep } from "./retention.ts";
 import { verifyAuditChain } from "./services/audit.ts";
 import { findSignatures } from "./services/pdf-incremental.ts";
 import { resetValidationCache } from "./services/pdf-ltv.ts";
@@ -697,4 +698,61 @@ test("the next signer's turn starts when the signer is back from the provider", 
   // Casey's turn, and the invitation, start once Riley is back.
   assert.ok(Number(caseyRow.turn_started_at) >= backAt);
   assert.ok(Number(caseyRow.last_notified_at) >= backAt);
+});
+
+test("an ended session keeps no secrets, and the daily cleanup ends abandoned ones", async () => {
+  const draft = await createDraft();
+
+  await send(draft, "advanced");
+
+  const token = await linkFor(draft.riley.id);
+  // Riley goes to the provider and does not come back.
+  const abandoned = await signAtProvider(token, draft.riley);
+  const abandonedId = abandoned.query.get("state") ?? "";
+  const session = async () =>
+    (
+      await database.query<{
+        expires_at: string;
+        revision_key: string;
+        secret_data: string;
+        state: string;
+      }>(
+        `select expires_at, revision_key, secret_data, state from provider_signing_sessions where id = $1`,
+        [abandonedId],
+      )
+    ).rows[0]!;
+  const before = await session();
+  const expiresAt = Number(before.expires_at);
+
+  // Until it expires, the cleanup leaves it alone.
+  await runRetentionSweep({ database, now: expiresAt - 1, storageService });
+  assert.equal((await session()).state, "pending");
+  assert.equal(await stored(before.revision_key), true);
+
+  const summary = await runRetentionSweep({
+    database,
+    now: expiresAt,
+    storageService,
+  });
+  const after = await session();
+
+  assert.ok(summary.providerSigningSessionsEnded >= 1);
+  assert.equal(after.state, "failed");
+  assert.equal(after.secret_data, "");
+  assert.equal(await stored(before.revision_key), false);
+
+  // A session that finishes keeps none either.
+  const retry = await signAtProvider(token, draft.riley);
+
+  await retry.finish();
+
+  const rows = await database.query<{ secret_data: string; state: string }>(
+    `select secret_data, state from provider_signing_sessions where envelope_id = $1`,
+    [draft.envelopeId],
+  );
+
+  assert.deepEqual(
+    rows.rows.map((row) => row.secret_data),
+    ["", ""],
+  );
 });

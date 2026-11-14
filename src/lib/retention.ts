@@ -62,6 +62,8 @@ export type RetentionSweepSummary = {
   finishedEnvelopeDeletionFailures: string[];
   finishedEnvelopesDeleted: number;
   finishedEnvelopeWarningsSent: number;
+  /** Trips to a signing provider ended because nobody came back. */
+  providerSigningSessionsEnded: number;
   ranAt: number;
 };
 
@@ -291,6 +293,41 @@ async function deleteExpiredRecipientDownloadTokens(
   );
 
   return result.rowCount ?? 0;
+}
+
+/** How long past its expiry a claimed signing session is given up on. */
+const CLAIMED_PROVIDER_SESSION_GRACE_SECONDS = 60 * 60;
+
+/**
+ * Ends the trips to a signing provider that will not finish: sessions the
+ * signer never came back to, past their expiry, and sessions a return
+ * claimed but never finished (it stopped with its function), an hour past
+ * their expiry. Their prepared revisions and their secrets (the signing
+ * link, the submission and the provider's state) go with them. Neither kind
+ * holds the envelope's current revision, which only a completed session
+ * sets.
+ */
+async function endAbandonedProviderSessions(
+  now: number,
+  database: DbExecutor,
+  storageService: StorageService,
+): Promise<number> {
+  const ended = await database.query<{ revisionKey: string }>(
+    `
+      UPDATE provider_signing_sessions
+      SET state = 'failed', secret_data = ''
+      WHERE (state = 'pending' AND expires_at <= $1)
+        OR (state = 'signing' AND expires_at <= $2)
+      RETURNING revision_key AS "revisionKey"
+    `,
+    [now, now - CLAIMED_PROVIDER_SESSION_GRACE_SECONDS],
+  );
+
+  for (const row of ended.rows) {
+    await storageService.deleteObject(row.revisionKey).catch(() => undefined);
+  }
+
+  return ended.rowCount ?? 0;
 }
 
 function getClosureSchedule(requestedAt = getCurrentUnixTimestamp()) {
@@ -867,11 +904,17 @@ export async function runRetentionSweep({
     finishedEnvelopeDeletionFailures: [],
     finishedEnvelopesDeleted: 0,
     finishedEnvelopeWarningsSent: 0,
+    providerSigningSessionsEnded: 0,
     ranAt: now,
   };
 
   summary.expiredRecipientDownloadTokensDeleted =
     await deleteExpiredRecipientDownloadTokens(now, database);
+  summary.providerSigningSessionsEnded = await endAbandonedProviderSessions(
+    now,
+    database,
+    storageService,
+  );
 
   for (const envelope of staleDrafts) {
     try {

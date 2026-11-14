@@ -1954,7 +1954,7 @@ async function commitProviderRevision(
   const session = await tx.query(
     `
       UPDATE provider_signing_sessions
-      SET state = 'completed', completed_at = $1
+      SET state = 'completed', completed_at = $1, secret_data = ''
       WHERE id = $2 AND envelope_id = $3 AND state = 'signing'
     `,
     [now, completion.sessionId, envelopeId],
