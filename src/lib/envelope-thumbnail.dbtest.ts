@@ -32,6 +32,12 @@ const THUMBNAIL = Uint8Array.from([
   0x22, 0x00, 0x02, 0x11, 0x01, 0x03, 0x11, 0x01, 0xff, 0xd9,
 ]);
 
+// The same, but 480 x 512: a different picture that is just as valid.
+const OTHER_THUMBNAIL = Uint8Array.from([
+  0xff, 0xd8, 0xff, 0xc0, 0x00, 0x11, 0x08, 0x02, 0x00, 0x01, 0xe0, 0x03, 0x01,
+  0x22, 0x00, 0x02, 0x11, 0x01, 0x03, 0x11, 0x01, 0xff, 0xd9,
+]);
+
 let database: pg.Pool;
 let storageDir: string;
 let storageService: StorageService;
@@ -175,6 +181,29 @@ test("a browser that already holds the picture is answered without a read from f
   if (!mismatched.isNotModified) {
     await mismatched.picture.stream.cancel();
   }
+});
+
+test("an envelope keeps the first picture it is given", async () => {
+  const draft = await insertDraft();
+
+  await saveEnvelopeThumbnailForUser(
+    draft.userId,
+    draft.envelopeId,
+    THUMBNAIL,
+    { database, storageService },
+  );
+  // Accepted, and not kept: a browser that holds the first picture is told
+  // it is still good, so it has to stay the one that is stored.
+  await saveEnvelopeThumbnailForUser(
+    draft.userId,
+    draft.envelopeId,
+    OTHER_THUMBNAIL,
+    { database, storageService },
+  );
+
+  const stored = await storageService.getObject(thumbnailKey(draft));
+
+  assert.deepEqual(Array.from(stored.body), Array.from(THUMBNAIL));
 });
 
 test("quoting a picture's name does not show it to another account", async () => {

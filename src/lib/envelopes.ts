@@ -1547,6 +1547,12 @@ export async function getDraftEnvelopeDocumentForUser(
 /**
  * Keeps the picture of the first page that the sender's browser drew. The
  * bytes are checked before they are stored: see services/thumbnails.ts.
+ *
+ * An envelope keeps the first picture it is given. Its document never
+ * changes, so there is nothing a later picture could show that the first
+ * does not, and a browser is told its copy is still good by the envelope
+ * alone (buildThumbnailEtag), which only holds while the picture stays the
+ * same.
  */
 export async function saveEnvelopeThumbnailForUser(
   userId: string,
@@ -1574,11 +1580,17 @@ export async function saveEnvelopeThumbnailForUser(
     userId,
   });
 
-  await storageService.putObject({
-    body,
-    contentType: THUMBNAIL_CONTENT_TYPE,
-    key,
-  });
+  // Two uploads that arrive together can both get past this check. Both are
+  // drawn from the same page, so whichever is written last is as good.
+  const stored = await storageService.headObject(key);
+
+  if (!stored.exists) {
+    await storageService.putObject({
+      body,
+      contentType: THUMBNAIL_CONTENT_TYPE,
+      key,
+    });
+  }
 
   // The envelope may have been deleted while the picture was being written:
   // by its owner, by the cleanup job or with the whole account. Each of

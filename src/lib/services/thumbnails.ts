@@ -14,8 +14,9 @@ const THUMBNAIL_MIN_DIMENSION = 16;
  * The name a browser quotes back to ask whether its copy of a thumbnail is
  * still good (an ETag).
  *
- * A document never changes once it is uploaded, so neither does the picture
- * of its first page, and the name is made from the envelope alone. That lets
+ * A document never changes once it is uploaded, and an envelope keeps the
+ * first picture it is given (saveEnvelopeThumbnailForUser), so the name is
+ * made from the envelope alone. That lets
  * "your copy is still good" be answered without reading the picture from
  * file storage, where every read counts against the store's allowance. The
  * version is here to be raised if thumbnails are ever drawn differently.
