@@ -44,6 +44,8 @@ type SignerChecks = {
   hasAccessCode: boolean;
   removeAccessCode: boolean;
   requireEmailCode: boolean;
+  /** The sender picked "access code" (a saved code or one being typed). */
+  wantsAccessCode: boolean;
   /** Part 11 mode: what this signature means (21 CFR 11.50). */
   signatureMeaning: SignatureMeaning | null;
 };
@@ -90,6 +92,7 @@ function createSigner(
     localId,
     removeAccessCode: false,
     requireEmailCode: overrides?.requireEmailCode ?? false,
+    wantsAccessCode: overrides?.hasAccessCode ?? false,
     name: overrides?.name ?? "",
     signatureMeaning: overrides?.signatureMeaning ?? null,
     signerId: overrides?.signerId,
@@ -98,6 +101,39 @@ function createSigner(
       name: overrides?.touched?.name ?? false,
     },
   };
+}
+
+type SignerCheckChoice = "access_code" | "email_code" | "none";
+
+// One check per signer. The server still honours both at once (the signer
+// must then pass both), which older envelopes and API callers may have set.
+const SIGNER_CHECK_CHOICES: readonly {
+  label: string;
+  value: SignerCheckChoice;
+}[] = [
+  { label: "No extra check", value: "none" },
+  {
+    label: "Email them a one-time code when they open the link",
+    value: "email_code",
+  },
+  {
+    label: "Ask for an access code you give them yourself",
+    value: "access_code",
+  },
+];
+
+function signerCheckChoice(
+  signer: Pick<SignerChecks, "requireEmailCode" | "wantsAccessCode">,
+): SignerCheckChoice | "both" {
+  if (signer.requireEmailCode && signer.wantsAccessCode) {
+    return "both";
+  }
+
+  return signer.requireEmailCode
+    ? "email_code"
+    : signer.wantsAccessCode
+      ? "access_code"
+      : "none";
 }
 
 function buildInitialModel(record?: DraftSignerStepData): InitialModel {
@@ -199,8 +235,11 @@ function buildSignerErrors(signers: readonly ShellSigner[]) {
     }
 
     const accessCode = signer.accessCode.trim();
+    const keepsSavedCode = signer.hasAccessCode && !signer.removeAccessCode;
 
-    if (
+    if (signer.wantsAccessCode && accessCode.length === 0 && !keepsSavedCode) {
+      signerErrors.accessCode = "Type the code you will give them";
+    } else if (
       accessCode.length > 0 &&
       (accessCode.length < 4 || accessCode.length > 64)
     ) {
@@ -255,9 +294,10 @@ function buildSignerRequest(
     })),
     signers: signers.map((signer, index) => ({
       accessCode:
-        signer.accessCode.trim().length > 0
+        signer.wantsAccessCode && signer.accessCode.trim().length > 0
           ? signer.accessCode.trim()
-          : signer.removeAccessCode
+          : signer.hasAccessCode &&
+              (signer.removeAccessCode || !signer.wantsAccessCode)
             ? null
             : undefined,
       email: signer.email,
@@ -328,6 +368,21 @@ function SignerCard({
   onRemove: () => void;
   signer: ShellSigner;
 }) {
+  const keepsSavedCode = signer.hasAccessCode && !signer.removeAccessCode;
+  const checkChoice = signerCheckChoice(signer);
+  const choosePatch = (choice: SignerCheckChoice): Partial<SignerChecks> =>
+    choice === "access_code"
+      ? {
+          removeAccessCode: false,
+          requireEmailCode: false,
+          wantsAccessCode: true,
+        }
+      : {
+          accessCode: "",
+          removeAccessCode: signer.hasAccessCode,
+          requireEmailCode: choice === "email_code",
+          wantsAccessCode: false,
+        };
   const palette = getSignerPalette(index);
   const order = index + 1;
   const routeLabel =
@@ -499,73 +554,66 @@ function SignerCard({
             <span className="font-normal text-(--secondary)">(optional)</span>
           </p>
           <p className="text-[0.8125rem] leading-5 text-(--secondary)">
-            By default anyone holding the emailed link can sign. Add a check
+            By default anyone holding the emailed link can sign. Pick a check
             when the signer&apos;s identity matters.
           </p>
-          <label className="flex items-start gap-3">
-            <input
-              aria-label={`Email signer ${order} a one-time code`}
-              checked={signer.requireEmailCode}
-              className="mt-0.5 size-4.5 shrink-0 cursor-pointer accent-(--accent)"
-              disabled={disabled}
-              onChange={(event: ChangeEvent<HTMLInputElement>) =>
-                onChecksChange({ requireEmailCode: event.target.checked })
-              }
-              type="checkbox"
-            />
-            <span>Email a one-time code when they open the link</span>
-          </label>
-          <label className="grid gap-2">
-            <span className="text-[0.8125rem] font-semibold text-(--secondary)">
-              Access code you will give them yourself, for example by phone
-              {signer.hasAccessCode && !signer.removeAccessCode
-                ? " (a code is set; type a new one to change it)"
-                : ""}
-            </span>
-            <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+          {checkChoice === "both" ? (
+            <p className="text-[0.8125rem] leading-5 text-(--secondary)">
+              This signer has both an emailed code and an access code, so they
+              must pass both. Picking one option below removes the other.
+            </p>
+          ) : null}
+          <div className="grid gap-2" role="radiogroup">
+            {SIGNER_CHECK_CHOICES.map((choice) => (
+              <label className="flex items-start gap-3" key={choice.value}>
+                <input
+                  aria-label={`Signer ${order} check: ${choice.label}`}
+                  checked={checkChoice === choice.value}
+                  className="mt-0.5 size-4.5 shrink-0 cursor-pointer accent-(--accent)"
+                  disabled={disabled}
+                  name={`signer-${signer.localId}-check`}
+                  onChange={() => onChecksChange(choosePatch(choice.value))}
+                  type="radio"
+                  value={choice.value}
+                />
+                <span>{choice.label}</span>
+              </label>
+            ))}
+          </div>
+          {signer.wantsAccessCode ? (
+            <label className="grid gap-2">
+              <span className="text-[0.8125rem] font-semibold text-(--secondary)">
+                Access code you will give them yourself, for example by phone
+                {keepsSavedCode
+                  ? " (a code is set; type a new one to change it)"
+                  : ""}
+              </span>
               <input
                 aria-invalid={accessCodeError ? true : undefined}
                 aria-label={`Signer ${order} access code`}
                 autoComplete="off"
-                className="field-input flex-1"
+                className="field-input"
                 disabled={disabled}
                 maxLength={64}
                 onChange={(event: ChangeEvent<HTMLInputElement>) =>
-                  onChecksChange({
-                    accessCode: event.target.value,
-                    removeAccessCode: false,
-                  })
+                  onChecksChange({ accessCode: event.target.value })
                 }
                 placeholder={
-                  signer.hasAccessCode && !signer.removeAccessCode
-                    ? "••••••"
-                    : "No access code"
+                  keepsSavedCode ? "••••••" : "At least 4 characters"
                 }
                 type="text"
                 value={signer.accessCode}
               />
-              {signer.hasAccessCode && !signer.removeAccessCode ? (
-                <button
-                  className="btn-quiet btn-quiet-danger min-h-12"
-                  disabled={disabled}
-                  onClick={() =>
-                    onChecksChange({ accessCode: "", removeAccessCode: true })
-                  }
-                  type="button"
+              {accessCodeError ? (
+                <span
+                  className="text-xs font-semibold text-(--danger)"
+                  role="alert"
                 >
-                  Remove code
-                </button>
+                  {accessCodeError}
+                </span>
               ) : null}
-            </div>
-            {accessCodeError ? (
-              <span
-                className="text-xs font-semibold text-(--danger)"
-                role="alert"
-              >
-                {accessCodeError}
-              </span>
-            ) : null}
-          </label>
+            </label>
+          ) : null}
         </fieldset>
       </div>
     </li>
