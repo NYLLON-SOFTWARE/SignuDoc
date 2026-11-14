@@ -35,6 +35,11 @@ export type SetupShellView =
 type SetupShellProps = {
   hosted: boolean;
   onVercel: boolean;
+  /**
+   * A support address setup does not ask for, because SUPPORT_EMAIL sets it
+   * or one is saved already. Its domain helps guess the sending domain.
+   */
+  knownSupportAddress: string | null;
   /** RESEND_EMAIL_DOMAIN, set by the Resend integration on Vercel. */
   resendDomain: string | null;
   /** The host this site answers on, used to guess the sending domain. */
@@ -65,6 +70,7 @@ const emptyValues: SetupValues = {
 
 export function SetupShell({
   hosted,
+  knownSupportAddress,
   onVercel,
   resendDomain,
   siteHost,
@@ -84,6 +90,7 @@ export function SetupShell({
           <section className="panel w-full max-w-[520px] p-8 sm:p-10">
             <SetupContent
               hosted={hosted}
+              knownSupportAddress={knownSupportAddress}
               onVercel={onVercel}
               resendDomain={resendDomain}
               siteHost={siteHost}
@@ -100,6 +107,7 @@ export function SetupShell({
 
 function SetupContent({
   hosted,
+  knownSupportAddress,
   onVercel,
   resendDomain,
   siteHost,
@@ -191,6 +199,7 @@ function SetupContent({
   return (
     <SetupForm
       hosted={hosted}
+      knownSupportAddress={knownSupportAddress}
       resendDomain={resendDomain}
       siteHost={siteHost}
       view={view}
@@ -241,11 +250,13 @@ type SenderErrors = Partial<Record<keyof SenderAddressParts, string>>;
 
 function SetupForm({
   hosted,
+  knownSupportAddress,
   resendDomain,
   siteHost,
   view,
 }: {
   hosted: boolean;
+  knownSupportAddress: string | null;
   resendDomain: string | null;
   siteHost: string | null;
   view: Extract<SetupShellView, { view: "claim" | "create" }>;
@@ -280,7 +291,7 @@ function SetupForm({
   const asksForSupport = view.asksForSupportAddress;
   const suggestedRootDomain = asksForSender
     ? suggestSendingRootDomain({
-        emails: [values.email, values.supportAddress],
+        emails: [values.email, values.supportAddress, knownSupportAddress],
         siteHost,
       })
     : null;

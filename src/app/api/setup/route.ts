@@ -65,11 +65,30 @@ async function createAdminAccount(input: {
 // goes wrong here (no Resend key yet, a key that may only send, the free
 // plan's domain limit) is left for that page to explain, where the
 // administrator can try again.
+// It is given a few seconds at most: the account already exists by now,
+// and a slow answer from Resend must not turn a finished setup into an
+// error the administrator cannot retry.
+const ADD_SENDER_DOMAIN_TIMEOUT_MS = 4_000;
+
 async function addSenderDomain(): Promise<void> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+
   try {
-    await addEmailDomain();
+    await Promise.race([
+      addEmailDomain(),
+      new Promise<void>((resolve) => {
+        timer = setTimeout(() => {
+          console.error(
+            "Setup stopped waiting for Resend to add the sending domain.",
+          );
+          resolve();
+        }, ADD_SENDER_DOMAIN_TIMEOUT_MS);
+      }),
+    ]);
   } catch (error) {
     console.error("Setup could not add the sending domain to Resend:", error);
+  } finally {
+    clearTimeout(timer);
   }
 }
 
