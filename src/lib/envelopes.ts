@@ -76,7 +76,11 @@ import {
   recordAuditEvent,
   recordEmailSent,
 } from "./services/audit.ts";
-import { createEmailService, type EmailService } from "./services/email.ts";
+import {
+  createEmailService,
+  resolveEmailAddresses,
+  type EmailService,
+} from "./services/email.ts";
 import { withUserEmailLegalFooter } from "./services/email-legal-footer.ts";
 import { buildSigningInvitationEmail } from "./services/signing-invitation-email.ts";
 import {
@@ -2502,6 +2506,11 @@ export async function correctSentEnvelopeSigner(
   }: CorrectSentEnvelopeSignerOptions = {},
 ): Promise<CorrectSentSignerResult> {
   const parsedInput = correctSentSignerSchema.parse(input);
+  // Read settings before taking the envelope lock: an uncached read inside the
+  // transaction borrows a second pool connection, and overlapping corrections
+  // holding the others while they wait on the lock would starve it.
+  const branding = await getBranding();
+  const emailAddresses = emailService ? null : await resolveEmailAddresses();
 
   return withTransaction(async (tx) => {
     const envelope = await queryOne<{
@@ -2716,11 +2725,17 @@ export async function correctSentEnvelopeSigner(
     );
 
     if (invitationNeeded && issuedLink) {
-      const mailer = emailService ?? createEmailService();
+      const mailer =
+        emailService ??
+        createEmailService(
+          emailAddresses === null
+            ? {}
+            : { resolveAddresses: () => Promise.resolve(emailAddresses) },
+        );
       const invitationMessageId = (
         await mailer.send(
           buildSigningInvitationEmail({
-            branding: await getBranding(),
+            branding,
             envelopeTitle: envelope.title,
             expiresAt: envelope.expiresAt,
             senderName: context.senderName,
