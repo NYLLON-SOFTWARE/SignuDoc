@@ -730,7 +730,19 @@ export async function copyEnvelopeToDraft(
 
   try {
     await withTransaction(async (tx) => {
-      const source = await getEnvelopeByIdForUser(userId, sourceEnvelopeId, tx);
+      // Hold the source until this copy is stored. Without that lock a
+      // retention sweep can delete the envelope after this read and before
+      // its pages, recipients, and fields are read, and those empty lists
+      // would be stored as an incomplete draft.
+      //
+      // The lock an UPDATE takes, not FOR UPDATE: a signer opening the
+      // original needs a share of this row for their audit event.
+      const source = await getEnvelopeByIdForUser(
+        userId,
+        sourceEnvelopeId,
+        tx,
+        { lock: true },
+      );
 
       if (!source) {
         throw new EnvelopeMutationError("Envelope not found.", 404);
@@ -1077,6 +1089,7 @@ async function getEnvelopeByIdForUser(
   userId: string,
   envelopeId: string,
   database: DbExecutor,
+  { lock = false }: { lock?: boolean } = {},
 ): Promise<EnvelopeRecord | null> {
   const row = await queryOne<EnvelopeRow>(
     database,
@@ -1106,6 +1119,7 @@ async function getEnvelopeByIdForUser(
         updated_at AS "updatedAt"
       FROM envelopes
       WHERE id = $1 AND user_id = $2
+      ${lock ? "FOR NO KEY UPDATE" : ""}
     `,
     [envelopeId, userId],
   );

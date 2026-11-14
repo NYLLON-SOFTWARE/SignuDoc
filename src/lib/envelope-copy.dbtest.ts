@@ -9,7 +9,7 @@ import { PDFDocument } from "pdf-lib";
 import type pg from "pg";
 import { ZodError } from "zod";
 
-import { openTestDatabase } from "./db/test-database.ts";
+import { afterStatement, openTestDatabase } from "./db/test-database.ts";
 import {
   copyEnvelopeToDraft,
   createDraftEnvelope,
@@ -365,6 +365,46 @@ async function countEnvelopes(userId: string): Promise<number> {
   );
 
   return result.rows[0]!.total;
+}
+
+async function relatedCounts(envelopeId: string) {
+  const result = await database.query<{
+    fields: number;
+    pages: number;
+    recipients: number;
+    signers: number;
+  }>(
+    `
+      select
+        (select count(*)::int from envelope_pages where envelope_id = $1) as pages,
+        (select count(*)::int from signers where envelope_id = $1 and role = 'signer') as signers,
+        (select count(*)::int from signers where envelope_id = $1 and role = 'cc') as recipients,
+        (select count(*)::int from fields where envelope_id = $1) as fields
+    `,
+    [envelopeId],
+  );
+
+  return result.rows[0]!;
+}
+
+async function waitForLockWaiters(count: number) {
+  for (let attempt = 0; attempt < 300; attempt += 1) {
+    const result = await database.query<{ waiting: number }>(
+      `
+        select count(*)::int as waiting
+        from pg_stat_activity
+        where datname = current_database() and wait_event_type = 'Lock'
+      `,
+    );
+
+    if ((result.rows[0]?.waiting ?? 0) >= count) {
+      return;
+    }
+
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+
+  throw new Error(`Expected ${count} sessions to be waiting behind a lock.`);
 }
 
 function assertMutationError(statusCode: number) {
@@ -752,4 +792,85 @@ test("what is copied is checked", async () => {
     copyEnvelopeToDraft(userId, "   ", { database, storageService }),
     ZodError,
   );
+});
+
+test("a copy that loses the source to a purge does not leave a half-made draft", async () => {
+  const userId = await createUser();
+  const { envelopeId } = await createPreparedDraft(userId);
+
+  await markNotDraft(envelopeId, "completed");
+
+  const holder = await database.connect();
+
+  try {
+    await holder.query("begin");
+    await holder.query(
+      `select id from envelopes where id = $1 for no key update`,
+      [envelopeId],
+    );
+
+    const copy = copyEnvelopeToDraft(userId, envelopeId, {
+      database,
+      storageService,
+    });
+
+    copy.catch(() => undefined);
+    await waitForLockWaiters(1);
+
+    await holder.query(`delete from envelopes where id = $1`, [envelopeId]);
+    await holder.query("commit");
+
+    await assert.rejects(copy, assertMutationError(404));
+  } finally {
+    await holder.query("rollback").catch(() => undefined);
+    holder.release();
+  }
+
+  assert.equal(await countEnvelopes(userId), 0);
+});
+
+test("a purge waits for the copy, so the new draft still has the source's fields", async () => {
+  const userId = await createUser();
+  const { envelopeId } = await createPreparedDraft(userId);
+
+  await markNotDraft(envelopeId, "completed");
+
+  const original = await relatedCounts(envelopeId);
+  let purge: Promise<number> | undefined;
+
+  const copied = await copyEnvelopeToDraft(userId, envelopeId, {
+    database: afterStatement(
+      database,
+      (text) =>
+        text.includes("FOR NO KEY UPDATE") &&
+        text.includes("signature_level") &&
+        text.includes("FROM envelopes"),
+      async () => {
+        if (purge) {
+          return;
+        }
+
+        purge = deleteEnvelopesAndFiles([envelopeId], database, storageService);
+        purge.catch(() => undefined);
+        await waitForLockWaiters(1);
+      },
+    ),
+    storageService,
+  });
+
+  assert.ok(purge, "the copy never took hold of the source");
+  await purge;
+
+  assert.equal(await countEnvelopes(userId), 1);
+  assert.deepEqual(await relatedCounts(envelopeId), {
+    fields: 0,
+    pages: 0,
+    recipients: 0,
+    signers: 0,
+  });
+  assert.deepEqual(await relatedCounts(copied.id), original);
+  assert.equal((await envelopeColumns(copied.id)).status, "draft");
+  assert.equal(original.fields > 0, true);
+  assert.equal(original.signers > 0, true);
+  assert.equal(original.pages > 0, true);
 });
