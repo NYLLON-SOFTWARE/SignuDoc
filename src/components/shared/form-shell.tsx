@@ -23,6 +23,20 @@ type FieldShellProps = {
   readOnly?: boolean;
   type?: "text" | "email" | "password";
   value?: string;
+  /**
+   * Keeps password managers from treating this field as part of a login,
+   * for email fields that are not the account's own (a support address).
+   */
+  ignorePasswordManagers?: boolean;
+  /** Length limits, which password managers read when they make a password. */
+  maxLength?: number;
+  minLength?: number;
+  /**
+   * The rules a generated password must follow, in the format password
+   * managers (Safari, 1Password) read from the passwordrules attribute.
+   * https://developer.apple.com/password-rules/
+   */
+  passwordRules?: string;
 };
 
 type ShellButtonProps = {
@@ -51,8 +65,12 @@ export function FieldShell({
   disabled = false,
   error,
   helper,
+  ignorePasswordManagers = false,
   label,
+  maxLength,
+  minLength,
   name,
+  passwordRules,
   onChange,
   placeholder,
   readOnly = true,
@@ -80,12 +98,18 @@ export function FieldShell({
         )}
         disabled={disabled}
         id={inputId}
+        maxLength={maxLength}
+        minLength={minLength}
         name={name}
         onChange={onChange}
         placeholder={placeholder}
         readOnly={readOnly}
         type={type}
         value={value ?? ""}
+        {...(ignorePasswordManagers
+          ? { "data-1p-ignore": "true", "data-lpignore": "true" }
+          : {})}
+        {...(passwordRules ? { passwordrules: passwordRules } : {})}
       />
       {error ? (
         <FieldError

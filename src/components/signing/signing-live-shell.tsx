@@ -1581,7 +1581,7 @@ function CurrentSignerField({
       >
         <select
           aria-label={getFieldLabel(field)}
-          className={`h-full w-full cursor-pointer border-none bg-transparent px-1.5 text-sm outline-none ${
+          className={`h-full w-full cursor-pointer border-none bg-transparent bg-size-[0.75rem] bg-position-[right_0.25rem_center] pr-5 pl-1.5 text-sm outline-none ${
             textValue ? "text-(--fg)" : "text-(--secondary)"
           }`}
           id={`signing-field-${field.id}`}
