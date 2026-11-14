@@ -368,6 +368,72 @@ test("the certificate credits consent recorded after a signer correction", async
   assert.ok(!signersSection.includes("disclosure old-version"));
 });
 
+test("the certificate keeps restored consent after a reversed correction", async () => {
+  const fixture = await makeFixture();
+  const auditEvents: AuditEventRecord[] = [
+    {
+      actorEmail: "lukasz@example.com",
+      actorType: "signer",
+      createdAt: 1_799_999_000,
+      envelopeId: fixture.envelope.id,
+      event: "consented",
+      id: "event-kept-consent",
+      metadata: {
+        disclosureVersion: "kept-version",
+        signerId: "signer-1",
+        signerName: SIGNER_NAME,
+      },
+    },
+    {
+      actorEmail: "sam@example.test",
+      actorType: "sender",
+      createdAt: 1_799_999_010,
+      envelopeId: fixture.envelope.id,
+      event: "signer_corrected",
+      id: "event-correction",
+      metadata: {
+        previousEmail: "lukasz@example.com",
+        previousName: SIGNER_NAME,
+        signerEmail: "temporary@example.com",
+        signerId: "signer-1",
+        signerName: SIGNER_NAME,
+      },
+    },
+    {
+      actorEmail: "sam@example.test",
+      actorType: "sender",
+      createdAt: 1_799_999_020,
+      envelopeId: fixture.envelope.id,
+      event: "signer_corrected",
+      id: "event-reversal",
+      metadata: {
+        previousEmail: "temporary@example.com",
+        previousName: SIGNER_NAME,
+        reverted: true,
+        signerEmail: "lukasz@example.com",
+        signerId: "signer-1",
+        signerName: SIGNER_NAME,
+      },
+    },
+    ...fixture.auditEvents,
+  ];
+  const text = (
+    await extractText(
+      await renderEnvelopeCertificatePdf(
+        {
+          auditEvents,
+          envelope: fixture.envelope,
+          signers: fixture.signers,
+        },
+        { seal: saveUnsealed },
+      ),
+    )
+  ).replace(/\s+/g, " ");
+  const signersSection = text.split("Audit events")[0] ?? "";
+
+  assert.ok(signersSection.includes("disclosure kept-version"));
+});
+
 test("numbers and dropdown choices are stamped as text, radio buttons as rings", async () => {
   const fixture = await makeFixture();
   const base = {

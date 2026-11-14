@@ -1128,16 +1128,87 @@ test("a failed invitation does not undo a later correction of the same signer", 
   });
   assert.deepEqual(await auditEvents(envelopeId), [
     "signer_corrected",
-    "signer_corrected",
     "email_sent",
   ]);
   assert.equal((await verifyAuditChain(envelopeId, database)).ok, true);
+  const csv = await exportEnvelopeAuditCsv(userId, envelopeId, database);
+  assert.equal((csv.body.match(/Signer corrected/g) ?? []).length, 1);
+  assert.match(
+    csv.body,
+    /Signer email corrected from first@example\.test to second@example\.test/,
+  );
 });
 
-test("a failed invitation records a reversal when a later event blocks deleting it", async () => {
+test("a failed invitation leaves no correction in the audit trail when a later event is recorded", async () => {
   const { userId } = await createOwner();
   const envelopeId = await createEnvelope({ userId });
   const signer = await createSigner({ envelopeId });
+  const service: EmailService = {
+    async send() {
+      await recordAuditEvent(
+        {
+          actorEmail: signer.email,
+          actorType: "signer",
+          envelopeId,
+          event: "viewed",
+          metadata: { signerId: signer.signerId },
+        },
+        database,
+      );
+      throw new Error("mailbox down");
+    },
+    async sendBatch() {
+      throw new Error("not used");
+    },
+  };
+
+  await assert.rejects(
+    correct(
+      userId,
+      envelopeId,
+      signer.signerId,
+      { email: "riley.fixed@example.test" },
+      service,
+    ),
+    { message: "mailbox down" },
+  );
+
+  const stored = await readSigner(signer.signerId);
+  assert.equal(stored.email, signer.email);
+  assert.equal(stored.signing_token_hash, signer.tokenHash);
+  assert.deepEqual(await auditEvents(envelopeId), ["viewed"]);
+  assert.equal((await verifyAuditChain(envelopeId, database)).ok, true);
+
+  const csv = await exportEnvelopeAuditCsv(userId, envelopeId, database);
+  assert.doesNotMatch(csv.body, /Signer corrected/);
+  assert.doesNotMatch(csv.body, /riley\.fixed@example\.test/);
+});
+
+test("a failed invitation restores consent and keeps it on the certificate", async () => {
+  const { userId } = await createOwner();
+  const envelopeId = await createEnvelope({ userId });
+  const consentedAt = unixNow() - 60;
+  const signer = await createSigner({
+    envelopeId,
+    extra: { consentedAt },
+  });
+
+  await recordAuditEvent(
+    {
+      actorEmail: signer.email,
+      actorType: "signer",
+      createdAt: consentedAt,
+      envelopeId,
+      event: "consented",
+      metadata: {
+        disclosureVersion: "kept-version",
+        signerId: signer.signerId,
+        signerName: "Riley Recipient",
+      },
+    },
+    database,
+  );
+
   const service: EmailService = {
     async send() {
       await recordAuditEvent(
@@ -1170,29 +1241,27 @@ test("a failed invitation records a reversal when a later event blocks deleting 
 
   const stored = await readSigner(signer.signerId);
   assert.equal(stored.email, signer.email);
-  assert.equal(stored.signing_token_hash, signer.tokenHash);
-  assert.deepEqual(await auditEvents(envelopeId), [
-    "signer_corrected",
-    "viewed",
-    "signer_corrected",
-  ]);
-  assert.equal((await verifyAuditChain(envelopeId, database)).ok, true);
+  assert.equal(stored.consented_at, consentedAt);
+  assert.deepEqual(await auditEvents(envelopeId), ["consented", "viewed"]);
 
-  const csv = await exportEnvelopeAuditCsv(userId, envelopeId, database);
-  assert.match(
-    csv.body,
-    /Signer email corrected from .* to riley\.fixed@example\.test/,
+  const { full } = await renderCorrectionCertificates(envelopeId);
+  const signersSection = (full.split("Audit events")[0] ?? "").replace(
+    /\s+/g,
+    " ",
   );
-  assert.match(
-    csv.body,
-    /Signer email corrected from riley\.fixed@example\.test to /,
-  );
+  const compactSigners = signersSection.replaceAll(" ", "");
+
+  assert.ok(compactSigners.includes("disclosurekept-version"), signersSection);
 });
 
 test("a missing email configuration rolls the correction back", async () => {
   const { userId } = await createOwner();
   const envelopeId = await createEnvelope({ userId });
-  const signer = await createSigner({ envelopeId });
+  const consentedAt = unixNow() - 10;
+  const signer = await createSigner({
+    envelopeId,
+    extra: { consentedAt },
+  });
   const previous = {
     EMAIL_DRIVER: process.env.EMAIL_DRIVER,
     RESEND_API_KEY: process.env.RESEND_API_KEY,
@@ -1229,5 +1298,6 @@ test("a missing email configuration rolls the correction back", async () => {
   const stored = await readSigner(signer.signerId);
   assert.equal(stored.email, signer.email);
   assert.equal(stored.signing_token_hash, signer.tokenHash);
+  assert.equal(stored.consented_at, consentedAt);
   assert.deepEqual(await auditEvents(envelopeId), []);
 });

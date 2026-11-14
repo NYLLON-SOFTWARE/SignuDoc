@@ -2476,7 +2476,7 @@ const SENT_ENVELOPE_SIGNER_CORRECTION_MESSAGE =
   "Only an envelope that is out for signature can have a signer corrected.";
 
 type PersistedSignerCorrection = {
-  auditEventId: string;
+  correctedAt: number;
   envelopeExpiresAt: number | null;
   envelopeId: string;
   envelopeTitle: string;
@@ -2505,16 +2505,15 @@ type PersistedSignerCorrection = {
 
 /**
  * Puts a notified signer back as they were when sending their new
- * invitation failed. Another correction of the same person can land while
- * that send is in flight; restoring then would revive the first link and
- * drop the second. The row is only written if it still holds this
- * correction's address and token. If a later audit event is already
- * chained, the original event stays and a second event records the
- * reversal so the trail matches the row.
+ * invitation failed. The correction is not written to the audit trail
+ * until that send succeeds, so restoring the row is enough. Another
+ * correction of the same person can land while the send is in flight;
+ * restoring then would revive the first link and drop the second. The
+ * row is only written if it still holds this correction's address and
+ * token.
  */
 async function revertFailedSignerCorrection(
   persisted: PersistedSignerCorrection,
-  context: CorrectSentEnvelopeSignerContext,
   database: DbPool,
 ): Promise<void> {
   const issuedLink = persisted.issuedLink;
@@ -2585,61 +2584,18 @@ async function revertFailedSignerCorrection(
       return;
     }
 
-    await lockEnvelopeAuditChain(persisted.envelopeId, tx);
-
-    const deleted = await tx.query(
-      `
-        DELETE FROM audit_events
-        WHERE envelope_id = $1
-          AND id = $2
-          AND sequence = (
-            SELECT max(sequence) FROM audit_events WHERE envelope_id = $1
-          )
-      `,
-      [persisted.envelopeId, persisted.auditEventId],
-    );
-
-    if (deleted.rowCount === 1) {
-      await tx.query(
-        `
-          UPDATE envelopes
-          SET updated_at = $1
-          WHERE id = $2
-        `,
-        [persisted.envelopeUpdatedAt, persisted.envelopeId],
-      );
-      return;
-    }
-
-    const reversedAt = Math.floor(Date.now() / 1000);
-
-    await recordAuditEvent(
-      {
-        actorEmail: context.senderEmail,
-        actorType: "sender",
-        createdAt: reversedAt,
-        envelopeId: persisted.envelopeId,
-        event: "signer_corrected",
-        ipAddress: context.ipAddress ?? null,
-        metadata: {
-          previousEmail: persisted.signerEmail,
-          previousName: persisted.signerName,
-          signerEmail: persisted.previous.email,
-          signerId: persisted.signerId,
-          signerName: persisted.previous.name,
-          signerOrder: persisted.signerOrder,
-        },
-        userAgent: context.userAgent ?? null,
-      },
-      tx,
-    );
     await tx.query(
       `
         UPDATE envelopes
         SET updated_at = $1
         WHERE id = $2
+          AND updated_at = $3
       `,
-      [reversedAt, persisted.envelopeId],
+      [
+        persisted.envelopeUpdatedAt,
+        persisted.envelopeId,
+        persisted.correctedAt,
+      ],
     );
   }, database);
 }
@@ -2772,7 +2728,7 @@ export async function correctSentEnvelopeSigner(
       nextEmail.toLowerCase() === signer.email.toLowerCase()
     ) {
       return {
-        auditEventId: "",
+        correctedAt: nowUnixTimestamp,
         envelopeExpiresAt: envelope.expiresAt,
         envelopeId,
         envelopeTitle: envelope.title,
@@ -2895,29 +2851,34 @@ export async function correctSentEnvelopeSigner(
       [nowUnixTimestamp, envelopeId],
     );
 
-    const auditEvent = await recordAuditEvent(
-      {
-        actorEmail: context.senderEmail,
-        actorType: "sender",
-        createdAt: nowUnixTimestamp,
-        envelopeId,
-        event: "signer_corrected",
-        ipAddress: context.ipAddress ?? null,
-        metadata: {
-          previousEmail: signer.email,
-          previousName: signer.name,
-          signerEmail: nextEmail,
-          signerId,
-          signerName: nextName,
-          signerOrder: signer.signOrder,
+    // A notified signer still needs a new invitation. Do not record the
+    // correction until that send succeeds; a failed send must not leave a
+    // signer_corrected event in the trail.
+    if (!invitationNeeded) {
+      await recordAuditEvent(
+        {
+          actorEmail: context.senderEmail,
+          actorType: "sender",
+          createdAt: nowUnixTimestamp,
+          envelopeId,
+          event: "signer_corrected",
+          ipAddress: context.ipAddress ?? null,
+          metadata: {
+            previousEmail: signer.email,
+            previousName: signer.name,
+            signerEmail: nextEmail,
+            signerId,
+            signerName: nextName,
+            signerOrder: signer.signOrder,
+          },
+          userAgent: context.userAgent ?? null,
         },
-        userAgent: context.userAgent ?? null,
-      },
-      tx,
-    );
+        tx,
+      );
+    }
 
     return {
-      auditEventId: auditEvent.id,
+      correctedAt: nowUnixTimestamp,
       envelopeExpiresAt: envelope.expiresAt,
       envelopeId,
       envelopeTitle: envelope.title,
@@ -2974,7 +2935,7 @@ export async function correctSentEnvelopeSigner(
       )
     ).messageId;
   } catch (error) {
-    await revertFailedSignerCorrection(persisted, context, database).catch(
+    await revertFailedSignerCorrection(persisted, database).catch(
       (rollbackError) => {
         console.error(
           `Failed to roll back a signer correction for envelope ${persisted.envelopeId} after email delivery failure:`,
@@ -2986,6 +2947,26 @@ export async function correctSentEnvelopeSigner(
     throw error;
   }
 
+  await recordAuditEvent(
+    {
+      actorEmail: context.senderEmail,
+      actorType: "sender",
+      createdAt: Math.floor(Date.now() / 1000),
+      envelopeId: persisted.envelopeId,
+      event: "signer_corrected",
+      ipAddress: context.ipAddress ?? null,
+      metadata: {
+        previousEmail: persisted.previous.email,
+        previousName: persisted.previous.name,
+        signerEmail: persisted.signerEmail,
+        signerId: persisted.signerId,
+        signerName: persisted.signerName,
+        signerOrder: persisted.signerOrder,
+      },
+      userAgent: context.userAgent ?? null,
+    },
+    database,
+  );
   await recordEmailSent(
     {
       envelopeId: persisted.envelopeId,

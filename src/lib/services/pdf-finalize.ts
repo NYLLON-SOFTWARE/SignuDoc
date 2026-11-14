@@ -881,6 +881,41 @@ function describeProviderSignatureEvidence(
   return details;
 }
 
+function isRevertedSignerCorrection(event: AuditEventRecord): boolean {
+  return (
+    event.event === "signer_corrected" && event.metadata?.reverted === true
+  );
+}
+
+/**
+ * Index at which this signer's current identity begins. A correction that
+ * was later reversed restores the previous identity, so earlier consent
+ * still counts.
+ */
+function currentSignerIdentityStart(
+  events: readonly AuditEventRecord[],
+): number {
+  const starts = [0];
+
+  for (let index = 0; index < events.length; index += 1) {
+    const event = events[index];
+
+    if (event?.event !== "signer_corrected") {
+      continue;
+    }
+
+    if (isRevertedSignerCorrection(event)) {
+      if (starts.length > 1) {
+        starts.pop();
+      }
+    } else {
+      starts.push(index + 1);
+    }
+  }
+
+  return starts[starts.length - 1] ?? 0;
+}
+
 /** What the record shows about how one signer was identified and agreed. */
 function describeSignerEvidence(
   signer: SignerRecord,
@@ -894,16 +929,21 @@ function describeSignerEvidence(
   const signed = forSigner.find((event) => event.event === "signed");
   // A correction clears the row's consent. The first consented event for
   // this signer id can still be the previous person's, so only agreement
-  // recorded after the latest correction counts as this recipient's.
-  const latestCorrectionIndex = forSigner.reduce(
-    (found, event, index) =>
-      event.event === "signer_corrected" ? index : found,
-    -1,
-  );
-  const consented = forSigner.find(
-    (event, index) =>
-      event.event === "consented" && index > latestCorrectionIndex,
-  );
+  // recorded after the latest standing correction counts as this
+  // recipient's. A reversal restores the earlier identity, including that
+  // earlier agreement.
+  const identityStart = currentSignerIdentityStart(forSigner);
+  let consented: AuditEventRecord | undefined;
+
+  for (let index = forSigner.length - 1; index >= identityStart; index -= 1) {
+    const event = forSigner[index];
+
+    if (event?.event === "consented") {
+      consented = event;
+      break;
+    }
+  }
+
   const checks = [
     "possession of the emailed signing link",
     ...readStringArray(signed?.metadata?.authMethods).map(
