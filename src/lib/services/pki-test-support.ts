@@ -181,6 +181,8 @@ export type TestPki = {
     revoked: Set<string>;
     /** How long ago the revocation answers say they were made. */
     staleByMs: number;
+    /** False: OCSP answers come without a next update. */
+    ocspNextUpdate: boolean;
     timestampRequests: number;
   };
   timestampUrl: string;
@@ -299,6 +301,7 @@ export async function startTestPki(): Promise<TestPki> {
     ocspSigner: "ca",
     revoked: new Set(),
     staleByMs: 0,
+    ocspNextUpdate: true,
     timestampRequests: 0,
   };
   let tokenSerial = 1;
@@ -321,7 +324,14 @@ export async function startTestPki(): Promise<TestPki> {
       certId,
       revoked ? encode(0xa1, generalizedTime(now)) : encode(0x80),
       generalizedTime(now),
-      encode(0xa0, generalizedTime(new Date(now.getTime() + 60 * 60 * 1000))),
+      ...(state.ocspNextUpdate
+        ? [
+            encode(
+              0xa0,
+              generalizedTime(new Date(now.getTime() + 60 * 60 * 1000)),
+            ),
+          ]
+        : []),
     );
     const signer =
       state.ocspSigner === "delegated"

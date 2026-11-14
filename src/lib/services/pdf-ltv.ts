@@ -333,6 +333,8 @@ function cmsCertificates(cms: Uint8Array, depth = 0): Buffer[] {
 export type ValidationFetch = (
   url: string,
   request?: { body: Buffer; contentType: string },
+  /** Aborted when the document's lookup time runs out. */
+  options?: { signal?: AbortSignal },
 ) => Promise<Buffer>;
 
 function isPrivateAddress(host: string): boolean {
@@ -454,8 +456,14 @@ function fetchOnce(
   {
     lookup,
     maxBytes,
+    signal,
     timeoutMs,
-  }: { lookup: LookupFunction; maxBytes: number; timeoutMs: number },
+  }: {
+    lookup: LookupFunction;
+    maxBytes: number;
+    signal?: AbortSignal;
+    timeoutMs: number;
+  },
 ): Promise<FetchedResponse> {
   return new Promise((resolve, reject) => {
     const send = target.protocol === "https:" ? httpsRequest : httpRequest;
@@ -472,7 +480,9 @@ function fetchOnce(
           : {},
         lookup,
         method: request ? "POST" : "GET",
-        signal: AbortSignal.timeout(timeoutMs),
+        signal: signal
+          ? AbortSignal.any([AbortSignal.timeout(timeoutMs), signal])
+          : AbortSignal.timeout(timeoutMs),
       },
       (response: IncomingMessage) => {
         const status = response.statusCode ?? 0;
@@ -541,10 +551,14 @@ export function createValidationFetch({
 } = {}): ValidationFetch {
   const lookup = guardedLookup(resolve, allowPrivateAddresses);
 
-  return async (url, request) => {
+  return async (url, request, { signal } = {}) => {
     let target = new URL(url);
 
     for (let hop = 0; hop < 4; hop += 1) {
+      if (signal?.aborted) {
+        throw new LongTermValidationError("Ran out of time for lookups.");
+      }
+
       if (target.protocol !== "http:" && target.protocol !== "https:") {
         throw new LongTermValidationError(
           `Refused to fetch ${target.protocol} URL.`,
@@ -561,6 +575,7 @@ export function createValidationFetch({
       const response = await fetchOnce(target, request, {
         lookup,
         maxBytes,
+        signal,
         timeoutMs,
       });
 
@@ -637,9 +652,21 @@ type RevocationAnswer = {
   /** Certificates the answer came with, such as a delegated OCSP responder. */
   extraCertificates: Buffer[];
   kind: "crl" | "ocsp";
-  nextUpdate: Date | null;
+  /**
+   * When the answer stops being current: its next update, or without one,
+   * the most its age may be.
+   */
+  staleAt: Date;
   status: "good" | "revoked";
 };
+
+function staleAt(
+  thisUpdate: Date,
+  nextUpdate: Date | null,
+  maxAgeMs: number,
+): Date {
+  return nextUpdate ?? new Date(thisUpdate.getTime() + maxAgeMs);
+}
 
 function hashName(oid: string): string | null {
   return oid === OIDS.sha1 ? "sha1" : oid === OIDS.sha256 ? "sha256" : null;
@@ -846,12 +873,11 @@ export function readOcspResponse(
     data: elementBytes(body, response),
     extraCertificates,
     kind: "ocsp",
-    nextUpdate: match.nextUpdate,
+    staleAt: staleAt(match.thisUpdate, match.nextUpdate, OCSP_MAX_AGE_MS),
     status: match.status,
   };
 }
 
-/** Reads a revocation list from `issuer`, and whether it lists `certificate`. */
 /** The CRL extensions this reader understands, critical or not. */
 const KNOWN_CRL_EXTENSIONS = new Set<string>([
   OIDS.authorityKeyIdentifier,
@@ -958,6 +984,7 @@ function assertCompleteList(
   }
 }
 
+/** Reads a revocation list from `issuer`, and whether it lists `certificate`. */
 export function readCrl(
   body: Buffer,
   certificate: Certificate,
@@ -1019,7 +1046,7 @@ export function readCrl(
     data: elementBytes(body, list),
     extraCertificates: [],
     kind: "crl",
-    nextUpdate,
+    staleAt: staleAt(thisUpdate, nextUpdate, CRL_MAX_AGE_MS),
     status: listed ? "revoked" : "good",
   };
 }
@@ -1042,13 +1069,11 @@ function revocationLifetime(answer: RevocationAnswer | null): number {
     return 0;
   }
 
-  if (!answer.nextUpdate) {
-    return REVOCATION_CACHE_MS;
-  }
-
+  // Kept no longer than it stays current, so a cached answer is never
+  // older than one that would be refused fresh.
   return Math.max(
     0,
-    Math.min(REVOCATION_CACHE_MS, answer.nextUpdate.getTime() - Date.now()),
+    Math.min(REVOCATION_CACHE_MS, answer.staleAt.getTime() - Date.now()),
   );
 }
 
@@ -1059,10 +1084,14 @@ export function createLookupBudget(budgetMs = LOOKUP_BUDGET_MS): LookupBudget {
   return { deadline: Date.now() + budgetMs, fetches: 0 };
 }
 
-/** Runs `task`, giving up when the document's lookup time runs out. */
+/**
+ * Runs `task`, giving up when the document's lookup time runs out. The
+ * task is told through `signal`, so a request still under way is stopped
+ * instead of left running.
+ */
 async function withinBudget<T>(
   budget: LookupBudget,
-  task: () => Promise<T>,
+  task: (signal: AbortSignal) => Promise<T>,
 ): Promise<T> {
   const remaining = budget.deadline - Date.now();
 
@@ -1070,17 +1099,17 @@ async function withinBudget<T>(
     throw new LongTermValidationError("Ran out of time for lookups.");
   }
 
+  const controller = new AbortController();
   let timer: NodeJS.Timeout | undefined;
 
   try {
     return await Promise.race([
-      task(),
+      task(controller.signal),
       new Promise<never>((_, reject) => {
-        timer = setTimeout(
-          () =>
-            reject(new LongTermValidationError("Ran out of time for lookups.")),
-          remaining,
-        );
+        timer = setTimeout(() => {
+          controller.abort();
+          reject(new LongTermValidationError("Ran out of time for lookups."));
+        }, remaining);
       }),
     ]);
   } finally {
@@ -1120,7 +1149,9 @@ export async function collectValidationData(
       throw new LongTermValidationError("Too many lookups for one document.");
     }
 
-    return withinBudget(budget, () => fetchFrom(url, request));
+    return withinBudget(budget, (signal) =>
+      fetchFrom(url, request, { signal }),
+    );
   };
   const addToPool = (certificate: Certificate) => {
     if (!pool.has(certificate.fingerprint)) {

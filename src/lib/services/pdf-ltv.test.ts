@@ -410,6 +410,8 @@ test("a self-made seal without a timestamp is left as it is", async () => {
 });
 
 test("a certificate authority that does not answer is given up on in time", async () => {
+  const signals: (AbortSignal | undefined)[] = [];
+
   await withPki(async (pki) => {
     const sealed = await sealedWith(pki, { timestamp: false });
     const started = Date.now();
@@ -417,12 +419,86 @@ test("a certificate authority that does not answer is given up on in time", asyn
       findSignatures(sealed).map((signature) => signature.contents),
       {
         budget: createLookupBudget(300),
-        fetch: () => new Promise<Buffer>(() => {}),
+        fetch: (_url, _request, options) => {
+          signals.push(options?.signal);
+          return new Promise<Buffer>(() => {});
+        },
       },
     );
 
     assert.ok(Date.now() - started < 3_000);
     assert.match(data.problems.join(" "), /Ran out of time/);
+    // Each lookup still under way was told to stop.
+    assert.ok(signals.length > 0);
+    assert.ok(signals.every((signal) => signal?.aborted));
+  });
+});
+
+test("a lookup told to stop closes its connection", async () => {
+  let closed = false;
+  const server = createServer((request) => {
+    // Never answers.
+    request.on("close", () => {
+      closed = true;
+    });
+  });
+
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+
+  try {
+    const address = server.address();
+    const port = typeof address === "object" && address ? address.port : 0;
+    const controller = new AbortController();
+    const lookup = createValidationFetch({
+      allowPrivateAddresses: true,
+      timeoutMs: 10_000,
+    })(`http://127.0.0.1:${String(port)}/ocsp`, undefined, {
+      signal: controller.signal,
+    });
+
+    setTimeout(() => controller.abort(), 100);
+
+    const started = Date.now();
+
+    await assert.rejects(lookup);
+    assert.ok(Date.now() - started < 2_000);
+
+    for (let wait = 0; wait < 20 && !closed; wait += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+
+    assert.equal(closed, true);
+  } finally {
+    server.closeAllConnections();
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+  }
+});
+
+test("an answer without a next update is kept only while it is current", async () => {
+  await withPki(async (pki) => {
+    // A day old, less a moment: still current, but not for long.
+    pki.state.ocspNextUpdate = false;
+    pki.state.staleByMs = 24 * 60 * 60 * 1000 - 1500;
+
+    const signatures = findSignatures(
+      await sealedWith(pki, { timestamp: false }),
+    ).map((signature) => signature.contents);
+    const first = await collectValidationData(signatures, {
+      fetch: localFetch,
+    });
+    const asked = pki.state.ocspRequests;
+
+    assert.equal(first.ocsps.length, 1);
+    await new Promise((resolve) => setTimeout(resolve, 1700));
+
+    // The cached answer is past its age now, so the responder is asked
+    // again instead.
+    const second = await collectValidationData(signatures, {
+      fetch: localFetch,
+    });
+
+    assert.equal(pki.state.ocspRequests, asked + 1);
+    assert.equal(second.ocsps.length, 1);
   });
 });
 
