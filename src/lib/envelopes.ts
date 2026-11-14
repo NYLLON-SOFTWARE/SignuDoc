@@ -19,13 +19,16 @@ import {
   describeChoiceFieldProblem,
   findChoiceFieldProblem,
 } from "./field-choices.ts";
+import { idSchema } from "./schemas/common.ts";
 import {
   changeDeadlineResponseSchema,
   changeRemindersResponseSchema,
+  copyEnvelopeResponseSchema,
   envelopeListFiltersSchema,
   type AuditEventRecord,
   type ChangeDeadlineResponse,
   type ChangeRemindersResponse,
+  type CopyEnvelopeResponse,
   envelopeCreateResponseSchema,
   envelopePageSchema,
   envelopeRecordSchema,
@@ -442,6 +445,7 @@ export type ReplaceDraftSignersResult = ReplaceSignersResponse;
 export type ReplaceDraftFieldsResult = ReplaceFieldsResponse;
 export type SendDraftEnvelopeResult = SendEnvelopeResponse;
 export type VoidEnvelopeResult = VoidEnvelopeResponse;
+export type CopyEnvelopeToDraftResult = CopyEnvelopeResponse;
 
 const FIELD_TYPE_SUMMARY_LABELS: Record<
   FieldRecord["type"],
@@ -474,6 +478,7 @@ const TIMELINE_TONE_MAP: Record<
 > = {
   completed: "success",
   consented: "neutral",
+  copied: "accent",
   created: "accent",
   deadline_changed: "neutral",
   declined: "danger",
@@ -656,6 +661,328 @@ export async function createDraftEnvelope(
     await storageService.deleteObject(sourcePdfKey).catch(() => undefined);
     throw error;
   }
+}
+
+type CopyEnvelopeToDraftOptions = {
+  actorEmail?: string | null;
+  database?: DbPool;
+  storageService?: StorageService;
+};
+
+/**
+ * Starts a new draft from an envelope that has already gone out: the
+ * unsigned document, the people who were asked to sign, anyone who was
+ * to receive a copy, and where the fields are. Nothing that was filled
+ * in comes along. Access codes are hashed, so they cannot be copied.
+ * The original envelope is left as it is, and nobody is emailed.
+ */
+export async function copyEnvelopeToDraft(
+  userId: string,
+  envelopeId: string,
+  {
+    actorEmail = null,
+    database = getDb(),
+    storageService = createStorageService(),
+  }: CopyEnvelopeToDraftOptions = {},
+): Promise<CopyEnvelopeToDraftResult> {
+  const sourceEnvelopeId = idSchema.parse(envelopeId);
+  const envelope = await getEnvelopeByIdForUser(
+    userId,
+    sourceEnvelopeId,
+    database,
+  );
+
+  if (!envelope) {
+    throw new EnvelopeMutationError("Envelope not found.", 404);
+  }
+
+  if (envelope.status === "draft") {
+    throw new EnvelopeMutationError("Draft envelopes cannot be copied.", 409);
+  }
+
+  let sourcePdf: Uint8Array;
+
+  try {
+    sourcePdf = (await storageService.getObject(envelope.sourcePdfKey)).body;
+  } catch (error) {
+    if (error instanceof StorageObjectNotFoundError) {
+      throw new EnvelopeMutationError(
+        "This envelope's document is no longer available, so it cannot be copied.",
+        409,
+      );
+    }
+
+    throw error;
+  }
+
+  const newEnvelopeId = randomUUID();
+  const now = Math.floor(Date.now() / 1000);
+  const sourcePdfKey = buildEnvelopeOriginalPdfKey({
+    envelopeId: newEnvelopeId,
+    userId,
+  });
+
+  await storageService.putObject({
+    body: sourcePdf,
+    contentType: "application/pdf",
+    key: sourcePdfKey,
+  });
+
+  try {
+    await withTransaction(async (tx) => {
+      const source = await getEnvelopeByIdForUser(userId, sourceEnvelopeId, tx);
+
+      if (!source) {
+        throw new EnvelopeMutationError("Envelope not found.", 404);
+      }
+
+      if (source.status === "draft") {
+        throw new EnvelopeMutationError(
+          "Draft envelopes cannot be copied.",
+          409,
+        );
+      }
+
+      const pages = await listEnvelopePagesForEnvelopeId(sourceEnvelopeId, tx);
+      const signers = await listSignersForEnvelopeId(sourceEnvelopeId, tx);
+      const copyRecipients = await listCopyRecipientsForEnvelopeId(
+        sourceEnvelopeId,
+        tx,
+      );
+      const fieldsByEnvelope = await listFieldsForEnvelopeIds(
+        [sourceEnvelopeId],
+        tx,
+      );
+      const checks = await listSignerCheckSettings(sourceEnvelopeId, tx);
+      const fields = fieldsByEnvelope.get(sourceEnvelopeId) ?? [];
+      const signerIdBySourceId = new Map(
+        signers.map((signer) => [signer.id, randomUUID()] as const),
+      );
+
+      for (const field of fields) {
+        if (!signerIdBySourceId.has(field.signerId)) {
+          throw new EnvelopeMutationError(
+            "This envelope cannot be copied.",
+            409,
+          );
+        }
+      }
+
+      const copied = envelopeRecordSchema.parse({
+        completedAt: null,
+        createdAt: now,
+        declinedAt: null,
+        evidenceKey: null,
+        id: newEnvelopeId,
+        pageCount: source.pageCount,
+        sentAt: null,
+        signedPdfKey: null,
+        sourcePdfFilename: source.sourcePdfFilename,
+        sourcePdfHash: source.sourcePdfHash,
+        sourcePdfKey,
+        sourcePdfSizeBytes: sourcePdf.length,
+        status: "draft",
+        title: source.title,
+        updatedAt: now,
+        userId,
+        voidedAt: null,
+      });
+
+      await tx.query(
+        `
+          INSERT INTO envelopes (
+            id,
+            user_id,
+            title,
+            status,
+            source_pdf_key,
+            source_pdf_filename,
+            source_pdf_size_bytes,
+            page_count,
+            signed_pdf_key,
+            evidence_key,
+            source_pdf_hash,
+            sent_at,
+            completed_at,
+            declined_at,
+            voided_at,
+            created_at,
+            updated_at
+          ) VALUES (
+            $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17
+          )
+        `,
+        [
+          copied.id,
+          copied.userId,
+          copied.title,
+          copied.status,
+          copied.sourcePdfKey,
+          copied.sourcePdfFilename,
+          copied.sourcePdfSizeBytes,
+          copied.pageCount,
+          copied.signedPdfKey,
+          copied.evidenceKey,
+          copied.sourcePdfHash,
+          copied.sentAt,
+          copied.completedAt,
+          copied.declinedAt,
+          copied.voidedAt,
+          copied.createdAt,
+          copied.updatedAt,
+        ],
+      );
+
+      for (const page of pages) {
+        await tx.query(
+          `
+            INSERT INTO envelope_pages (
+              id,
+              envelope_id,
+              page_number,
+              width_pt,
+              height_pt
+            ) VALUES ($1, $2, $3, $4, $5)
+          `,
+          [
+            randomUUID(),
+            newEnvelopeId,
+            page.pageNumber,
+            page.widthPt,
+            page.heightPt,
+          ],
+        );
+      }
+
+      for (const signer of signers) {
+        await tx.query(
+          `
+            INSERT INTO signers (
+              id,
+              envelope_id,
+              name,
+              email,
+              sign_order,
+              status,
+              signing_token_hash,
+              signing_token_expires_at,
+              turn_started_at,
+              last_notified_at,
+              last_nudged_at,
+              signed_at,
+              declined_at,
+              decline_reason,
+              created_at,
+              updated_at,
+              access_code_hash,
+              require_email_code,
+              signature_meaning
+            ) VALUES (
+              $1, $2, $3, $4, $5, 'pending', NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, $6, $7, $8, $9, $10
+            )
+          `,
+          [
+            signerIdBySourceId.get(signer.id),
+            newEnvelopeId,
+            signer.name,
+            signer.email,
+            signer.signOrder,
+            now,
+            now,
+            null,
+            checks.get(signer.id)?.requireEmailCode ?? false,
+            null,
+          ],
+        );
+      }
+
+      for (const [index, recipient] of copyRecipients.entries()) {
+        await tx.query(
+          `
+            INSERT INTO signers (
+              id, envelope_id, name, email, sign_order, status, role,
+              created_at, updated_at
+            ) VALUES ($1, $2, $3, $4, $5, 'pending', 'cc', $6, $6)
+          `,
+          [
+            randomUUID(),
+            newEnvelopeId,
+            recipient.name,
+            recipient.email,
+            COPY_RECIPIENT_SIGN_ORDER_BASE + index + 1,
+            now,
+          ],
+        );
+      }
+
+      for (const [index, field] of fields.entries()) {
+        await tx.query(
+          `
+            INSERT INTO fields (
+              id,
+              envelope_id,
+              signer_id,
+              type,
+              page,
+              x,
+              y,
+              width,
+              height,
+              required,
+              label,
+              input_method,
+              value,
+              image_key,
+              checked,
+              submitted_at,
+              created_at,
+              updated_at,
+              options,
+              group_id
+            ) VALUES (
+              $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, NULL, NULL, NULL, NULL, NULL, $12, $13, $14::jsonb, $15
+            )
+          `,
+          [
+            randomUUID(),
+            newEnvelopeId,
+            signerIdBySourceId.get(field.signerId),
+            field.type,
+            field.page,
+            field.x,
+            field.y,
+            field.width,
+            field.height,
+            field.required,
+            field.label ?? null,
+            now + index,
+            now,
+            field.type === "dropdown" && field.options !== undefined
+              ? JSON.stringify(field.options)
+              : null,
+            field.groupId ?? null,
+          ],
+        );
+      }
+
+      await recordAuditEvent(
+        {
+          actorEmail,
+          actorType: "sender",
+          createdAt: now,
+          envelopeId: newEnvelopeId,
+          event: "copied",
+          metadata: { sourceEnvelopeId },
+        },
+        tx,
+      );
+    }, database);
+  } catch (error) {
+    await storageService.deleteObject(sourcePdfKey).catch(() => undefined);
+    throw error;
+  }
+
+  return copyEnvelopeResponseSchema.parse({ id: newEnvelopeId });
 }
 
 export function buildCreateEnvelopeResponse(
@@ -1268,6 +1595,8 @@ function buildTimelineDescription(event: AuditEventRecord): string {
   const targetLabel = signerName ?? event.actorEmail ?? signerEmail ?? "signer";
 
   switch (event.event) {
+    case "copied":
+      return "Copied from an earlier envelope";
     case "created":
       return "Envelope created";
     case "sent":
