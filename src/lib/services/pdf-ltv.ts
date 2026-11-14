@@ -61,6 +61,8 @@ const OIDS = {
   ocsp: "1.3.6.1.5.5.7.48.1",
   ocspBasic: "1.3.6.1.5.5.7.48.1.1",
   ocspNoCheck: "1.3.6.1.5.5.7.48.1.5",
+  qcStatements: "1.3.6.1.5.5.7.1.3",
+  qcType: "0.4.0.1862.1.6",
   sha1: "1.3.14.3.2.26",
   sha1WithRsa: "1.2.840.113549.1.1.5",
   sha256: "2.16.840.1.101.3.4.2.1",
@@ -115,8 +117,14 @@ export type Certificate = {
   issuerName: Buffer;
   ocspNoCheck: boolean;
   ocspUrls: string[];
+  /** The ids of its qualified certificate statements (ETSI EN 319 412-5). */
+  qcStatements: string[];
+  /** What its QcType statement says it is for: signatures, seals or web. */
+  qcTypes: string[];
   /** The serial number's INTEGER content, as OCSP and CRLs compare it. */
   serial: Buffer;
+  /** The subject key identifier extension's value, when it has one. */
+  subjectKeyIdentifier: Buffer | null;
   /** The subject public key, without the BIT STRING's unused-bits byte. */
   subjectKey: Buffer;
   /** The subject Name, as encoded. */
@@ -171,8 +179,11 @@ export function parseCertificate(input: Uint8Array): Certificate {
     issuerName: elementBytes(bytes, issuerName),
     ocspNoCheck: false,
     ocspUrls: [],
+    qcStatements: [],
+    qcTypes: [],
     serial: contentBytes(bytes, serial),
     subjectKey: contentBytes(bytes, key).subarray(1),
+    subjectKeyIdentifier: null,
     subjectName: elementBytes(bytes, subject),
     x509: new X509Certificate(elementBytes(bytes, certificate)),
   };
@@ -193,6 +204,21 @@ export function parseCertificate(input: Uint8Array): Certificate {
 
       if (id === OIDS.ocspNoCheck) {
         parsed.ocspNoCheck = true;
+      } else if (id === "2.5.29.14") {
+        parsed.subjectKeyIdentifier = contentBytes(bytes, inner);
+      } else if (id === OIDS.qcStatements) {
+        for (const statement of children(bytes, inner)) {
+          const [statementId, info] = children(bytes, statement);
+          const statementOid = readOid(bytes, statementId!);
+
+          parsed.qcStatements.push(statementOid);
+
+          if (statementOid === OIDS.qcType && info?.tag === TAG.sequence) {
+            for (const type of children(bytes, info)) {
+              parsed.qcTypes.push(readOid(bytes, type));
+            }
+          }
+        }
       } else if (id === OIDS.crlDistributionPoints) {
         uriNames(bytes, inner, parsed.crlUrls);
       } else if (id === OIDS.infoAccess) {

@@ -161,6 +161,14 @@ export type TestPki = {
   close: () => Promise<void>;
   /** The CA certificate, DER. */
   caCertificate: Buffer;
+  /**
+   * A person's signing certificate from the CA, as a signing provider would
+   * hold it; `qualified` adds the qualified certificate statements.
+   */
+  issueSigner: (options: {
+    commonName: string;
+    qualified?: boolean;
+  }) => SealIdentity & { certificate: Buffer };
   /** A seal identity issued by the CA, its chain holding only itself. */
   seal: SealIdentity;
   sealCertificate: Buffer;
@@ -480,9 +488,48 @@ export async function startTestPki(): Promise<TestPki> {
     }
   };
 
+  let signerSerial = 0x4000;
+  const issueSigner: TestPki["issueSigner"] = ({ commonName, qualified }) => {
+    const keys = makeKeys();
+    // QCStatements: QcCompliance, QcSSCD, QcType esign (ETSI EN 319 412-5).
+    const qcStatements = {
+      id: "1.3.6.1.5.5.7.1.3",
+      value: binary(
+        der.sequence(
+          der.sequence(der.oid("0.4.0.1862.1.1")),
+          der.sequence(der.oid("0.4.0.1862.1.4")),
+          der.sequence(
+            der.oid("0.4.0.1862.1.6"),
+            der.sequence(der.oid("0.4.0.1862.1.6.1")),
+          ),
+        ),
+      ),
+    };
+
+    signerSerial += 1;
+
+    const certificate = issueCertificate({
+      commonName,
+      extensions: [infoAccess, crlPoints, ...(qualified ? [qcStatements] : [])],
+      issuer: { certificate: ca, keys: caKeys },
+      keys,
+      serial: signerSerial.toString(16),
+    });
+
+    return {
+      certificate: certificateDer(certificate),
+      certificateChainPem: [
+        forge.pki.certificateToPem(certificate),
+        forge.pki.certificateToPem(ca),
+      ],
+      privateKeyPem: keys.privateKeyPem,
+    };
+  };
+
   return {
     caCertificate: caDer,
     close: () => new Promise<void>((resolve) => server.close(() => resolve())),
+    issueSigner,
     seal: {
       certificateChainPem: [forge.pki.certificateToPem(sealCertificate)],
       privateKeyPem: sealKeys.privateKeyPem,

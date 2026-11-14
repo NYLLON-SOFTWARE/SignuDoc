@@ -72,18 +72,20 @@ After that first time, `git merge upstream/main` works as above.
 
 A deployment made with the button needs no environment variables. These are there if you want them, under Settings, Environment Variables in the Vercel project. Deploy again after changing one.
 
-| Variable                               | What it does                                                                                                                                                |
-| -------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `SETUP_TOKEN`                          | A secret the setup page asks for. See [Lock down a new install](#lock-down-a-new-install).                                                                  |
-| `CRON_SECRET`                          | Closes the daily cleanup route to everyone but Vercel's own cron call. See [Daily cleanup](#daily-cleanup).                                                 |
-| `BOTID`                                | `1` turns on Vercel BotID for sign-in, sign-up and setup. See [Bot protection](#bot-protection).                                                            |
-| `RESEND_FROM_EMAIL`, `SUPPORT_EMAIL`   | Fix the sender and support addresses from the environment instead of in Settings.                                                                           |
-| `BETTER_AUTH_SECRET`                   | Your own secret for signing sessions. Without it one is derived from the database password, so changing that password signs everyone out.                   |
-| `APP_URL`                              | The site's public address, if it should not be the project's production domain.                                                                             |
-| `HOSTED_MODE`                          | `1` runs SignuDoc as a public service under its own name. See [Hosted mode](#hosted-mode).                                                                  |
-| `RESEND_REGION`                        | Where Resend sends from when the app adds your domain, for example `eu-west-1`. See [Running in the EU](#running-in-the-eu).                                |
-| `SEAL_P12_BASE64`, `SEAL_P12_PASSWORD` | Seal finished PDFs with a certificate from a certificate authority instead of the install's own. See [Signed PDFs and the seal](#signed-pdfs-and-the-seal). |
-| `SEAL_TIMESTAMP_URL`                   | An RFC 3161 timestamp server that adds a trusted time to each seal, and long-term validation. See [Long-term validation](#long-term-validation).            |
+| Variable                                            | What it does                                                                                                                                                                                           |
+| --------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `SETUP_TOKEN`                                       | A secret the setup page asks for. See [Lock down a new install](#lock-down-a-new-install).                                                                                                             |
+| `CRON_SECRET`                                       | Closes the daily cleanup route to everyone but Vercel's own cron call. See [Daily cleanup](#daily-cleanup).                                                                                            |
+| `BOTID`                                             | `1` turns on Vercel BotID for sign-in, sign-up and setup. See [Bot protection](#bot-protection).                                                                                                       |
+| `RESEND_FROM_EMAIL`, `SUPPORT_EMAIL`                | Fix the sender and support addresses from the environment instead of in Settings.                                                                                                                      |
+| `BETTER_AUTH_SECRET`                                | Your own secret for signing sessions. Without it one is derived from the database password, so changing that password signs everyone out.                                                              |
+| `APP_URL`                                           | The site's public address, if it should not be the project's production domain.                                                                                                                        |
+| `HOSTED_MODE`                                       | `1` runs SignuDoc as a public service under its own name. See [Hosted mode](#hosted-mode).                                                                                                             |
+| `RESEND_REGION`                                     | Where Resend sends from when the app adds your domain, for example `eu-west-1`. See [Running in the EU](#running-in-the-eu).                                                                           |
+| `SEAL_P12_BASE64`, `SEAL_P12_PASSWORD`              | Seal finished PDFs with a certificate from a certificate authority instead of the install's own. See [Signed PDFs and the seal](#signed-pdfs-and-the-seal).                                            |
+| `SEAL_TIMESTAMP_URL`                                | An RFC 3161 timestamp server that adds a trusted time to each seal, and long-term validation. See [Long-term validation](#long-term-validation).                                                       |
+| `EIDEASY_CLIENT_ID`, `EIDEASY_SECRET`               | Let senders ask for advanced or qualified signatures in the signers' own names, through eID Easy. See [Signatures in the signers' own names](#signatures-in-the-signers-own-names-eidas-ades-and-qes). |
+| `CSC_API_URL`, `CSC_CLIENT_ID`, `CSC_CLIENT_SECRET` | The same through a trust service provider's remote signing service (CSC API v2). See [Signatures in the signers' own names](#signatures-in-the-signers-own-names-eidas-ades-and-qes).                  |
 
 ## Set the site up
 
@@ -137,7 +139,30 @@ Under eIDAS, a seal is the organization's counterpart of a signature. A seal tha
 - Get it as a PKCS#12 file with an RSA key (SignuDoc does not read EC keys from a file yet), and set it as `SEAL_P12_BASE64` (the file in base64) and `SEAL_P12_PASSWORD`. Keep the file somewhere safe outside Vercel too: the key in it is what makes the seal yours.
 - Set `SEAL_TIMESTAMP_URL`, so the seal gets long-term validation as above. A timestamp server run by a qualified trust service provider gives a qualified electronic time stamp, which a court presumes accurate (Article 41).
 
-What this gives you: each finished PDF and certificate carries your organization's advanced seal, showing it came from you unchanged. What it does not: the signers' own signatures stay simple electronic signatures, and the seal is not a qualified seal, which needs a qualified certificate held on a qualified device, usually a trust service provider's remote signing service rather than a file. This is not legal advice: whether a seal is enough for a document is for your own counsel.
+What this gives you: each finished PDF and certificate carries your organization's advanced seal, showing it came from you unchanged. What it does not: the signers' own signatures stay simple electronic signatures (for signatures in their own names, see the next section), and the seal is not a qualified seal, which needs a qualified certificate held on a qualified device, usually a trust service provider's remote signing service rather than a file. This is not legal advice: whether a seal is enough for a document is for your own counsel.
+
+### Signatures in the signers' own names (eIDAS AdES and QES)
+
+Out of the box, signers make simple electronic signatures and the install seals the result. With a signing provider set up, a sender can instead choose **Advanced electronic signatures** or **Qualified electronic signatures** for an envelope, on the review page before sending. Each signer then fills in their fields as usual, and when they press Finish they go to the provider, prove who they are there (for example with a national eID card, Smart-ID or Mobile-ID, or the provider's own check), and sign with a certificate in their own name. They come back to the install, which checks the signature before keeping it.
+
+What ends up in the PDF:
+
+- Each signer's signature is a PAdES signature in a revision of its own, holding their filled-in fields. The revisions only add to the file, so every earlier signer's signature stays valid, and a PDF reader lists one signature per signer with the name from their certificate.
+- When the last signer has signed, the install adds the certificates and revocation answers (B-LT), and with `SEAL_TIMESTAMP_URL` an archive timestamp too (B-LTA), as for the seal above. If the provider did not timestamp a signature, the install's timestamp server does.
+- The signed PDF does not get the install's seal, because the signers' signatures already cover all of it. The certificate of completion is still sealed, and lists each signer's certificate, its issuer, and the provider.
+- For a qualified signature, the install refuses a certificate that does not say it is qualified and held on a qualified signature device (the EU QC statements). It does not look the issuer up on the EU trusted lists; PDF readers and the EU's own validator do that when the document is checked.
+
+Not available in Part 11 mode, where signers sign with their accounts instead.
+
+**Setting up a provider.** Both are paid services outside Vercel and its Marketplace, so they are optional, and nothing changes until you set one up. Deploy again after setting the variables.
+
+- **eID Easy** reaches most EU national eIDs, Smart-ID, Mobile-ID and several qualified providers through one account. Create an account and a client at [eideasy.com](https://eideasy.com), and set `EIDEASY_CLIENT_ID` and `EIDEASY_SECRET`. For eID Easy's test environment, also set `EIDEASY_API_URL=https://test.eideasy.com`. If eID Easy asks for the addresses it may send signers back to, give it `https://<your domain>/api/signing/provider/return`.
+- **A trust service provider with a CSC API v2 remote signing service**, for signers who already have a signing certificate there. Set `CSC_API_URL` (the service's base address, ending in `/csc/v2`), `CSC_CLIENT_ID`, `CSC_CLIENT_SECRET`, and `CSC_PROVIDER_NAME` (the name signers see). Set `CSC_OAUTH_URL` when the provider's OAuth server is not at `<CSC_API_URL>/oauth2`. Register `https://<your domain>/api/signing/provider/return` as the OAuth redirect address.
+- With both set, eID Easy is used for new envelopes unless `SIGNING_PROVIDER=csc`. Envelopes already sent finish with the provider they were sent with, as long as it is still set up.
+
+**What has and has not been checked.** The signing flow is tested end to end against stand-ins that follow eID Easy's and the CSC API v2's published interfaces, and PDF readers check the signatures it produces. It has not yet been run against the live services, so try it on the provider's test environment before you rely on it, and tell us on GitHub what you find.
+
+Whether a document needs an advanced or a qualified signature, and whether a given signature meets the law where you and the signers are, is a legal question. This is not legal advice.
 
 ## Running in the EU
 

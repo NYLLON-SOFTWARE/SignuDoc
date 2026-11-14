@@ -1,0 +1,652 @@
+import {
+  constants,
+  createHash,
+  verify as verifySignature,
+  type KeyObject,
+} from "node:crypto";
+
+import {
+  algorithm,
+  children,
+  contentBytes,
+  contextTag,
+  der,
+  elementBytes,
+  encode,
+  encodeSmallInteger,
+  readOid,
+  readTlv,
+  TAG,
+  type Tlv,
+} from "./der.ts";
+import { parseCertificate, type Certificate } from "./pdf-ltv.ts";
+
+// The CMS of one signer's own signature (CAdES, as PAdES uses it).
+//
+// A signing provider either returns the whole CMS (eID Easy), or signs a
+// hash and leaves the CMS to us (the Cloud Signature Consortium API). Either
+// way, before a signature goes into a document it is checked here: that it
+// signs this revision's bytes, that the signature verifies with the
+// certificate it names, and, for a qualified signature, that the certificate
+// says it is qualified and its key is on a qualified signature creation
+// device. Whether the certificate's issuer is a qualified trust service
+// provider on the EU trusted list is for the reader to check: Acrobat and
+// the EU's validation service do, from the list.
+
+export const CMS_OIDS = {
+  contentType: "1.2.840.113549.1.9.3",
+  data: "1.2.840.113549.1.7.1",
+  ecdsaSha256: "1.2.840.10045.4.3.2",
+  ecdsaSha384: "1.2.840.10045.4.3.3",
+  ecdsaSha512: "1.2.840.10045.4.3.4",
+  ecPublicKey: "1.2.840.10045.2.1",
+  messageDigest: "1.2.840.113549.1.9.4",
+  qcCompliance: "0.4.0.1862.1.1",
+  qcSscd: "0.4.0.1862.1.4",
+  qcTypeSignature: "0.4.0.1862.1.6.1",
+  rsaEncryption: "1.2.840.113549.1.1.1",
+  rsaPss: "1.2.840.113549.1.1.10",
+  sha256: "2.16.840.1.101.3.4.2.1",
+  sha256WithRsa: "1.2.840.113549.1.1.11",
+  sha384: "2.16.840.1.101.3.4.2.2",
+  sha384WithRsa: "1.2.840.113549.1.1.12",
+  sha512: "2.16.840.1.101.3.4.2.3",
+  sha512WithRsa: "1.2.840.113549.1.1.13",
+  signedData: "1.2.840.113549.1.7.2",
+  signingCertificate: "1.2.840.113549.1.9.16.2.12",
+  signingCertificateV2: "1.2.840.113549.1.9.16.2.47",
+  signingTime: "1.2.840.113549.1.9.5",
+  sha1: "1.3.14.3.2.26",
+  timeStampToken: "1.2.840.113549.1.9.16.2.14",
+} as const;
+
+const HASHES: Record<string, string> = {
+  [CMS_OIDS.sha1]: "sha1",
+  [CMS_OIDS.sha256]: "sha256",
+  [CMS_OIDS.sha384]: "sha384",
+  [CMS_OIDS.sha512]: "sha512",
+};
+
+export class SignerSignatureError extends Error {
+  constructor(message: string, options?: { cause?: unknown }) {
+    super(message, options);
+    this.name = "SignerSignatureError";
+  }
+}
+
+// --- Building ------------------------------------------------------------
+
+function attribute(type: string, value: Uint8Array): Buffer {
+  return der.sequence(der.oid(type), der.set(value));
+}
+
+/** DER SET OF: the elements sorted by their encoding (X.690 11.6). */
+function sortedSet(items: Buffer[]): Buffer {
+  return der.set(...[...items].sort(Buffer.compare));
+}
+
+/**
+ * The signed attributes of a PAdES signature, as the SET whose hash is
+ * signed: the content type, the hash of the signed bytes and which
+ * certificate signs (ESSCertIDv2 with SHA-256). No signing time: PAdES
+ * keeps that in the signature dictionary.
+ */
+export function buildSignedAttributes({
+  certificate,
+  contentDigest,
+}: {
+  certificate: Uint8Array;
+  contentDigest: Uint8Array;
+}): Buffer {
+  const certificateHash = createHash("sha256").update(certificate).digest();
+
+  return sortedSet([
+    attribute(CMS_OIDS.contentType, der.oid(CMS_OIDS.data)),
+    attribute(CMS_OIDS.messageDigest, der.octets(contentDigest)),
+    attribute(
+      CMS_OIDS.signingCertificateV2,
+      der.sequence(der.sequence(der.sequence(der.octets(certificateHash)))),
+    ),
+  ]);
+}
+
+/** Whether the certificate's key is an elliptic curve key (else RSA). */
+export function hasEcKey(certificate: Certificate): boolean {
+  const bytes = certificate.der;
+  const tbs = children(bytes, readTlv(bytes))[0]!;
+  const fields = children(bytes, tbs);
+  const offset = fields[0]?.tag === contextTag(0) ? 1 : 0;
+  const spki = fields[offset + 5]!;
+  const keyAlgorithm = children(bytes, children(bytes, spki)[0]!)[0]!;
+
+  return readOid(bytes, keyAlgorithm) === CMS_OIDS.ecPublicKey;
+}
+
+/** The algorithm a signature value was made with, for the SignerInfo. */
+export function signatureAlgorithmFor(certificate: Certificate): Buffer {
+  return hasEcKey(certificate)
+    ? der.sequence(der.oid(CMS_OIDS.ecdsaSha256))
+    : algorithm(CMS_OIDS.sha256WithRsa);
+}
+
+/**
+ * An ECDSA signature as DER, from the raw r and s some services return.
+ * A signature already in DER is returned as it is.
+ */
+export function ecdsaSignatureAsDer(signature: Buffer): Buffer {
+  if (signature[0] === TAG.sequence) {
+    try {
+      const outer = readTlv(signature);
+
+      if (outer.end === signature.length) {
+        return signature;
+      }
+    } catch {
+      // Not DER after all.
+    }
+  }
+
+  const half = signature.length / 2;
+  const integer = (value: Buffer) => {
+    let start = 0;
+
+    while (start < value.length - 1 && value[start] === 0) {
+      start += 1;
+    }
+
+    const trimmed = value.subarray(start);
+
+    return encode(
+      TAG.integer,
+      trimmed[0]! & 0x80 ? Buffer.concat([Buffer.from([0]), trimmed]) : trimmed,
+    );
+  };
+
+  return der.sequence(
+    integer(signature.subarray(0, half)),
+    integer(signature.subarray(half)),
+  );
+}
+
+/** A CMS SignedData (detached) from parts signed elsewhere. */
+export function assembleSignedData({
+  certificates,
+  signature,
+  signatureAlgorithm,
+  signedAttributes,
+  unsignedAttributes = [],
+}: {
+  /** The signer's certificate first, then its chain. */
+  certificates: readonly Buffer[];
+  signature: Buffer;
+  signatureAlgorithm: Buffer;
+  /** As `buildSignedAttributes` made them: a DER SET. */
+  signedAttributes: Buffer;
+  unsignedAttributes?: readonly Buffer[];
+}): Buffer {
+  const signer = parseCertificate(certificates[0]!);
+  const signedAttributesTlv = readTlv(signedAttributes);
+  const signerInfo = der.sequence(
+    encodeSmallInteger(1),
+    der.sequence(signer.issuerName, encode(TAG.integer, signer.serial)),
+    algorithm(CMS_OIDS.sha256),
+    // [0] IMPLICIT: the same content, under the context tag.
+    encode(contextTag(0), contentBytes(signedAttributes, signedAttributesTlv)),
+    signatureAlgorithm,
+    der.octets(signature),
+    ...(unsignedAttributes.length > 0
+      ? [encode(contextTag(1), ...unsignedAttributes)]
+      : []),
+  );
+  const signedData = der.sequence(
+    encodeSmallInteger(1),
+    der.set(algorithm(CMS_OIDS.sha256)),
+    der.sequence(der.oid(CMS_OIDS.data)),
+    encode(contextTag(0), ...certificates),
+    der.set(signerInfo),
+  );
+
+  return der.sequence(
+    der.oid(CMS_OIDS.signedData),
+    encode(contextTag(0), signedData),
+  );
+}
+
+// --- Reading -------------------------------------------------------------
+
+type ParsedSignerInfo = {
+  bytes: Buffer;
+  certificates: Buffer[];
+  digestAlgorithm: string;
+  signature: Buffer;
+  signatureAlgorithm: { oid: string; parameters: Tlv | null };
+  /** The signed attributes, re-tagged as the SET that was signed. */
+  signedAttributes: Buffer;
+  signedAttributeValues: Map<string, Tlv[]>;
+  signerIdentifier: Tlv;
+  unsignedAttributeIds: string[];
+};
+
+function readAttributes(bytes: Buffer, tlv: Tlv): Map<string, Tlv[]> {
+  const values = new Map<string, Tlv[]>();
+
+  for (const item of children(bytes, tlv)) {
+    const [id, set] = children(bytes, item);
+    const oid = readOid(bytes, id!);
+
+    if (values.has(oid)) {
+      throw new SignerSignatureError(`The attribute ${oid} appears twice.`);
+    }
+
+    values.set(oid, children(bytes, set!));
+  }
+
+  return values;
+}
+
+function readSignedData(cms: Buffer): {
+  parts: Tlv[];
+  signedData: Tlv;
+} {
+  const contentInfo = readTlv(cms);
+
+  if (contentInfo.end !== cms.length) {
+    throw new SignerSignatureError("The signature has data after its end.");
+  }
+
+  const [type, wrapped] = children(cms, contentInfo);
+
+  if (readOid(cms, type!) !== CMS_OIDS.signedData) {
+    throw new SignerSignatureError("The signature is not a CMS SignedData.");
+  }
+
+  const signedData = children(cms, wrapped!)[0]!;
+
+  return { parts: children(cms, signedData), signedData };
+}
+
+function readSignerInfo(cms: Buffer): ParsedSignerInfo {
+  const { parts } = readSignedData(cms);
+  const encapsulated = parts[2];
+
+  // Detached: the content type only, no content.
+  if (
+    !encapsulated ||
+    children(cms, encapsulated).length !== 1 ||
+    readOid(cms, children(cms, encapsulated)[0]!) !== CMS_OIDS.data
+  ) {
+    throw new SignerSignatureError(
+      "The signature is not a detached signature of data.",
+    );
+  }
+
+  const certificates = parts
+    .filter((part) => part.tag === contextTag(0))
+    .flatMap((part) => children(cms, part))
+    .filter((item) => item.tag === TAG.sequence)
+    .map((item) => elementBytes(cms, item));
+  const signerInfos = children(cms, parts[parts.length - 1]!);
+
+  if (signerInfos.length !== 1) {
+    throw new SignerSignatureError("The signature must have one signer.");
+  }
+
+  const fields = children(cms, signerInfos[0]!);
+  const [, signerIdentifier, digestAlgorithm] = fields;
+  const signedAttributes = fields.find((field) => field.tag === contextTag(0));
+
+  if (!signedAttributes) {
+    throw new SignerSignatureError("The signature has no signed attributes.");
+  }
+
+  const afterSigned = fields.slice(fields.indexOf(signedAttributes) + 1);
+  const [signatureAlgorithm, signatureValue, unsigned] = afterSigned;
+  const algorithmParts = children(cms, signatureAlgorithm!);
+  const signed = elementBytes(cms, signedAttributes);
+
+  // The signature covers the attributes encoded as a SET (RFC 5652 5.4).
+  signed[0] = TAG.set;
+
+  return {
+    bytes: cms,
+    certificates,
+    digestAlgorithm: readOid(cms, children(cms, digestAlgorithm!)[0]!),
+    signature: contentBytes(cms, signatureValue!),
+    signatureAlgorithm: {
+      oid: readOid(cms, algorithmParts[0]!),
+      parameters:
+        algorithmParts[1] && algorithmParts[1].tag !== TAG.null
+          ? algorithmParts[1]
+          : null,
+    },
+    signedAttributes: signed,
+    signedAttributeValues: readAttributes(cms, signedAttributes),
+    signerIdentifier: signerIdentifier!,
+    unsignedAttributeIds:
+      unsigned && unsigned.tag === contextTag(1)
+        ? [...readAttributes(cms, unsigned).keys()]
+        : [],
+  };
+}
+
+function findSigner(
+  info: ParsedSignerInfo,
+  certificates: readonly Certificate[],
+): Certificate {
+  const { bytes, signerIdentifier } = info;
+  const match = certificates.find((certificate) => {
+    if (signerIdentifier.tag === TAG.sequence) {
+      const [issuer, serial] = children(bytes, signerIdentifier);
+
+      return (
+        elementBytes(bytes, issuer!).equals(certificate.issuerName) &&
+        contentBytes(bytes, serial!).equals(certificate.serial)
+      );
+    }
+
+    // [0] SubjectKeyIdentifier
+    return (
+      signerIdentifier.tag === contextTag(0, false) &&
+      certificate.subjectKeyIdentifier !== null &&
+      contentBytes(bytes, signerIdentifier).equals(
+        certificate.subjectKeyIdentifier,
+      )
+    );
+  });
+
+  if (!match) {
+    throw new SignerSignatureError(
+      "The signature does not include the certificate that made it.",
+    );
+  }
+
+  return match;
+}
+
+function verifyValue(info: ParsedSignerInfo, key: KeyObject): boolean {
+  const { bytes, signatureAlgorithm, signature, signedAttributes } = info;
+  const digestHash = HASHES[info.digestAlgorithm];
+
+  switch (signatureAlgorithm.oid) {
+    case CMS_OIDS.rsaEncryption:
+      return verifySignature(digestHash!, signedAttributes, key, signature);
+    case CMS_OIDS.sha256WithRsa:
+      return verifySignature("sha256", signedAttributes, key, signature);
+    case CMS_OIDS.sha384WithRsa:
+      return verifySignature("sha384", signedAttributes, key, signature);
+    case CMS_OIDS.sha512WithRsa:
+      return verifySignature("sha512", signedAttributes, key, signature);
+    case CMS_OIDS.ecdsaSha256:
+    case CMS_OIDS.ecdsaSha384:
+    case CMS_OIDS.ecdsaSha512: {
+      const hash =
+        signatureAlgorithm.oid === CMS_OIDS.ecdsaSha256
+          ? "sha256"
+          : signatureAlgorithm.oid === CMS_OIDS.ecdsaSha384
+            ? "sha384"
+            : "sha512";
+
+      return verifySignature(
+        hash,
+        signedAttributes,
+        { dsaEncoding: "der", key },
+        signature,
+      );
+    }
+    case CMS_OIDS.rsaPss: {
+      // RSASSA-PSS-params: [0] hash, [1] mask generation, [2] salt length.
+      let hash = "sha1";
+      let saltLength = 20;
+
+      for (const field of signatureAlgorithm.parameters
+        ? children(bytes, signatureAlgorithm.parameters)
+        : []) {
+        if (field.tag === contextTag(0)) {
+          hash =
+            HASHES[
+              readOid(bytes, children(bytes, children(bytes, field)[0]!)[0]!)
+            ] ?? "";
+        } else if (field.tag === contextTag(2)) {
+          const value = contentBytes(bytes, children(bytes, field)[0]!);
+
+          saltLength = value.readUIntBE(0, Math.min(6, value.length));
+        }
+      }
+
+      return verifySignature(
+        hash,
+        signedAttributes,
+        { key, padding: constants.RSA_PKCS1_PSS_PADDING, saltLength },
+        signature,
+      );
+    }
+    default:
+      throw new SignerSignatureError(
+        `The signature algorithm ${signatureAlgorithm.oid} is not supported.`,
+      );
+  }
+}
+
+function assertSigningCertificate(
+  info: ParsedSignerInfo,
+  certificate: Certificate,
+) {
+  const { bytes, signedAttributeValues } = info;
+  const v2 = signedAttributeValues.get(CMS_OIDS.signingCertificateV2)?.[0];
+  const v1 = signedAttributeValues.get(CMS_OIDS.signingCertificate)?.[0];
+  const value = v2 ?? v1;
+
+  if (!value) {
+    throw new SignerSignatureError(
+      "The signature does not name its certificate (signing-certificate attribute).",
+    );
+  }
+
+  // SigningCertificate(V2) { certs SEQUENCE OF ESSCertID(v2), ... }
+  const first = children(bytes, children(bytes, value)[0]!)[0]!;
+  const parts = children(bytes, first);
+  let hash = v2 ? "sha256" : "sha1";
+  let hashField = parts[0]!;
+
+  if (v2 && parts[0]!.tag === TAG.sequence) {
+    hash = HASHES[readOid(bytes, children(bytes, parts[0]!)[0]!)] ?? "";
+    hashField = parts[1]!;
+  }
+
+  if (
+    !hash ||
+    !contentBytes(bytes, hashField).equals(
+      createHash(hash).update(certificate.der).digest(),
+    )
+  ) {
+    throw new SignerSignatureError(
+      "The signature names a different certificate from the one that made it.",
+    );
+  }
+}
+
+export type SignatureLevel = "advanced" | "qualified";
+
+export type CheckedSignerSignature = {
+  certificate: Certificate;
+  /** The certificates the CMS carries, the signer's first. */
+  chain: Buffer[];
+  issuer: string;
+  /** The certificate says it is qualified, for signatures, on a QSCD. */
+  qualified: boolean;
+  serialNumber: string;
+  subject: string;
+  /** The CMS carries a signature timestamp (PAdES B-T). */
+  timestamped: boolean;
+  validTo: Date;
+};
+
+function displayName(distinguishedName: string): string {
+  return distinguishedName.replace(/\n/g, ", ");
+}
+
+/** Whether a certificate claims to be qualified for electronic signatures. */
+export function isQualifiedSignatureCertificate(
+  certificate: Certificate,
+): boolean {
+  return (
+    certificate.qcStatements.includes(CMS_OIDS.qcCompliance) &&
+    certificate.qcStatements.includes(CMS_OIDS.qcSscd) &&
+    (certificate.qcTypes.length === 0 ||
+      certificate.qcTypes.includes(CMS_OIDS.qcTypeSignature))
+  );
+}
+
+/**
+ * Checks a signer's CMS before it goes into the document: it signs exactly
+ * `contentDigest` (SHA-256 of the revision's signed bytes), it verifies with
+ * the certificate it names, that certificate is valid now, and, for a
+ * qualified signature, the certificate says it is one.
+ */
+export function checkSignerSignature(
+  cms: Uint8Array,
+  contentDigest: Uint8Array,
+  { level, now = new Date() }: { level: SignatureLevel; now?: Date },
+): CheckedSignerSignature {
+  let info: ParsedSignerInfo;
+
+  try {
+    info = readSignerInfo(Buffer.from(cms));
+  } catch (error) {
+    if (error instanceof SignerSignatureError) {
+      throw error;
+    }
+
+    throw new SignerSignatureError("The signature could not be read.", {
+      cause: error,
+    });
+  }
+
+  if (info.digestAlgorithm !== CMS_OIDS.sha256) {
+    throw new SignerSignatureError("The signature does not use SHA-256.");
+  }
+
+  const contentType = info.signedAttributeValues.get(CMS_OIDS.contentType);
+  const messageDigest = info.signedAttributeValues.get(CMS_OIDS.messageDigest);
+
+  if (
+    contentType?.length !== 1 ||
+    readOid(info.bytes, contentType[0]!) !== CMS_OIDS.data
+  ) {
+    throw new SignerSignatureError("The signature's content type is wrong.");
+  }
+
+  if (
+    messageDigest?.length !== 1 ||
+    !contentBytes(info.bytes, messageDigest[0]!).equals(
+      Buffer.from(contentDigest),
+    )
+  ) {
+    throw new SignerSignatureError(
+      "The signature is for different content than this document.",
+    );
+  }
+
+  const certificates = info.certificates.map((certificate) =>
+    parseCertificate(certificate),
+  );
+  const signer = findSigner(info, certificates);
+  let verified: boolean;
+
+  try {
+    verified = verifyValue(info, signer.x509.publicKey);
+  } catch (error) {
+    if (error instanceof SignerSignatureError) {
+      throw error;
+    }
+
+    verified = false;
+  }
+
+  if (!verified) {
+    throw new SignerSignatureError("The signature does not verify.");
+  }
+
+  assertSigningCertificate(info, signer);
+
+  const validFrom = new Date(signer.x509.validFrom);
+  const validTo = new Date(signer.x509.validTo);
+
+  if (now < validFrom || now > validTo) {
+    throw new SignerSignatureError("The signing certificate is not valid now.");
+  }
+
+  const qualified = isQualifiedSignatureCertificate(signer);
+
+  if (level === "qualified" && !qualified) {
+    throw new SignerSignatureError(
+      "The certificate is not a qualified certificate for electronic signatures on a qualified device.",
+    );
+  }
+
+  return {
+    certificate: signer,
+    chain: [
+      signer.der,
+      ...certificates
+        .filter((certificate) => certificate !== signer)
+        .map((certificate) => certificate.der),
+    ],
+    issuer: displayName(signer.x509.issuer),
+    qualified,
+    serialNumber: signer.serial.toString("hex"),
+    subject: displayName(signer.x509.subject),
+    timestamped: info.unsignedAttributeIds.includes(CMS_OIDS.timeStampToken),
+    validTo,
+  };
+}
+
+// --- Changing --------------------------------------------------------------
+
+/**
+ * Adds a signature timestamp (PAdES B-T) to a CMS that has none: the
+ * timestamp token for the SHA-256 of the signature value, as an unsigned
+ * attribute. The signature itself is unchanged.
+ */
+export async function addSignatureTimestamp(
+  cms: Uint8Array,
+  timestamp: (imprint: Buffer) => Promise<Buffer>,
+): Promise<Buffer> {
+  const bytes = Buffer.from(cms);
+  const info = readSignerInfo(bytes);
+
+  if (info.unsignedAttributeIds.includes(CMS_OIDS.timeStampToken)) {
+    return bytes;
+  }
+
+  const token = await timestamp(
+    createHash("sha256").update(info.signature).digest(),
+  );
+  const { parts } = readSignedData(bytes);
+  const signerInfos = parts[parts.length - 1]!;
+  const signerInfo = children(bytes, signerInfos)[0]!;
+  const fields = children(bytes, signerInfo);
+  const unsigned = fields.find((field) => field.tag === contextTag(1));
+  const kept = fields
+    .filter((field) => field !== unsigned)
+    .map((field) => elementBytes(bytes, field));
+  const attributes = [
+    ...(unsigned
+      ? children(bytes, unsigned).map((item) => elementBytes(bytes, item))
+      : []),
+    attribute(CMS_OIDS.timeStampToken, token),
+  ];
+  const newSignerInfo = der.sequence(
+    ...kept,
+    encode(contextTag(1), ...attributes),
+  );
+  const signedData = der.sequence(
+    ...parts.slice(0, -1).map((part) => elementBytes(bytes, part)),
+    der.set(newSignerInfo),
+  );
+
+  return der.sequence(
+    der.oid(CMS_OIDS.signedData),
+    encode(contextTag(0), signedData),
+  );
+}

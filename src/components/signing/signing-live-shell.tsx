@@ -428,7 +428,30 @@ function buildSigningSubmissionPayload(
   };
 }
 
-export function SigningLiveShell({ record }: { record: SigningPayload }) {
+/** Why a signer came back from their signing provider without signing. */
+export type ProviderSignatureProblem = "cancelled" | "expired" | "failed";
+
+function describeProviderProblem(
+  problem: ProviderSignatureProblem,
+  providerName: string,
+): string {
+  switch (problem) {
+    case "cancelled":
+      return `You did not finish signing at ${providerName}. Nothing was signed, so you can try again.`;
+    case "expired":
+      return "Your earlier signing session ended before it finished. Nothing was signed, so you can try again.";
+    default:
+      return `${providerName} could not complete your signature. Nothing was signed. Try again, or ask the sender for help.`;
+  }
+}
+
+export function SigningLiveShell({
+  record,
+  signatureProblem = null,
+}: {
+  record: SigningPayload;
+  signatureProblem?: ProviderSignatureProblem | null;
+}) {
   const [activePage, setActivePage] = useState(
     record.currentSignerFields[0]?.page ??
       record.visibleFields[0]?.page ??
@@ -455,6 +478,9 @@ export function SigningLiveShell({ record }: { record: SigningPayload }) {
   const [reauthPassword, setReauthPassword] = useState("");
   const [isMeaningConfirmed, setIsMeaningConfirmed] = useState(false);
   const part11 = record.part11 ?? null;
+  // Signed with a certificate in the signer's own name: Finish goes to the
+  // signing provider, which signs, then sends the signer back.
+  const providerSignature = record.providerSignature ?? null;
   const isReauthReady =
     part11 === null ||
     (isMeaningConfirmed &&
@@ -592,27 +618,31 @@ export function SigningLiveShell({ record }: { record: SigningPayload }) {
     setSubmitError(null);
 
     try {
-      const response = await fetch(record.submitUrl, {
-        body: JSON.stringify({
-          ...buildSigningSubmissionPayload(record, enteredValues),
-          ...(part11
-            ? {
-                reauthentication: {
-                  email: reauthEmail,
-                  meaningConfirmed: true,
-                  password: reauthPassword,
-                },
-              }
-            : {}),
-        }),
-        headers: {
-          "content-type": "application/json",
+      const response = await fetch(
+        providerSignature?.startUrl ?? record.submitUrl,
+        {
+          body: JSON.stringify({
+            ...buildSigningSubmissionPayload(record, enteredValues),
+            ...(part11
+              ? {
+                  reauthentication: {
+                    email: reauthEmail,
+                    meaningConfirmed: true,
+                    password: reauthPassword,
+                  },
+                }
+              : {}),
+          }),
+          headers: {
+            "content-type": "application/json",
+          },
+          method: "POST",
         },
-        method: "POST",
-      });
+      );
       const payload = (await response.json().catch(() => null)) as {
         error?: string;
         redirectPath?: string;
+        redirectUrl?: string;
         state?: string;
       } | null;
 
@@ -625,6 +655,17 @@ export function SigningLiveShell({ record }: { record: SigningPayload }) {
         setSubmitError(payload?.error ?? defaultSubmitErrorMessage);
         setReauthPassword("");
         setIsSubmitting(false);
+        return;
+      }
+
+      if (providerSignature) {
+        if (!payload?.redirectUrl) {
+          setSubmitError(defaultSubmitErrorMessage);
+          setIsSubmitting(false);
+          return;
+        }
+
+        window.location.assign(payload.redirectUrl);
         return;
       }
 
@@ -780,6 +821,14 @@ export function SigningLiveShell({ record }: { record: SigningPayload }) {
       </header>
 
       <main className="mx-auto flex w-full max-w-[1320px] flex-1 flex-col gap-5 px-4 pb-8 pt-1 sm:px-6">
+        {signatureProblem && providerSignature ? (
+          <div className="notice notice-danger" role="alert">
+            {describeProviderProblem(
+              signatureProblem,
+              providerSignature.providerName,
+            )}
+          </div>
+        ) : null}
         <section className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_340px]">
           <div className="flex min-w-0 flex-col gap-4">
             <div className="panel rounded-[1.25rem] px-4 py-3">
@@ -1111,10 +1160,28 @@ export function SigningLiveShell({ record }: { record: SigningPayload }) {
             setSubmitError(null);
           }}
         >
-          <p className="text-sm leading-6 text-(--secondary)">
-            By clicking Finish, you confirm that your electronic signature is
-            intended to be binding for this document.
-          </p>
+          {providerSignature ? (
+            <div className="grid gap-3 text-sm leading-6 text-(--secondary)">
+              <p>
+                This document asks for{" "}
+                {providerSignature.level === "qualified"
+                  ? "a qualified electronic signature"
+                  : "an advanced electronic signature"}
+                , made with a certificate in your own name.
+              </p>
+              <p>
+                Next, {providerSignature.providerName} asks you to confirm who
+                you are and to approve the signature. When it is done, you come
+                back here. By continuing, you confirm that your signature is
+                intended to be binding for this document.
+              </p>
+            </div>
+          ) : (
+            <p className="text-sm leading-6 text-(--secondary)">
+              By clicking Finish, you confirm that your electronic signature is
+              intended to be binding for this document.
+            </p>
+          )}
           {part11 ? (
             <div className="grid gap-4">
               <div className="well rounded-xl px-3.5 py-3">
@@ -1186,7 +1253,13 @@ export function SigningLiveShell({ record }: { record: SigningPayload }) {
               loading={isSubmitting}
               onClick={handleFinishSigning}
             >
-              {isSubmitting ? "Finishing..." : "Finish signing"}
+              {providerSignature
+                ? isSubmitting
+                  ? "Preparing..."
+                  : `Continue to ${providerSignature.providerName}`
+                : isSubmitting
+                  ? "Finishing..."
+                  : "Finish signing"}
             </ShellButton>
           </div>
         </DialogFrame>

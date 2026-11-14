@@ -136,20 +136,20 @@ DocuSign does more, and charges for it per user. SignuDoc does the everyday sign
 
 ### Where DocuSign does more
 
-|                                                         | SignuDoc                       | DocuSign eSignature                                   |
-| ------------------------------------------------------- | ------------------------------ | ----------------------------------------------------- |
-| **More than one document per envelope, and Word files** | — PDF only, one per envelope   | ✅                                                    |
-| **Signing at the same time**                            | — in order only                | ✅                                                    |
-| **Bulk send, web forms, payments**                      | —                              | ✅ on Business Pro                                    |
-| **API and webhooks**                                    | — not yet                      | ✅ API plans from $50 a month                         |
-| **Integrations**                                        | —                              | ✅ 1,000+, including Salesforce, Microsoft and Google |
-| **Languages**                                           | — signing pages in English     | ✅ signing in 44 languages                            |
-| **Single sign-on**                                      | — email and password           | ✅ SAML SSO on Enhanced                               |
-| **Advanced and qualified signatures (eIDAS)**           | — simple electronic signatures | ✅                                                    |
-| **HIPAA, 21 CFR Part 11, certifications**               | Part 11 mode; you validate     | ✅ on Enhanced or as add-ons                          |
-| **Support**                                             | GitHub issues                  | ✅ 24/7 on Enhanced                                   |
+|                                                         | SignuDoc                                                          | DocuSign eSignature                                   |
+| ------------------------------------------------------- | ----------------------------------------------------------------- | ----------------------------------------------------- |
+| **More than one document per envelope, and Word files** | — PDF only, one per envelope                                      | ✅                                                    |
+| **Signing at the same time**                            | — in order only                                                   | ✅                                                    |
+| **Bulk send, web forms, payments**                      | —                                                                 | ✅ on Business Pro                                    |
+| **API and webhooks**                                    | — not yet                                                         | ✅ API plans from $50 a month                         |
+| **Integrations**                                        | —                                                                 | ✅ 1,000+, including Salesforce, Microsoft and Google |
+| **Languages**                                           | — signing pages in English                                        | ✅ signing in 44 languages                            |
+| **Single sign-on**                                      | — email and password                                              | ✅ SAML SSO on Enhanced                               |
+| **Advanced and qualified signatures (eIDAS)**           | With a provider you add: eID Easy or a CSC remote signing service | ✅                                                    |
+| **HIPAA, 21 CFR Part 11, certifications**               | Part 11 mode; you validate                                        | ✅ on Enhanced or as add-ons                          |
+| **Support**                                             | GitHub issues                                                     | ✅ 24/7 on Enhanced                                   |
 
-If your agreements run through Salesforce, need SMS checks or qualified signatures, or go out by the thousand in bulk, DocuSign earns its price. If you want to send everyday agreements, keep the evidence, and own the whole thing, SignuDoc is built for you.
+If your agreements run through Salesforce, need SMS checks or ID document checks, or go out by the thousand in bulk, DocuSign earns its price. If you want to send everyday agreements, keep the evidence, and own the whole thing, SignuDoc is built for you.
 
 ## What it costs
 
@@ -227,9 +227,11 @@ SignuDoc is not a law firm and does not give legal advice, and nothing here is a
 
 Every install has a page at `/electronic-signatures` that says what it is for, and senders confirm it before each send. It is meant for ordinary business agreements, such as contracts, NDAs, statements of work, offer letters, purchase orders and approvals. It is **not** built for:
 
-- documents that need an advanced or qualified electronic signature (AdES or QES) under eIDAS;
+- documents that need an advanced or qualified electronic signature (AdES or QES) under eIDAS, unless you add a signing provider (see below);
 - protected health information under HIPAA;
 - documents that many laws keep out of electronic signature, such as wills, family-law matters, court orders, notices of foreclosure, eviction, utility shut-off or insurance cancellation, and in most EU countries real estate transfers and documents that need a notary.
+
+For **advanced or qualified electronic signatures** under eIDAS, connect a signing provider: [eID Easy](https://eideasy.com), or a trust service provider's remote signing service that speaks the CSC API v2. A sender can then choose that signature type for an envelope, and each signer proves who they are at the provider and signs with a certificate in their own name. Every signature goes into the PDF in a revision of its own, so all of them stay valid, and the finished PDF gets long-term validation. The provider is a paid service outside Vercel, so it is optional, and the flow has been tested against stand-ins for both interfaces but not yet against the live services. [Signatures in the signers' own names](docs/self-hosting.md#signatures-in-the-signers-own-names-eidas-ades-and-qes) has the setup.
 
 For FDA 21 CFR Part 11 records, an administrator can turn on **Part 11 mode** under Settings. Signers then sign with their own accounts, whose identity an administrator has confirmed, give their password again at each signature, and see the meaning of their signature (approval, review, responsibility or authorship) printed beside it with their name and the time. Audit trails export as CSV, and finished records are never deleted on a timer. That covers the software's part only: validating your install, writing and following your own procedures, training your people and certifying your electronic signatures to the FDA stay with your organization. The [Part 11 validation pack](docs/part11/README.md) gives you starting documents for that: requirements, a traceability matrix, a risk assessment, qualification scripts, SOP templates and the FDA letter.
 

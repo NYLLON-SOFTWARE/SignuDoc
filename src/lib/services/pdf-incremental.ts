@@ -39,7 +39,7 @@ export type UpdatedObject = {
   ref: ObjectRef;
 };
 
-type Trailer = {
+export type Trailer = {
   id: string | null;
   info: string | null;
   root: ObjectRef;
@@ -85,7 +85,7 @@ function dictionaryAt(text: string, start: number): string {
   throw new PdfUpdateError("The PDF trailer is not closed.");
 }
 
-function readTrailer(bytes: Uint8Array): Trailer {
+export function readTrailer(bytes: Uint8Array): Trailer {
   // Only the end of the file is needed, and a trailer is short.
   const tailStart = Math.max(0, bytes.length - 4096);
   const tail = Buffer.from(bytes.subarray(tailStart)).toString("latin1");
@@ -219,16 +219,23 @@ export function signaturePlaceholder(contentsBytes: number): string {
   return `${BYTE_RANGE_PLACEHOLDER}\n/Contents <${"0".repeat(contentsBytes * 2)}>`;
 }
 
+export type PreparedSignedUpdate = {
+  /** The file with the update appended, its byte range set, its slot empty. */
+  bytes: Uint8Array;
+  /** What the signature covers: the file without the signature slot. */
+  signedContent: Buffer;
+};
+
 /**
  * Appends an update whose objects include one signature dictionary written
- * with `signaturePlaceholder`, then fills in its byte range and the value
- * `sign` makes over the bytes that range covers.
+ * with `signaturePlaceholder`, and sets its byte range. The signature goes
+ * in later, with `fillSignature`, so it can be made elsewhere (a trust
+ * service provider) between the two.
  */
-export async function appendSignedUpdate(
+export function prepareSignedUpdate(
   bytes: Uint8Array,
   objects: readonly UpdatedObject[],
-  sign: (signedContent: Buffer) => Promise<Buffer>,
-): Promise<Uint8Array> {
+): PreparedSignedUpdate {
   const updated = Buffer.from(appendIncrementalUpdate(bytes, objects));
   const text = updated.toString("latin1");
   const rangeAt = text.indexOf(BYTE_RANGE_PLACEHOLDER, bytes.length);
@@ -253,13 +260,47 @@ export async function appendSignedUpdate(
     "latin1",
   );
 
-  const signature = await sign(
-    Buffer.concat([updated.subarray(0, open), updated.subarray(close + 1)]),
-  );
-  const hex = signature.toString("hex");
-  const room = close - open - 1;
+  return {
+    bytes: new Uint8Array(updated),
+    signedContent: Buffer.concat([
+      updated.subarray(0, open),
+      updated.subarray(close + 1),
+    ]),
+  };
+}
 
-  if (hex.length > room) {
+/** Puts a signature into the empty slot of the file's last signature. */
+export function fillSignature(
+  prepared: Uint8Array,
+  signature: Buffer,
+): Uint8Array {
+  const updated = Buffer.from(prepared);
+  const text = updated.toString("latin1");
+  const rangeAt = text.lastIndexOf("/ByteRange [");
+  const match = /^\/ByteRange \[0 (\d+) (\d+) (\d+)\s*\]/.exec(
+    text.slice(rangeAt, rangeAt + BYTE_RANGE_PLACEHOLDER.length + 1),
+  );
+
+  if (rangeAt === -1 || !match) {
+    throw new PdfUpdateError("The PDF has no signature slot to fill.");
+  }
+
+  const open = Number(match[1]);
+  const close = Number(match[2]) - 1;
+  const [, , resume, rest] = match.map(Number) as number[];
+
+  if (
+    text[open] !== "<" ||
+    text[close] !== ">" ||
+    resume! + rest! !== updated.length ||
+    /[^0]/.test(text.slice(open + 1, close))
+  ) {
+    throw new PdfUpdateError("The signature slot is not empty, or has moved.");
+  }
+
+  const hex = signature.toString("hex");
+
+  if (hex.length > close - open - 1) {
     throw new PdfUpdateError(
       `The signature (${String(signature.length)} bytes) does not fit its placeholder.`,
     );
@@ -268,6 +309,21 @@ export async function appendSignedUpdate(
   updated.write(hex, open + 1, "latin1");
 
   return new Uint8Array(updated);
+}
+
+/**
+ * Appends an update whose objects include one signature dictionary written
+ * with `signaturePlaceholder`, then fills in its byte range and the value
+ * `sign` makes over the bytes that range covers.
+ */
+export async function appendSignedUpdate(
+  bytes: Uint8Array,
+  objects: readonly UpdatedObject[],
+  sign: (signedContent: Buffer) => Promise<Buffer>,
+): Promise<Uint8Array> {
+  const prepared = prepareSignedUpdate(bytes, objects);
+
+  return fillSignature(prepared.bytes, await sign(prepared.signedContent));
 }
 
 // --- Reading what is already there ---------------------------------------

@@ -23,6 +23,9 @@ export const e2eDataDir = path.resolve(".data", "e2e");
 export const e2eOutboxDir = path.join(e2eDataDir, "outbox");
 // First-run setup asks for this, as it does on a deployment that sets one.
 export const e2eSetupToken = "e2e-setup-token";
+// A stand-in for eID Easy, so the test can sign with a qualified
+// certificate in the signer's own name without the real service.
+const providerPort = Number(process.env.E2E_PROVIDER_PORT ?? port + 1);
 
 export default defineConfig({
   expect: { timeout: 20_000 },
@@ -46,37 +49,50 @@ export default defineConfig({
     baseURL,
     trace: "retain-on-failure",
   },
-  webServer: {
-    command:
-      process.env.E2E_DEV === "1"
-        ? `npx next dev --port ${String(port)}`
-        : `npx next build && npx next start --port ${String(port)}`,
-    env: {
-      APP_URL: baseURL,
-      BETTER_AUTH_SECRET: "e2e-only-secret-not-used-anywhere-else-0123456789",
-      BETTER_AUTH_URL: baseURL,
-      DATABASE_URL: e2eDatabaseUrl,
-      EMAIL_CAPTURE_DIR: e2eOutboxDir,
-      EMAIL_DRIVER: "capture",
-      NEXT_TELEMETRY_DISABLED: "1",
-      // The breach check calls an outside service; the test must not.
-      PASSWORD_BREACH_CHECK: "off",
-      SETUP_TOKEN: e2eSetupToken,
-      // "local" unless E2E_STORAGE_DRIVER says otherwise. With "blob" and a
-      // BLOB_READ_WRITE_TOKEN in the environment, the same test runs against
-      // a real Vercel Blob store, direct browser upload included.
-      STORAGE_DRIVER: process.env.E2E_STORAGE_DRIVER ?? "local",
-      STORAGE_LOCAL_DIR: path.join(e2eDataDir, "storage"),
+  webServer: [
+    {
+      command:
+        process.env.E2E_DEV === "1"
+          ? `npx next dev --port ${String(port)}`
+          : `npx next build && npx next start --port ${String(port)}`,
+      env: {
+        APP_URL: baseURL,
+        BETTER_AUTH_SECRET: "e2e-only-secret-not-used-anywhere-else-0123456789",
+        BETTER_AUTH_URL: baseURL,
+        DATABASE_URL: e2eDatabaseUrl,
+        EMAIL_CAPTURE_DIR: e2eOutboxDir,
+        EIDEASY_API_URL: `http://127.0.0.1:${String(providerPort)}/eideasy`,
+        EIDEASY_CLIENT_ID: "test-client",
+        EIDEASY_SECRET: "test-secret",
+        EMAIL_DRIVER: "capture",
+        NEXT_TELEMETRY_DISABLED: "1",
+        // The breach check calls an outside service; the test must not.
+        PASSWORD_BREACH_CHECK: "off",
+        SETUP_TOKEN: e2eSetupToken,
+        // "local" unless E2E_STORAGE_DRIVER says otherwise. With "blob" and a
+        // BLOB_READ_WRITE_TOKEN in the environment, the same test runs against
+        // a real Vercel Blob store, direct browser upload included.
+        STORAGE_DRIVER: process.env.E2E_STORAGE_DRIVER ?? "local",
+        STORAGE_LOCAL_DIR: path.join(e2eDataDir, "storage"),
+      },
+      reuseExistingServer: false,
+      timeout: 300_000,
+      // Playwright starts the server before the test database is prepared:
+      // on a first run, as in CI, it has no tables at all, and on later runs
+      // it holds the last run's data. So the readiness check must be
+      // something that never touches the database. A page would remember for
+      // a minute that the site is already set up, and an API route can fail
+      // outright for want of tables.
+      url: `${baseURL}/icon.svg`,
     },
-    reuseExistingServer: false,
-    timeout: 300_000,
-    // Playwright starts the server before the test database is prepared:
-    // on a first run, as in CI, it has no tables at all, and on later runs
-    // it holds the last run's data. So the readiness check must be
-    // something that never touches the database. A page would remember for
-    // a minute that the site is already set up, and an API route can fail
-    // outright for want of tables.
-    url: `${baseURL}/icon.svg`,
-  },
+    {
+      command:
+        "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON e2e/support/provider-stand-in.ts",
+      env: { E2E_PROVIDER_PORT: String(providerPort) },
+      reuseExistingServer: false,
+      timeout: 60_000,
+      url: `http://127.0.0.1:${String(providerPort)}/health`,
+    },
+  ],
   workers: 1,
 });

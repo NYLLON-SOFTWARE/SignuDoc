@@ -24,6 +24,7 @@ import {
   MAX_DRAWN_SIGNATURE_BYTES,
   signingSubmissionSchema,
   type SigningFieldSubmission,
+  type SigningSubmission,
 } from "./schemas/field.ts";
 import {
   signerCheckRequestSchema,
@@ -72,6 +73,7 @@ import {
   issueSigningLink,
   type IssuedSigningLink,
 } from "./services/signing-links.ts";
+import { signingProviderById } from "./services/signing-providers.ts";
 import {
   buildEnvelopeCertificateKey,
   buildEnvelopeSignedPdfKey,
@@ -112,7 +114,7 @@ import {
   type SignerCheckState,
 } from "./signer-checks.ts";
 
-type SigningRequestMeta = {
+export type SigningRequestMeta = {
   ipAddress?: string | null;
   userAgent?: string | null;
 };
@@ -135,7 +137,11 @@ type SigningEnvelopeRow = {
   id: string;
   pageCount: number;
   part11: boolean;
+  revisionKey: string | null;
+  revisionSha256: string | null;
   sentAt: number | null;
+  signatureLevel: "advanced" | "qualified" | "simple";
+  signatureProvider: string | null;
   signedPdfKey: string | null;
   sourcePdfFilename: string;
   sourcePdfHash: string;
@@ -215,9 +221,41 @@ type ResolvedSigningContext = {
   signers: Array<ReturnType<typeof signerRecordSchema.parse>>;
 };
 
+/** What a signer's own certificate showed, kept in the audit trail. */
+export type ProviderSignatureEvidence = {
+  certificateIssuer: string;
+  certificateSerialNumber: string;
+  certificateSubject: string;
+  /** Unix seconds. */
+  certificateValidTo: number;
+  level: "advanced" | "qualified";
+  /** How the signer identified themselves at the provider, when it says. */
+  method: string | null;
+  provider: string;
+  /** The certificate says it is qualified, on a qualified device. */
+  qualified: boolean;
+  timestamped: boolean;
+};
+
+/**
+ * A signature a signing provider made for the signer, in a revision of the
+ * PDF of its own. See provider-signing.ts.
+ */
+export type ProviderSignatureCompletion = {
+  /** The revision this one was added to, as it was when the signer began. */
+  baseSha256: string | null;
+  evidence: ProviderSignatureEvidence;
+  revision: { bytes: Uint8Array; key: string; sha256: string };
+  sessionId: string;
+  /** When the signer submitted, which the revision's dates are from. */
+  submittedAt: number;
+};
+
 type SubmitSigningOptions = {
   database?: DbPool;
   emailService?: EmailService;
+  /** Set when a signing provider signed: see provider-signing.ts. */
+  providerSignature?: ProviderSignatureCompletion;
   requestMeta?: SigningRequestMeta;
   storageService?: StorageService;
   /** The extra checks this browser has passed for the link (from its cookie). */
@@ -513,6 +551,10 @@ async function getEnvelopeRow(
           source_pdf_hash AS "sourcePdfHash",
           page_count AS "pageCount",
           part11,
+          signature_level AS "signatureLevel",
+          signature_provider AS "signatureProvider",
+          revision_key AS "revisionKey",
+          revision_sha256 AS "revisionSha256",
           sent_at AS "sentAt",
           completed_at AS "completedAt",
           declined_at AS "declinedAt",
@@ -906,6 +948,7 @@ function buildSignedAuditEvent(input: {
   authMethods: readonly SignerCheckMethod[];
   envelopeId: string;
   part11?: Part11SignatureRecord | null;
+  providerSignature?: ProviderSignatureEvidence | null;
   signatureMethods: readonly string[];
   requestMeta: SigningRequestMeta;
   signer: ReturnType<typeof signerRecordSchema.parse>;
@@ -929,6 +972,9 @@ function buildSignedAuditEvent(input: {
       signatureMethods: [...input.signatureMethods],
       timezoneOffsetMinutes: input.timezoneOffsetMinutes,
       ...(input.part11 ? { part11: input.part11 } : {}),
+      ...(input.providerSignature
+        ? { providerSignature: input.providerSignature }
+        : {}),
     },
     userAgent: input.requestMeta.userAgent ?? null,
   };
@@ -1759,6 +1805,17 @@ export async function getSigningPayloadForToken(
                 .statement,
           }
         : null,
+    providerSignature:
+      context.envelope.signatureLevel === "advanced" ||
+      context.envelope.signatureLevel === "qualified"
+        ? {
+            level: context.envelope.signatureLevel,
+            providerName:
+              signingProviderById(context.envelope.signatureProvider ?? "")
+                ?.name ?? "the signing provider",
+            startUrl: `/api/signing/${encodeURIComponent(token)}/provider/start`,
+          }
+        : null,
     senderName: normalizeSenderName(context.sender),
     signer: {
       email: context.signer.email,
@@ -1851,41 +1908,65 @@ async function reauthenticatePart11Signer(
   };
 }
 
-export async function submitSigningForToken(
-  token: string,
-  input: unknown,
-  {
-    database = getDb(),
-    emailService: givenEmailService,
-    requestMeta = {},
-    storageService: givenStorageService,
-    verifiedMethods = [],
-    verifyPassword,
-  }: SubmitSigningOptions = {},
-): Promise<SigningSubmitResponse> {
-  const parsedInput = signingSubmissionSchema.parse(input);
-  const context = await resolveSigningContext(token, { database });
-  const signerChecks = await assertSignerChecksPassed(
-    context,
-    verifiedMethods,
-    database,
+/**
+ * Makes a provider-signed revision the envelope's current one, within the
+ * transaction that records the signature. Refused when another revision was
+ * committed since this signer began, so no signature is ever built on a
+ * revision that is no longer the latest.
+ */
+async function commitProviderRevision(
+  tx: DbExecutor,
+  envelopeId: string,
+  completion: ProviderSignatureCompletion,
+  now: number,
+) {
+  const revision = await tx.query(
+    `
+      UPDATE envelopes
+      SET revision_key = $1, revision_sha256 = $2
+      WHERE id = $3
+        AND revision_sha256 IS NOT DISTINCT FROM $4
+    `,
+    [
+      completion.revision.key,
+      completion.revision.sha256,
+      envelopeId,
+      completion.baseSha256,
+    ],
   );
 
-  if (signerChecks.state.consentedAt === null) {
+  if (revision.rowCount !== 1) {
     throw new SigningMutationError(
-      "Agree to use electronic records and signatures before signing.",
+      "The document changed while you were signing. Open your signing link again.",
       409,
     );
   }
 
-  const emailService = givenEmailService ?? createEmailService();
-  const part11Signature = await reauthenticatePart11Signer(
-    context,
-    signerChecks.state,
-    parsedInput.reauthentication,
-    { database, emailService, requestMeta, verifyPassword },
+  const session = await tx.query(
+    `
+      UPDATE provider_signing_sessions
+      SET state = 'completed', completed_at = $1
+      WHERE id = $2 AND envelope_id = $3 AND state = 'signing'
+    `,
+    [now, completion.sessionId, envelopeId],
   );
-  const storageService = givenStorageService ?? createStorageService();
+
+  if (session.rowCount !== 1) {
+    throw new SigningMutationError("This signing session has ended.", 409);
+  }
+}
+
+type SigningContext = Awaited<ReturnType<typeof resolveSigningContext>>;
+
+/**
+ * What the signer's submission changes: each of their fields' new value,
+ * checked against what the field accepts, and the drawn signatures to store.
+ */
+function buildSignerSubmission(
+  context: SigningContext,
+  parsedInput: SigningSubmission,
+  submittedAt: number,
+) {
   const currentSignerId = context.signer.id;
 
   if (!currentSignerId) {
@@ -1931,7 +2012,6 @@ export async function submitSigningForToken(
     relevantSubmissions.set(submission.fieldId, submission);
   }
 
-  const submittedAt = Math.floor(Date.now() / 1000);
   const localDateValue = formatLocalSigningDate(
     submittedAt,
     parsedInput.clientTimezoneOffsetMinutes,
@@ -2066,6 +2146,76 @@ export async function submitSigningForToken(
 
   assertRadioGroupsAnswered(currentSignerFields, fieldUpdates);
 
+  return {
+    currentSignerFields,
+    currentSignerId,
+    drawnSignatureUploads,
+    fieldUpdates,
+  };
+}
+
+export async function submitSigningForToken(
+  token: string,
+  input: unknown,
+  {
+    database = getDb(),
+    emailService: givenEmailService,
+    providerSignature,
+    requestMeta = {},
+    storageService: givenStorageService,
+    verifiedMethods = [],
+    verifyPassword,
+  }: SubmitSigningOptions = {},
+): Promise<SigningSubmitResponse> {
+  const parsedInput = signingSubmissionSchema.parse(input);
+  const context = await resolveSigningContext(token, { database });
+
+  // A document sent for advanced or qualified signatures is signed by each
+  // signer's provider, never by a plain submit, and the other way round.
+  if ((context.envelope.signatureLevel ?? "simple") === "simple") {
+    if (providerSignature) {
+      throw new SigningMutationError(
+        "This document is not signed through a signing provider.",
+        409,
+      );
+    }
+  } else if (!providerSignature) {
+    throw new SigningMutationError(
+      "This document is signed with a certificate in your own name. Continue from the signing page.",
+      409,
+    );
+  }
+
+  const signerChecks = await assertSignerChecksPassed(
+    context,
+    verifiedMethods,
+    database,
+  );
+
+  if (signerChecks.state.consentedAt === null) {
+    throw new SigningMutationError(
+      "Agree to use electronic records and signatures before signing.",
+      409,
+    );
+  }
+
+  const emailService = givenEmailService ?? createEmailService();
+  const part11Signature = await reauthenticatePart11Signer(
+    context,
+    signerChecks.state,
+    parsedInput.reauthentication,
+    { database, emailService, requestMeta, verifyPassword },
+  );
+  const storageService = givenStorageService ?? createStorageService();
+  const submittedAt =
+    providerSignature?.submittedAt ?? Math.floor(Date.now() / 1000);
+  const {
+    currentSignerFields,
+    currentSignerId,
+    drawnSignatureUploads,
+    fieldUpdates,
+  } = buildSignerSubmission(context, parsedInput, submittedAt);
+
   let signingStatePersisted = false;
 
   try {
@@ -2110,6 +2260,7 @@ export async function submitSigningForToken(
       authMethods: signerChecks.passed,
       envelopeId: context.envelope.id,
       part11: part11Signature,
+      providerSignature: providerSignature?.evidence ?? null,
       signatureMethods: [
         ...new Set(
           [...fieldUpdates.values()]
@@ -2162,6 +2313,15 @@ export async function submitSigningForToken(
         }
 
         nextSignerDeadline = lockedEnvelope.expiresAt;
+
+        if (providerSignature) {
+          await commitProviderRevision(
+            tx,
+            context.envelope.id,
+            providerSignature,
+            submittedAt,
+          );
+        }
 
         for (const update of fieldUpdates.values()) {
           const result = await tx.query(
@@ -2349,6 +2509,7 @@ export async function submitSigningForToken(
         },
       },
       {
+        signedRevision: providerSignature?.revision.bytes,
         storageService,
       },
     );
@@ -2371,6 +2532,15 @@ export async function submitSigningForToken(
     try {
       await withTransaction(async (tx) => {
         await lockSentEnvelope(context.envelope.id, tx);
+
+        if (providerSignature) {
+          await commitProviderRevision(
+            tx,
+            context.envelope.id,
+            providerSignature,
+            submittedAt,
+          );
+        }
 
         for (const update of fieldUpdates.values()) {
           const result = await tx.query(
@@ -2539,6 +2709,78 @@ export async function submitSigningForToken(
 
     throw error;
   }
+}
+
+export type PreparedSignerSubmission = {
+  context: SigningContext;
+  /** Drawn signatures by the key they will be stored under. */
+  images: Map<string, Uint8Array>;
+  /** The signer's fields with the submitted values, for their revision. */
+  signerFields: ReturnType<typeof fieldRecordSchema.parse>[];
+  /** Where the signer is in the signing order, from 0. */
+  signerIndex: number;
+  submittedAt: number;
+};
+
+/**
+ * Checks a submission the way submitting does, without saving anything: for
+ * a signer who signs through a signing provider, whose signature is made
+ * before their submission is saved. See provider-signing.ts.
+ */
+export async function prepareSignerSubmission(
+  token: string,
+  input: unknown,
+  {
+    database = getDb(),
+    submittedAt = Math.floor(Date.now() / 1000),
+    verifiedMethods = [],
+  }: {
+    database?: DbPool;
+    submittedAt?: number;
+    verifiedMethods?: readonly SignerCheckMethod[];
+  } = {},
+): Promise<PreparedSignerSubmission> {
+  const parsedInput = signingSubmissionSchema.parse(input);
+  const context = await resolveSigningContext(token, { database });
+
+  if ((context.envelope.signatureLevel ?? "simple") === "simple") {
+    throw new SigningMutationError(
+      "This document is not signed through a signing provider.",
+      409,
+    );
+  }
+
+  const signerChecks = await assertSignerChecksPassed(
+    context,
+    verifiedMethods,
+    database,
+  );
+
+  if (signerChecks.state.consentedAt === null) {
+    throw new SigningMutationError(
+      "Agree to use electronic records and signatures before signing.",
+      409,
+    );
+  }
+
+  const { currentSignerId, drawnSignatureUploads, fieldUpdates } =
+    buildSignerSubmission(context, parsedInput, submittedAt);
+
+  return {
+    context,
+    images: new Map(
+      drawnSignatureUploads.map((upload) => [upload.imageKey, upload.body]),
+    ),
+    signerFields: applyFieldUpdatesToRecords(
+      context.fields,
+      fieldUpdates,
+      submittedAt,
+    ).filter((field) => field.signerId === currentSignerId),
+    signerIndex: context.signers.findIndex(
+      (signer) => signer.id === currentSignerId,
+    ),
+    submittedAt,
+  };
 }
 
 export async function declineSigningForToken(

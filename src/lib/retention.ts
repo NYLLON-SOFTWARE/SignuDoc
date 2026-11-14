@@ -175,6 +175,9 @@ async function listFieldImagesForEnvelopeIds(
   const placeholders = envelopeIds
     .map((_, index) => `$${String(index + 1)}`)
     .join(", ");
+  // Drawn signatures, and the PDF revisions of signers who signed through a
+  // signing provider (see provider-signing.ts): files named in rows rather
+  // than kept at a fixed key.
   const rows = await queryMany<FieldImageRow>(
     database,
     `
@@ -184,6 +187,15 @@ async function listFieldImagesForEnvelopeIds(
       FROM fields
       WHERE envelope_id IN (${placeholders})
         AND image_key IS NOT NULL
+      UNION
+      SELECT id, revision_key
+      FROM envelopes
+      WHERE id IN (${placeholders})
+        AND revision_key IS NOT NULL
+      UNION
+      SELECT envelope_id, revision_key
+      FROM provider_signing_sessions
+      WHERE envelope_id IN (${placeholders})
     `,
     envelopeIds,
   );

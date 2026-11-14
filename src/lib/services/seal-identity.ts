@@ -53,7 +53,7 @@ declare global {
   var __signudocSealIdentity: CachedIdentity | undefined;
 }
 
-function encryptionKey(env: EnvSource): Buffer {
+function encryptionKey(env: EnvSource, context: string = KEY_CONTEXT): Buffer {
   const secret = resolveAuthSecret(env);
 
   if (!secret) {
@@ -65,11 +65,22 @@ function encryptionKey(env: EnvSource): Buffer {
 
     // Local development without a password: nothing worth protecting.
     return Buffer.from(
-      hkdfSync("sha256", "signudoc-development", "", KEY_CONTEXT, 32),
+      hkdfSync("sha256", "signudoc-development", "", context, 32),
     );
   }
 
-  return Buffer.from(hkdfSync("sha256", secret, "", KEY_CONTEXT, 32));
+  return Buffer.from(hkdfSync("sha256", secret, "", context, 32));
+}
+
+/**
+ * A key for keeping something else secret in the database, derived from the
+ * auth secret the same way as the seal key's, for its own purpose.
+ */
+export function secretKeyFor(
+  context: string,
+  env: EnvSource = process.env,
+): Buffer {
+  return encryptionKey(env, context);
 }
 
 export function encryptPrivateKey(pem: string, key: Buffer): string {
@@ -329,6 +340,7 @@ async function withLongTermValidation(
   sealed: Uint8Array,
   timestampUrl: string | null,
   fetch: ValidationFetch | undefined,
+  whose: "seal" | "signers" = "seal",
 ): Promise<Uint8Array> {
   try {
     const result = await addLongTermValidation(sealed, {
@@ -340,7 +352,9 @@ async function withLongTermValidation(
 
     if (result.revoked.length > 0) {
       console.error(
-        `[seal] A certificate authority says these certificates are revoked: ${result.revoked.join("; ")}. Readers will not accept the seal. Replace SEAL_P12_BASE64.`,
+        whose === "seal"
+          ? `[seal] A certificate authority says these certificates are revoked: ${result.revoked.join("; ")}. Readers will not accept the seal. Replace SEAL_P12_BASE64.`
+          : `[seal] A certificate authority says these signers' certificates are revoked: ${result.revoked.join("; ")}. Readers will not accept those signatures.`,
       );
     }
 
@@ -358,6 +372,28 @@ async function withLongTermValidation(
     );
     return sealed;
   }
+}
+
+/**
+ * The finished PDF of an envelope whose signers signed with certificates in
+ * their own names: the last signer's revision, with the validation data of
+ * every signature in it (PAdES B-LT), and with SEAL_TIMESTAMP_URL an archive
+ * timestamp over all of it (B-LTA). The signers' signatures already protect
+ * the document, so the install adds no seal of its own here.
+ */
+export async function finishSignerSignedPdf(
+  revision: Uint8Array,
+  {
+    env = process.env,
+    fetch,
+  }: { env?: EnvSource; fetch?: ValidationFetch } = {},
+): Promise<Uint8Array> {
+  return withLongTermValidation(
+    revision,
+    readEnv(env, "SEAL_TIMESTAMP_URL") ?? null,
+    fetch,
+    "signers",
+  );
 }
 
 async function clonePdf(pdfDocument: PDFDocument): Promise<PDFDocument> {

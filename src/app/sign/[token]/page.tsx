@@ -15,10 +15,19 @@ type SignPageProps = {
   params: Promise<{
     token: string;
   }>;
+  searchParams: Promise<{ signatureProblem?: string | string[] }>;
 };
 
-export default async function SignPage({ params }: SignPageProps) {
+const SIGNATURE_PROBLEMS = ["cancelled", "expired", "failed"] as const;
+
+export default async function SignPage({
+  params,
+  searchParams,
+}: SignPageProps) {
   const { token } = await params;
+  const { signatureProblem: problemParam } = await searchParams;
+  const signatureProblem =
+    SIGNATURE_PROBLEMS.find((problem) => problem === problemParam) ?? null;
   let initialState:
     "already-signed" | "declined" | "error" | "expired" | "voided" | undefined;
   let record: Awaited<ReturnType<typeof getSigningPayloadForToken>> | null =
@@ -55,6 +64,7 @@ export default async function SignPage({ params }: SignPageProps) {
       initialState={initialState}
       key={token}
       record={record ?? undefined}
+      signatureProblem={signatureProblem}
       token={token}
       verification={verification ?? undefined}
     />

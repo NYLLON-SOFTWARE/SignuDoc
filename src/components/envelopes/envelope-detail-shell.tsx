@@ -411,6 +411,11 @@ export function EnvelopeDetailShell({
                 <p className="text-sm text-(--secondary)">
                   Created {activeRecord.createdAtLabel}
                 </p>
+                {record.signatureTypeLabel ? (
+                  <span className="pill pill-neutral">
+                    {record.signatureTypeLabel}
+                  </span>
+                ) : null}
               </div>
             </div>
           </div>
