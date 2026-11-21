@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 
 import { getDb } from "@/lib/db/connection";
+import { resolveProviderReturnUrl } from "@/lib/provider-return-redirect";
 import {
   ProviderSigningError,
   resumeProviderSigning,
@@ -21,10 +22,13 @@ import {
 export const maxDuration = 60;
 
 function seeOther(location: string, request: Request) {
-  return NextResponse.redirect(new URL(location, request.url), {
-    headers: { "cache-control": "private, no-store" },
-    status: 303,
-  });
+  return NextResponse.redirect(
+    resolveProviderReturnUrl(location, request.url),
+    {
+      headers: { "cache-control": "private, no-store" },
+      status: 303,
+    },
+  );
 }
 
 function endedPage() {
