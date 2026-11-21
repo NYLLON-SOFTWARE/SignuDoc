@@ -268,16 +268,19 @@ const autosaveDelayMs = 450;
 function buildLiveSigners(
   signers: PrepareEnvelopeData["signers"],
 ): PrepareShellSigner[] {
-  return signers
-    .slice()
-    .sort((left, right) => left.order - right.order)
-    .map((signer, index) => ({
-      ...getSignerPalette(index),
-      email: signer.email,
-      id: signer.id,
-      name: signer.name,
-      order: signer.order,
-    }));
+  return (
+    signers
+      // Approvers approve or reject the document and have no fields.
+      .filter((signer) => signer.role !== "approver")
+      .sort((left, right) => left.order - right.order)
+      .map((signer, index) => ({
+        ...getSignerPalette(index),
+        email: signer.email,
+        id: signer.id,
+        name: signer.name,
+        order: signer.order,
+      }))
+  );
 }
 
 function buildLiveFields(
@@ -397,7 +400,44 @@ export function PrepareLiveShell({
     return <PrepareLiveShellError envelopeId={envelopeId} />;
   }
 
+  if (buildLiveSigners(record.signers).length === 0) {
+    return <PrepareLiveShellNoSigners envelopeId={envelopeId} />;
+  }
+
   return <PrepareLiveShellContent envelopeId={envelopeId} record={record} />;
+}
+
+// Every recipient is an approver, who has no fields: there is nobody to
+// prepare the document for until a signer is added.
+function PrepareLiveShellNoSigners({ envelopeId }: { envelopeId: string }) {
+  return (
+    <CanvasShell
+      backHref={`/envelopes/${envelopeId}/signers`}
+      backLabel="Back"
+      nextDisabled
+      nextLabel="Next →"
+      stepLabel="Step 3 of 4"
+      title='"Document"'
+    >
+      <div className="flex min-h-[calc(100vh-73px)] items-center justify-center p-4 sm:p-6 lg:p-8">
+        <section className="panel w-full max-w-[520px] p-8 text-center sm:p-10">
+          <h1 className="text-2xl font-extrabold tracking-[-0.03em] text-(--fg)">
+            Add a signer first
+          </h1>
+          <p className="mt-2 text-sm leading-6 text-(--secondary)">
+            This document has only approvers, and approvers have no fields to
+            place.
+          </p>
+          <a
+            className="mt-7 inline-block text-sm font-semibold text-(--accent)"
+            href={`/envelopes/${envelopeId}/signers`}
+          >
+            Back to recipients
+          </a>
+        </section>
+      </div>
+    </CanvasShell>
+  );
 }
 
 function PrepareLiveShellError({ envelopeId }: { envelopeId: string }) {

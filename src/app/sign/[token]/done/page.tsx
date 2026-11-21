@@ -2,6 +2,7 @@ import { SigningDoneShell } from "@/components/signing/signing-done-shell";
 
 type SignDonePageProps = {
   searchParams?: Promise<{
+    approved?: string | string[];
     title?: string | string[];
   }>;
 };
@@ -14,5 +15,10 @@ export default async function SignDonePage({
     ? resolvedSearchParams.title[0]
     : resolvedSearchParams?.title;
 
-  return <SigningDoneShell envelopeTitle={envelopeTitle} />;
+  return (
+    <SigningDoneShell
+      approved={resolvedSearchParams?.approved === "1"}
+      envelopeTitle={envelopeTitle}
+    />
+  );
 }

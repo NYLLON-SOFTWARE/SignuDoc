@@ -43,8 +43,9 @@ const tokenStateCopy: Record<
     description: "Request a new signing link from the sender.",
   },
   "already-signed": {
-    title: "You've already signed",
-    description: "You already completed your signature for this document.",
+    title: "You've already finished",
+    description:
+      "You already signed or approved this document. No further action is needed.",
   },
   completed: {
     title: "This envelope has been completed",
@@ -59,7 +60,7 @@ const tokenStateCopy: Record<
   declined: {
     title: "This envelope has been declined",
     description:
-      "A signer declined this document. No further action is needed.",
+      "A signer declined, or an approver rejected, this document. No further action is needed.",
   },
 };
 

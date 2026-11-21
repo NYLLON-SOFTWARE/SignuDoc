@@ -94,6 +94,12 @@ export const declinedConfirmation = {
     "Your decline has been recorded. No further action is needed, and this link no longer opens the document.",
   title: "You declined to sign",
 };
+/** What an approver sees once their rejection is recorded. */
+export const rejectedConfirmation = {
+  description:
+    "Your rejection has been recorded and the sender has been told. No further action is needed, and this link no longer opens the document.",
+  title: "You rejected this document",
+};
 const compactFieldHeightThreshold = 0.045;
 const compactFieldWidthThreshold = 0.12;
 
@@ -519,6 +525,9 @@ export function SigningLiveShell({
   // Signed with a certificate in the signer's own name: Finish goes to the
   // signing provider, which signs, then sends the signer back.
   const providerSignature = record.providerSignature ?? null;
+  // An approver reviews the document and approves or rejects it. They have
+  // no fields, and Finish and Decline become Approve and Reject.
+  const isApprover = record.signer.role === "approver";
   const isReauthReady =
     part11 === null ||
     (isMeaningConfirmed &&
@@ -803,20 +812,28 @@ export function SigningLiveShell({
 
     try {
       const response = await fetch(
-        providerSignature?.startUrl ?? record.submitUrl,
+        isApprover && record.approveUrl
+          ? record.approveUrl
+          : (providerSignature?.startUrl ?? record.submitUrl),
         {
-          body: JSON.stringify({
-            ...buildSigningSubmissionPayload(record, enteredValues),
-            ...(part11
+          body: JSON.stringify(
+            isApprover
               ? {
-                  reauthentication: {
-                    email: reauthEmail,
-                    meaningConfirmed: true,
-                    password: reauthPassword,
-                  },
+                  clientTimezoneOffsetMinutes: new Date().getTimezoneOffset(),
                 }
-              : {}),
-          }),
+              : {
+                  ...buildSigningSubmissionPayload(record, enteredValues),
+                  ...(part11
+                    ? {
+                        reauthentication: {
+                          email: reauthEmail,
+                          meaningConfirmed: true,
+                          password: reauthPassword,
+                        },
+                      }
+                    : {}),
+                },
+          ),
           headers: {
             "content-type": "application/json",
           },
@@ -843,7 +860,7 @@ export function SigningLiveShell({
         return;
       }
 
-      if (providerSignature) {
+      if (providerSignature && !isApprover) {
         if (!payload?.redirectUrl) {
           setSubmitError(defaultSubmitErrorMessage);
           setIsSubmitting(false);
@@ -989,11 +1006,15 @@ export function SigningLiveShell({
   }
 
   if (hasDeclined) {
+    const confirmation = isApprover
+      ? rejectedConfirmation
+      : declinedConfirmation;
+
     return (
       <SigningStateScreen
-        description={declinedConfirmation.description}
+        description={confirmation.description}
         focusHeading
-        title={declinedConfirmation.title}
+        title={confirmation.title}
       />
     );
   }
@@ -1031,13 +1052,20 @@ export function SigningLiveShell({
               }}
               variant="secondary"
             >
-              Decline
+              {isApprover ? "Reject" : "Decline"}
             </ShellButton>
           </div>
         </div>
       </header>
 
       <main className="mx-auto flex w-full max-w-[1320px] flex-1 flex-col gap-5 px-4 pb-8 pt-1 sm:px-6">
+        {isApprover ? (
+          <div className="notice notice-accent" role="status">
+            {record.senderName} asks you to review &ldquo;{record.envelopeTitle}
+            &rdquo; and approve or reject it. You have nothing to fill in, and
+            nothing of yours is added to the document.
+          </div>
+        ) : null}
         {signatureProblem && providerSignature ? (
           <div className="notice notice-danger" role="alert">
             {describeProviderProblem(
@@ -1226,7 +1254,9 @@ export function SigningLiveShell({
 
           <aside className="min-w-0 space-y-4 xl:sticky xl:top-[5.25rem] xl:self-start">
             <section className="panel rounded-[1.25rem] p-5">
-              <p className="section-eyebrow">Current signer</p>
+              <p className="section-eyebrow">
+                {isApprover ? "Approver" : "Current signer"}
+              </p>
               <div className="mt-3 flex items-center gap-3">
                 <span className="inline-flex size-11 shrink-0 items-center justify-center rounded-full bg-(--accent-soft) text-[0.9375rem] font-bold text-(--accent-ink)">
                   {getSignerInitials(record.signer.name)}
@@ -1241,7 +1271,7 @@ export function SigningLiveShell({
                 </div>
               </div>
 
-              <div className="well mt-5 p-4">
+              <div className="well mt-5 p-4" hidden={isApprover}>
                 <p className="section-eyebrow">Ready to finish</p>
                 <p className="mt-1.5 text-[0.9375rem] font-bold text-(--fg)">
                   {remainingFields === 0
@@ -1294,12 +1324,15 @@ export function SigningLiveShell({
                     setIsFinishDialogOpen(true);
                   }}
                 >
-                  Finish
+                  {isApprover ? "Approve" : "Finish"}
                 </ShellButton>
               </div>
             </section>
 
-            <section className="panel rounded-[1.25rem] p-5">
+            <section
+              className="panel rounded-[1.25rem] p-5"
+              hidden={isApprover}
+            >
               <div className="flex items-center justify-between gap-3">
                 <p className="section-eyebrow">Assigned fields</p>
                 <span className="pill pill-neutral">
@@ -1378,8 +1411,12 @@ export function SigningLiveShell({
 
       {isFinishDialogOpen ? (
         <DialogFrame
-          description={`You are signing "${record.envelopeTitle}" from ${record.senderName}.`}
-          title="Finish signing?"
+          description={
+            isApprover
+              ? `You are approving "${record.envelopeTitle}" from ${record.senderName}.`
+              : `You are signing "${record.envelopeTitle}" from ${record.senderName}.`
+          }
+          title={isApprover ? "Approve this document?" : "Finish signing?"}
           onClose={() => {
             if (isSubmitting) {
               return;
@@ -1389,7 +1426,13 @@ export function SigningLiveShell({
             setSubmitError(null);
           }}
         >
-          {providerSignature ? (
+          {isApprover ? (
+            <p className="text-sm leading-6 text-(--secondary)">
+              By clicking Approve, you confirm that you reviewed this document
+              and approve it. Your approval is recorded in its audit trail and
+              certificate. You place no signature on the document.
+            </p>
+          ) : providerSignature ? (
             <div className="grid gap-3 text-sm leading-6 text-(--secondary)">
               <p>
                 This document asks for{" "}
@@ -1482,13 +1525,17 @@ export function SigningLiveShell({
               loading={isSubmitting}
               onClick={handleFinishSigning}
             >
-              {providerSignature
+              {isApprover
                 ? isSubmitting
-                  ? "Preparing..."
-                  : `Continue to ${providerSignature.providerName}`
-                : isSubmitting
-                  ? "Finishing..."
-                  : "Finish signing"}
+                  ? "Approving..."
+                  : "Approve"
+                : providerSignature
+                  ? isSubmitting
+                    ? "Preparing..."
+                    : `Continue to ${providerSignature.providerName}`
+                  : isSubmitting
+                    ? "Finishing..."
+                    : "Finish signing"}
             </ShellButton>
           </div>
         </DialogFrame>
@@ -1496,9 +1543,9 @@ export function SigningLiveShell({
 
       {consentedAt === null && !isDeclineDialogOpen ? (
         <DialogFrame
-          description={`${record.senderName} sent you "${record.envelopeTitle}" to sign electronically.`}
+          description={`${record.senderName} sent you "${record.envelopeTitle}" to ${isApprover ? "review and approve" : "sign"} electronically.`}
           onClose={() => undefined}
-          title="Before you sign"
+          title={isApprover ? "Before you approve" : "Before you sign"}
         >
           <div className="well max-h-[45vh] space-y-4 overflow-y-auto px-4 py-4 text-sm leading-6 text-(--secondary) sm:px-5">
             {record.disclosure.sections.map((section, index) => (
@@ -1544,7 +1591,7 @@ export function SigningLiveShell({
               }}
               variant="secondary"
             >
-              Decline
+              {isApprover ? "Reject" : "Decline"}
             </ShellButton>
             <ShellButton
               disabled={!isConsentChecked}
@@ -1559,8 +1606,8 @@ export function SigningLiveShell({
 
       {isDeclineDialogOpen ? (
         <DialogFrame
-          description={`The sender (${record.senderName}) will be notified that you declined. This cannot be undone.`}
-          title="Decline to sign?"
+          description={`The sender (${record.senderName}) will be notified that you ${isApprover ? "rejected it" : "declined"}. This ends the envelope for everyone and cannot be undone.`}
+          title={isApprover ? "Reject this document?" : "Decline to sign?"}
           onClose={() => {
             if (isDeclining) {
               return;
@@ -1605,7 +1652,13 @@ export function SigningLiveShell({
               onClick={handleDeclineSigning}
               variant="danger"
             >
-              {isDeclining ? "Declining..." : "Decline to sign"}
+              {isApprover
+                ? isDeclining
+                  ? "Rejecting..."
+                  : "Reject"
+                : isDeclining
+                  ? "Declining..."
+                  : "Decline to sign"}
             </ShellButton>
           </div>
         </DialogFrame>

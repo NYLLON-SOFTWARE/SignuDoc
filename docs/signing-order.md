@@ -1,4 +1,4 @@
-# Signing order
+# Signing order and approvers
 
 The signing order is a list of steps. Each signer is in one step.
 
@@ -45,6 +45,41 @@ A decline or a void that finds a signer of the step signed in the meantime start
 - **Part 11 mode.** Part 11 envelopes are signed one signer after another. The Part 11 validation (requirement SYS-08 and OQ-06) is written for that order, and a different sequence would need your OQ to be run again before use. The signers page does not offer the choice in Part 11 mode, and a send that has signers sharing a step is refused.
 - **Advanced and qualified signatures** (eID Easy or a CSC provider). Each such signature is added to the PDF on top of the one before it, so two cannot be made at once. The review page and the send refuse it; choose SignuDoc signatures, or give each signer their own step.
 
+## Approvers
+
+Anyone in the signing order can be an **approver** instead of a signer. On the signers page, each person has **Signs the document** or **Approves or rejects it (no fields)**.
+
+- An approver **reviews the document and approves or rejects it**. They have no fields, place no signature, and nothing of theirs is stamped on the signed PDF. They see what the steps before them filled in, as a signer does.
+- Approvers are **in the steps like signers**. The next step starts once every signer and approver of the step before is done. So a salesperson can have their manager approve first, and the customer sign once the manager has:
+
+| Person          | Role     | Step |
+| --------------- | -------- | ---- |
+| Sales manager   | Approver | 1    |
+| Customer        | Signer   | 2    |
+| Company officer | Signer   | 3    |
+
+- **Reject** works like decline: it ends the envelope for everyone, with the reason the approver gives, and the sender is emailed "was rejected by".
+- An approver goes through the same checks as a signer: the access code or emailed code the sender asked for, and the agreement to use electronic records.
+- An envelope needs at least one signer. Approvers cannot have fields: placing fields offers only the signers, and saving a field for an approver is refused (by the app and by the database).
+- **Templates** keep whether each role signs or approves.
+
+### What happens along the way
+
+- **Invitations and reminders** ask an approver to "review and approve or reject", not to sign.
+- **Deadlines, reminders, void and correcting a person** work for approvers exactly as for signers.
+- **Audit trail.** An approval is recorded as **approved** and a rejection as **rejected**, never as signed or declined, with the approver's step and the checks they passed. The envelope's timeline says "Approved by" and "Rejected by".
+- **Certificate.** The list is headed "Signers and approvers", each approver is marked **Approver** with "Approved at" or "Rejected at", and a separate **Approvals** section lists "Approved by" (or "Rejected by", with the reason) for each approver. A line says approvers placed no signature.
+- **At the same moment.** An approval takes hold of the envelope's row exactly as a signature does, so an approver and a signer of one step who finish at the same moment move the order on, or finish the envelope, once. `src/lib/approvers.dbtest.ts` runs these races.
+
+### Where approvers are not offered
+
+- **Part 11 mode.** An approval is an electronic signature under 21 CFR Part 11 (11.50 lists approval as a meaning), with the account, password and printed manifestation that go with one. Part 11 mode therefore has no approvers: add the person as a signer with the meaning Approval. The signers page does not offer the choice, a send with approvers is refused, and an approval on a Part 11 envelope is refused too.
+- **Advanced and qualified signatures.** The finished document is the last signer's own signed revision, and an approval makes none. Send with SignuDoc signatures, or make the approver a signer.
+
+### Upgrading
+
+The migration `20261121110000_approvers.sql` allows the role `approver` and the events `approved` and `rejected`. An approval is stored as the person's turn being done (`signers.status = 'signed'`, with `signed_at` the time of the approval) and a rejection as `declined`, so everything that moves the order on, counts who is still to act or locks a turn treats an approver exactly as a signer; the role and the events tell them apart. An older version of the app reads only role `signer` and would leave approvers out of the signing order, so roll back past this migration only with no approvers on envelopes out for signature.
+
 ## How many signers
 
 An envelope can have up to 25 signers. Set `MAX_SIGNERS_PER_ENVELOPE` (1 to 100) to change that. The old limit of ten was not tied to anything technical: the certificate runs onto as many pages as it needs. Templates follow the same limit when they are used.
@@ -58,6 +93,6 @@ An older version of the app still runs on the migrated database, but it signs an
 ## For developers
 
 - `src/lib/signing-steps.ts`: steps, renumbering, and who is invited next.
-- `src/lib/signing.ts`: `submitSigningForToken` and `declineSigningForToken`, and the restart when the route changed (`SigningRouteChangedError`).
+- `src/lib/signing.ts`: `submitSigningForToken`, `approveSigningForToken` (the same path, with no fields and an "approved" event) and `declineSigningForToken` (a "rejected" event for an approver), and the restart when the route changed (`SigningRouteChangedError`).
 - `src/lib/signer-limit.ts`: the install's limit on signers.
-- Tests: `signing-steps.test.ts` and `parallel-signing.dbtest.ts`.
+- Tests: `signing-steps.test.ts`, `parallel-signing.dbtest.ts` and `approvers.dbtest.ts`.

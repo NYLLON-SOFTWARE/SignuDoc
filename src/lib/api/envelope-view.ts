@@ -8,7 +8,11 @@ import {
   type DbPool,
 } from "../db/connection.ts";
 import { signingStepOf } from "../signing-steps.ts";
-import type { EnvelopeStatus, SignerStatus } from "../types/domain.ts";
+import type {
+  EnvelopeStatus,
+  RecipientRole,
+  SignerStatus,
+} from "../types/domain.ts";
 
 // How the public API shows an envelope: one shape, ApiEnvelope, returned by
 // every endpoint and carried by webhooks. Only reads here, so the webhook
@@ -26,6 +30,11 @@ export type ApiSigner = {
   name: string;
   order: number;
   ref: string | null;
+  /**
+   * "approver" for someone who approves or rejects instead of signing. An
+   * approval shows as `signed`, a rejection as `declined`.
+   */
+  role: RecipientRole;
   signedAt: string | null;
   status: SignerStatus;
   /** Signers who share a step sign at the same time. */
@@ -87,7 +96,7 @@ type SignerRow = {
   envelopeId: string;
   id: string;
   name: string;
-  role: "cc" | "signer";
+  role: "cc" | RecipientRole;
   signedAt: number | null;
   signingStep: number | null;
   signOrder: number;
@@ -202,7 +211,7 @@ export function toApiEnvelope(
     sentAt: isoTime(row.sentAt),
     signatureLevel: row.signatureLevel ?? "simple",
     signers: signers
-      .filter((signer) => signer.role === "signer")
+      .filter((signer) => signer.role !== "cc")
       .map((signer) => ({
         declinedAt: isoTime(signer.declinedAt),
         declineReason: signer.declineReason,
@@ -211,6 +220,7 @@ export function toApiEnvelope(
         name: signer.name,
         order: signer.signOrder,
         ref: signer.apiRef,
+        role: signer.role === "approver" ? "approver" : "signer",
         signedAt: isoTime(signer.signedAt),
         status: signer.status,
         step: signingStepOf(signer),

@@ -689,6 +689,8 @@ async function sendOneRow(
               id: signer.id,
               name: signer.name,
               requireEmailCode,
+              // An approver in the template stays one.
+              role: signer.role,
               signatureMeaning,
               // Signers who share a step keep signing at the same time.
               signingStep: signer.step,

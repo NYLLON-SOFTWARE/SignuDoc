@@ -220,6 +220,11 @@ export function UseTemplateShell({
                       {template.roles[index - 1]?.name}.
                     </p>
                   ) : null}
+                  {role.kind === "approver" ? (
+                    <p className="mt-2 text-[0.8125rem] leading-5 text-(--secondary)">
+                      Approves or rejects the document, with no fields.
+                    </p>
+                  ) : null}
 
                   <div className="mt-3 grid gap-x-4 gap-y-3 md:grid-cols-2">
                     <label className="grid auto-rows-min gap-1.5">

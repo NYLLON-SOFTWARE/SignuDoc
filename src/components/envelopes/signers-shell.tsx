@@ -55,6 +55,8 @@ type ShellSigner = SignerChecks & {
   email: string;
   localId: string;
   name: string;
+  /** An approver approves or rejects, with no fields of their own. */
+  role: "approver" | "signer";
   signerId?: string;
   touched: Record<SignerField, boolean>;
   /**
@@ -100,6 +102,7 @@ function createSigner(
     requireEmailCode: overrides?.requireEmailCode ?? false,
     wantsAccessCode: overrides?.hasAccessCode ?? false,
     name: overrides?.name ?? "",
+    role: overrides?.role ?? "signer",
     signatureMeaning: overrides?.signatureMeaning ?? null,
     signerId: overrides?.signerId,
     touched: {
@@ -179,6 +182,7 @@ function buildInitialModel(record?: DraftSignerStepData): InitialModel {
       hasAccessCode: signer.hasAccessCode,
       name: signer.name,
       requireEmailCode: signer.requireEmailCode,
+      role: signer.role,
       signatureMeaning: signer.signatureMeaning ?? null,
       signerId: signer.id,
       touched: { email: true, name: true },
@@ -326,6 +330,8 @@ function buildSignerRequest(
       id: signer.signerId,
       name: signer.name,
       requireEmailCode: signer.requireEmailCode,
+      // Part 11 mode has no approvers (envelopes.ts).
+      role: part11Mode ? "signer" : signer.role,
       signatureMeaning: signer.signatureMeaning,
       signOrder: index + 1,
       signingStep: steps[index],
@@ -371,6 +377,7 @@ function SignerCard({
   onChecksChange,
   onMove,
   onRemove,
+  onRoleChange,
   onTogetherChange,
   accessCodeError,
   part11Mode = false,
@@ -391,6 +398,7 @@ function SignerCard({
   /** How many signers are in that step. */
   stepSize: number;
   onTogetherChange: (together: boolean) => void;
+  onRoleChange: (role: ShellSigner["role"]) => void;
   onChecksChange: (patch: Partial<SignerChecks>) => void;
   canMoveEarlier: boolean;
   canMoveLater: boolean;
@@ -456,11 +464,32 @@ function SignerCard({
                 style={{ backgroundColor: palette.color }}
               />
               Signer {order}
+              {signer.role === "approver" && !part11Mode ? " · Approver" : ""}
               {showStep ? ` · Step ${String(step)}` : ""}
             </span>
             <p className="text-[0.8125rem] leading-5 text-(--secondary)">
               {routeLabel}
             </p>
+            {!part11Mode ? (
+              <label className="flex items-center gap-2 text-[0.8125rem] font-semibold text-(--secondary)">
+                <select
+                  aria-label={`Signer ${order} role`}
+                  className="field-input min-h-9 py-1"
+                  disabled={disabled}
+                  onChange={(event: ChangeEvent<HTMLSelectElement>) =>
+                    onRoleChange(
+                      event.target.value === "approver" ? "approver" : "signer",
+                    )
+                  }
+                  value={signer.role}
+                >
+                  <option value="signer">Signs the document</option>
+                  <option value="approver">
+                    Approves or rejects it (no fields)
+                  </option>
+                </select>
+              </label>
+            ) : null}
             {index > 0 && !part11Mode ? (
               <label className="flex items-center gap-2 text-[0.8125rem] font-semibold text-(--secondary)">
                 <input
@@ -866,7 +895,7 @@ export function SignersShell({
 
   function handleSignerChecksChange(
     signerLocalId: string,
-    patch: Partial<SignerChecks>,
+    patch: Partial<SignerChecks & Pick<ShellSigner, "role">>,
   ) {
     clearSubmitError();
     setSigners((currentSigners) =>
@@ -1128,6 +1157,9 @@ export function SignersShell({
                     handleMoveSigner(signer.localId, direction)
                   }
                   onRemove={() => handleRemoveSigner(signer.localId)}
+                  onRoleChange={(role) =>
+                    handleSignerChecksChange(signer.localId, { role })
+                  }
                   onTogetherChange={(together) =>
                     handleSignerTogetherChange(signer.localId, together)
                   }

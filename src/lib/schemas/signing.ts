@@ -107,7 +107,11 @@ export const signingPayloadSchema = z.object({
     id: idSchema,
     name: nameSchema,
     order: z.number().int().positive(),
+    // An approver approves or rejects; there are no fields to fill in.
+    role: z.enum(["signer", "approver"]).optional(),
   }),
+  /** Where an approver's approval is sent. */
+  approveUrl: z.string().trim().min(1).optional(),
   state: z.literal("ready"),
   submitUrl: z.string().trim().min(1),
   visibleFields: z.array(signingVisibleFieldSchema),
@@ -162,6 +166,11 @@ export const signingFieldFitRequestSchema = z.object({
 
 export const signerConsentRequestSchema = z.object({
   disclosureVersion: z.string().trim().min(1).max(40),
+});
+
+/** An approver's approval. There is nothing else to send. */
+export const approvalSubmissionSchema = z.object({
+  clientTimezoneOffsetMinutes: z.number().int().min(-840).max(840),
 });
 
 export type SigningVerificationState = {

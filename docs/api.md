@@ -236,6 +236,7 @@ Every endpoint that returns an envelope returns the same object:
       "email": "casey@example.com",
       "order": 1,
       "step": 1,
+      "role": "signer",
       "status": "notified",
       "viewedAt": null,
       "signedAt": null,
@@ -254,7 +255,10 @@ Every endpoint that returns an envelope returns the same object:
 - A signer's `status` is `pending` (not their turn yet), `notified` (their
   turn, invited), `signed` or `declined`. `step` is their step of the signing
   order: signers who share one sign at the same time. `viewedAt` is when they
-  first opened it.
+  first opened it. `role` is `signer`, or `approver` for someone who reviews
+  the document and approves or rejects it instead of signing (see
+  [Signing order](signing-order.md)): an approval shows as `signed` and a
+  rejection as `declined`.
 - `delivery` is `email` (signers are invited by email) or `embedded` (your
   app shows the signing page, see [Embedded signing](#embedded-signing)).
 - `files` gives the paths to download once there is something to download:
@@ -309,9 +313,9 @@ can ignore the ones that are not its own. An install can have 10 endpoints.
 | -------------------- | -------------------------------------------------------------------------------------------- |
 | `envelope.sent`      | The envelope was sent. `data.signer` is the first signer, now invited.                       |
 | `signer.viewed`      | A signer opened it for the first time.                                                       |
-| `signer.signed`      | A signer signed. `data.signer` is who.                                                       |
+| `signer.signed`      | A signer signed, or an approver approved. `data.signer` is who.                              |
 | `envelope.completed` | Everyone signed. The signed PDF and the certificate are ready to download when this arrives. |
-| `envelope.declined`  | A signer declined. `data.reason` is the reason they gave, if any.                            |
+| `envelope.declined`  | A signer declined, or an approver rejected. `data.reason` is the reason they gave, if any.   |
 | `envelope.voided`    | The sender voided it. `data.reason` is why, if given.                                        |
 | `envelope.expired`   | Its deadline passed before everyone signed.                                                  |
 
@@ -528,8 +532,8 @@ window.addEventListener("message", (event) => {
   if (event.origin !== "https://sign.example.com") return;
 
   switch (event.data.type) {
-    case "signudoc:signed": // { envelopeId, signerId }
-    case "signudoc:declined": // { envelopeId, signerId }
+    case "signudoc:signed": // { envelopeId, signerId }, also for an approval
+    case "signudoc:declined": // { envelopeId, signerId }, also for a rejection
     case "signudoc:error": // { state }: "expired", "already-signed", "completed", "voided", …
   }
 });

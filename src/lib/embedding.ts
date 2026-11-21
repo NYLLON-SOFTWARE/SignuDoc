@@ -313,7 +313,7 @@ export async function issueEmbedLink(
       tx,
       `
         SELECT status FROM signers
-        WHERE id = $1 AND envelope_id = $2 AND role = 'signer'
+        WHERE id = $1 AND envelope_id = $2 AND role IN ('signer', 'approver')
         FOR UPDATE
       `,
       [input.signerId, input.envelopeId],

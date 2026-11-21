@@ -9,6 +9,8 @@ type SigningInvitationEmailInput = {
   envelopeTitle: string;
   /** The envelope's deadline, when it has one. */
   expiresAt?: number | null;
+  /** An approver is asked to approve, not to sign. A signer by default. */
+  role?: "approver" | "signer";
   senderName: string;
   signerEmail: string;
   signerName: string;
@@ -24,30 +26,50 @@ export function buildDeadlineLine(
     : null;
 }
 
+/** What the person is asked to do, in the invitation and the reminders. */
+export function describeRequestedAction(
+  role: "approver" | "signer" = "signer",
+) {
+  return role === "approver"
+    ? {
+        accountLine: "approve",
+        linkText: "Review and approve or reject the document",
+        noun: "approval",
+        verb: "approve",
+      }
+    : {
+        accountLine: "sign",
+        linkText: "Review and sign the document",
+        noun: "signature",
+        verb: "sign",
+      };
+}
+
 export function buildSigningInvitationEmail(
   input: SigningInvitationEmailInput,
 ): TransactionalEmailMessage {
   const { productName } = input.branding;
-  const subject = `${input.senderName} requested your signature on "${input.envelopeTitle}"`;
+  const action = describeRequestedAction(input.role);
+  const subject = `${input.senderName} requested your ${action.noun} on "${input.envelopeTitle}"`;
   const deadlineLine = buildDeadlineLine(input.expiresAt);
   const textBody = [
     `Hi ${input.signerName},`,
     "",
     `${input.senderName} sent you "${input.envelopeTitle}" through ${productName}.`,
     "",
-    "Review and sign the document here:",
+    `${action.linkText} here:`,
     input.signingUrl,
     ...(deadlineLine ? ["", deadlineLine] : []),
     "",
-    `You do not need a ${productName} account to sign.`,
+    `You do not need a ${productName} account to ${action.accountLine}.`,
     "If you receive a newer invitation or reminder link, use the newest one.",
   ].join("\n");
   const htmlBody = [
     `<p>Hi ${escapeHtml(input.signerName)},</p>`,
     `<p>${escapeHtml(input.senderName)} sent you &ldquo;${escapeHtml(input.envelopeTitle)}&rdquo; through ${escapeHtml(productName)}.</p>`,
-    `<p><a href="${escapeHtml(input.signingUrl)}">Review and sign the document</a></p>`,
+    `<p><a href="${escapeHtml(input.signingUrl)}">${escapeHtml(action.linkText)}</a></p>`,
     deadlineLine ? `<p>${escapeHtml(deadlineLine)}</p>` : "",
-    `<p>You do not need a ${escapeHtml(productName)} account to sign.</p>`,
+    `<p>You do not need a ${escapeHtml(productName)} account to ${action.accountLine}.</p>`,
     "<p>If you receive a newer invitation or reminder link, use the newest one.</p>",
   ].join("");
   const legalFooter = withUserEmailLegalFooter(

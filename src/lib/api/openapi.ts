@@ -315,6 +315,12 @@ export function buildOpenApiDocument(
             name: { type: "string" },
             order: { type: "integer" },
             ref: { type: ["string", "null"] },
+            role: {
+              description:
+                "approver: reviews the document and approves or rejects it instead of signing. An approval is signed, a rejection declined.",
+              enum: ["signer", "approver"],
+              type: "string",
+            },
             signedAt: isoTime,
             status: {
               description:

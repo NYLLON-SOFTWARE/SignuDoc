@@ -622,12 +622,12 @@ for (const [name, statement, end] of [
   ["the last signature", "AND status <> 'signed'", signEnvelope],
   [
     "a void",
-    "SELECT id, status FROM signers WHERE envelope_id = $1 AND role = 'signer'",
+    "SELECT id, status FROM signers WHERE envelope_id = $1 AND role IN ('signer', 'approver')",
     voidEnvelope,
   ],
   [
     "a decline",
-    "WHERE envelope_id = $1 AND role = 'signer' AND id <> $2",
+    "WHERE envelope_id = $1 AND role IN ('signer', 'approver') AND id <> $2",
     declineEnvelope,
   ],
 ] as const) {

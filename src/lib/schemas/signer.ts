@@ -3,6 +3,7 @@ import { z } from "zod";
 import {
   MAX_COPY_RECIPIENTS_PER_ENVELOPE,
   MAX_SIGNERS_CEILING,
+  recipientRoles,
   signatureMeanings,
   signerStatuses,
 } from "../types/domain.ts";
@@ -15,6 +16,7 @@ import {
 } from "./common.ts";
 
 export const signerStatusSchema = z.enum(signerStatuses);
+export const recipientRoleSchema = z.enum(recipientRoles);
 export const duplicateSignerEmailMessage =
   "Each signer must have a unique email address.";
 export const duplicateCopyRecipientEmailMessage =
@@ -33,6 +35,9 @@ export const draftSignerSchema = z.object({
   name: nameSchema,
   email: emailSchema,
   signOrder: z.number().int().positive().optional(),
+  // A signer, or an approver who reviews the document and approves or
+  // rejects it without fields of their own. Left out means a signer.
+  role: recipientRoleSchema.optional(),
   // The step of the signing order this signer is in. Signers who share a
   // step sign at the same time; see signing-steps.ts. Left out for every
   // signer, they sign one after the other in the order of the list.
@@ -133,6 +138,7 @@ export const replaceSignersResponseSchema = z.object({
       hasAccessCode: z.boolean(),
       name: nameSchema,
       requireEmailCode: z.boolean(),
+      role: recipientRoleSchema,
       signatureMeaning: z.enum(signatureMeanings).nullable(),
       signOrder: z.number().int().positive(),
       signingStep: z.number().int().positive(),

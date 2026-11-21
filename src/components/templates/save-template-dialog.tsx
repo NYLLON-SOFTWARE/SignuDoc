@@ -19,7 +19,11 @@ type SaveTemplateDialogProps = {
   onCancel: () => void;
   onSaved: (templateName: string) => void;
   /** In signing order. The names only say whose place is being named. */
-  signers: readonly { id: string; name: string }[];
+  signers: readonly {
+    id: string;
+    name: string;
+    role?: "approver" | "signer";
+  }[];
 };
 
 const genericError = "Something went wrong. Please try again.";
@@ -162,6 +166,11 @@ export function SaveTemplateDialog({
                   type="text"
                   value={roleNames[index] ?? ""}
                 />
+                {signer.role === "approver" ? (
+                  <span className="text-xs text-(--tertiary)">
+                    Approves or rejects, with no fields.
+                  </span>
+                ) : null}
               </label>
             ))}
             {hasRepeatedRoleName ? (

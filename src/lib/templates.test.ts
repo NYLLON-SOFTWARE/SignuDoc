@@ -56,3 +56,27 @@ test("a dropdown with fewer than two choices cannot be sent", () => {
     /dropdown/,
   );
 });
+
+test("approver roles need no Signature field, but someone has to sign", () => {
+  const approver = {
+    id: "role-2",
+    kind: "approver" as const,
+    name: "Approver",
+  };
+
+  assert.equal(
+    describeUnsendableTemplate([role, approver], [signatureField()]),
+    null,
+  );
+  assert.match(
+    describeUnsendableTemplate([approver], [signatureField(approver.id)]) ?? "",
+    /Add at least one signer/,
+  );
+  assert.match(
+    describeUnsendableTemplate(
+      [role, approver],
+      [signatureField(), signatureField(approver.id)],
+    ) ?? "",
+    /approvers have no fields/,
+  );
+});

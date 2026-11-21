@@ -63,6 +63,8 @@ type ReviewSigner = {
   id: string;
   name: string;
   order: number;
+  /** An approver approves or rejects, with no fields. */
+  role?: "approver" | "signer";
   /** Signers who share a step sign at the same time. */
   step?: number;
   tint?: string;
@@ -352,18 +354,25 @@ export function ReviewShell({
                               style={{ backgroundColor: palette.color }}
                             />
                             Signer {signer.order}
+                            {signer.role === "approver" ? " · Approver" : ""}
                           </span>
                         </div>
 
-                        <p
-                          className={`mt-2 text-sm leading-6 ${
-                            signer.fieldSummaries.includes("Signature")
-                              ? "text-(--tertiary)"
-                              : "font-semibold text-(--danger)"
-                          }`}
-                        >
-                          {formatSignerFieldSummary(signer.fieldSummaries)}
-                        </p>
+                        {signer.role === "approver" ? (
+                          <p className="mt-2 text-sm leading-6 text-(--tertiary)">
+                            Approves or rejects the document. No fields.
+                          </p>
+                        ) : (
+                          <p
+                            className={`mt-2 text-sm leading-6 ${
+                              signer.fieldSummaries.includes("Signature")
+                                ? "text-(--tertiary)"
+                                : "font-semibold text-(--danger)"
+                            }`}
+                          >
+                            {formatSignerFieldSummary(signer.fieldSummaries)}
+                          </p>
+                        )}
                       </div>
                     </div>
                   </li>

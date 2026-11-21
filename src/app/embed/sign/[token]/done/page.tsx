@@ -4,7 +4,10 @@ import { SigningDoneShell } from "@/components/signing/signing-done-shell";
 // told already (signudoc:signed); this is what the signer sees meanwhile.
 
 type EmbedSignDonePageProps = {
-  searchParams?: Promise<{ title?: string | string[] }>;
+  searchParams?: Promise<{
+    approved?: string | string[];
+    title?: string | string[];
+  }>;
 };
 
 export default async function EmbedSignDonePage({
@@ -15,5 +18,11 @@ export default async function EmbedSignDonePage({
     ? resolved.title[0]
     : resolved?.title;
 
-  return <SigningDoneShell embedded envelopeTitle={envelopeTitle} />;
+  return (
+    <SigningDoneShell
+      approved={resolved?.approved === "1"}
+      embedded
+      envelopeTitle={envelopeTitle}
+    />
+  );
 }

@@ -19,10 +19,15 @@ export type WebhookEventType = (typeof webhookEventTypes)[number];
 /** Sent only by the "Send test" button, never by an envelope. */
 export const WEBHOOK_TEST_EVENT = "webhook.test";
 
+// An approver's approval is reported as their signature and a rejection as
+// a decline, which is how each moves the envelope on or ends it. The signer
+// in the payload has role "approver".
 const fromAuditEvent: Partial<Record<AuditEventType, WebhookEventType>> = {
+  approved: "signer.signed",
   completed: "envelope.completed",
   declined: "envelope.declined",
   expired: "envelope.expired",
+  rejected: "envelope.declined",
   sent: "envelope.sent",
   signed: "signer.signed",
   viewed: "signer.viewed",

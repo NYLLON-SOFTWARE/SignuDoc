@@ -22,6 +22,9 @@ test("audit events map to webhook events, and others to none", () => {
   assert.equal(webhookEventForAuditEvent("sent"), "envelope.sent");
   assert.equal(webhookEventForAuditEvent("viewed"), "signer.viewed");
   assert.equal(webhookEventForAuditEvent("completed"), "envelope.completed");
+  // An approver's approval and rejection.
+  assert.equal(webhookEventForAuditEvent("approved"), "signer.signed");
+  assert.equal(webhookEventForAuditEvent("rejected"), "envelope.declined");
   assert.equal(webhookEventForAuditEvent("email_sent"), null);
   assert.equal(webhookEventForAuditEvent("consented"), null);
 });
