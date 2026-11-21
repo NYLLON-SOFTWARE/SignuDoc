@@ -225,6 +225,8 @@ DocuSign's figures are its US list prices for annual plans in November 2026: $30
 
 There is nothing to type in Vercel and no terminal to open. Until step 5 is done, email reaches only the address on your Resend account, so you can try the whole product straight away by sending a document to yourself. The [self-hosting guide](docs/self-hosting.md) covers your own domain, locking down a new install, keeping it up to date, running in the EU, and every optional setting.
 
+**Not on Vercel?** SignuDoc is a regular Next.js app, so it also runs on a server or private cloud of your own, with Node.js 24 and Postgres, keeping the database and documents on your machines. Email still goes through Resend. [Self-hosting somewhere else](docs/self-hosting.md#self-hosting-somewhere-else) has the steps and lists everything that leaves your servers.
+
 ### Try it on your computer
 
 With Node.js 24 and Docker:

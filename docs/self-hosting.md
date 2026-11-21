@@ -358,6 +358,17 @@ Away from Vercel, a few things Vercel does for you are yours to set:
 - `RESEND_API_KEY`, from your Resend account.
 - Files are kept on the machine's disk under `.data/storage` (`STORAGE_LOCAL_DIR` changes where), so that disk must survive restarts. To use a Vercel Blob store from elsewhere, set `BLOB_READ_WRITE_TOKEN`.
 - Leave `EMAIL_DRIVER` unset. The capture driver is for development only.
+- Schedule the [daily cleanup](#daily-cleanup) yourself: a cron job or timer that calls `/api/internal/retention` once a day, with `RETENTION_JOB_SECRET` set and sent as `Authorization: Bearer <secret>`.
+- Put the app behind a reverse proxy that serves HTTPS and sets `X-Forwarded-For` to the visitor's address, **replacing** whatever the visitor sent. Away from Vercel the app reads the visitor's address from the first entry of that header, for rate limits and for the addresses in audit trails and certificates. A proxy that only appends to it, as nginx's `$proxy_add_x_forwarded_for` does, lets a visitor choose the address that is recorded. With nginx receiving visitors directly, use `proxy_set_header X-Forwarded-For $remote_addr;`. If a load balancer or CDN sits in front of nginx, `$remote_addr` is that server's address, so first have nginx recover the visitor's address from the upstream servers you trust (`set_real_ip_from` and `real_ip_header` in nginx's realip module), then set the header the same way.
+
+### What stays outside your servers
+
+Run this way, the database and the documents are on machines you control. What still leaves them:
+
+- **Email.** It is sent through [Resend](https://resend.com), so every email goes through Resend: the invitations with their signing links, and the completion emails, which carry the signed PDF and its certificate as attachments when they are small enough. There is no SMTP option yet.
+- **The daily backup** writes to a Vercel Blob store, so off Vercel back up your Postgres and your storage directory with your own tools instead.
+- **The breached-password check**, on by default: a new password is looked up in [Have I Been Pwned](https://haveibeenpwned.com/API/v3#PwnedPasswords), which receives only the first five characters of the password's SHA-1 hash. Set `PASSWORD_BREACH_CHECK=off` to skip it.
+- **Services you choose to turn on:** a timestamp server and the certificate authorities' revocation checks for [long-term validation](#long-term-validation), a signing provider for [signatures in the signers' own names](#signatures-in-the-signers-own-names-eidas-ades-and-qes), and your identity provider for single sign-on.
 
 Self-hosted operators are responsible for:
 
