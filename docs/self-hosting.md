@@ -145,6 +145,7 @@ A deployment made with the button needs no environment variables. These are ther
 | `BACKUP_BLOB_READ_WRITE_TOKEN`, `BACKUP_KEEP_DAYS`  | A daily backup of the database and files to a second Blob store. See [Backup and restore](backup-and-restore.md).                                                                                      |
 | `AUDIT_LOG`                                         | `off` keeps audit rows out of the function logs. See [Send the audit trail to your SIEM](#send-the-audit-trail-to-your-siem).                                                                          |
 | `SSO_ISSUER`, `SSO_CLIENT_ID`, `SSO_CLIENT_SECRET`  | Sign in through your organization's identity provider (Okta, Entra ID, Google Workspace). `PASSWORD_SIGN_IN=off` then turns passwords off. See [Single sign-on](#single-sign-on).                      |
+| `SLACK_BOT_TOKEN`                                   | Post to Slack with this bot token instead of one saved in Settings. `NOTIFICATION_EXPIRING_DAYS` and `NOTIFICATION_STUCK_DAYS` fix when warnings go out. See [Notifications](notifications.md).        |
 
 ## Set the site up
 
@@ -323,6 +324,19 @@ To close the route, set a secret. A caller then has to send `Authorization: Bear
 
 - `CRON_SECRET` is the one to use on Vercel, because Vercel sends it on its own cron calls.
 - `RETENTION_JOB_SECRET` does the same for a scheduler of your own. On Vercel, a deployment that sets only this one turns Vercel's cron call away, so store the secret as `CRON_SECRET` there instead.
+
+## Notifications
+
+SignuDoc can post to Slack when envelopes are signed, completed, declined or need attention. An administrator sets it up under Settings, Notifications; see [Notifications](notifications.md). Messages go out right after the event. A second job notices deadlines coming up and envelopes with no activity, and retries what failed:
+
+```text
+/api/internal/notifications
+```
+
+- **On Vercel** `vercel.json` already calls it once a day.
+- **Anywhere else**, have your scheduler send it a `GET` or `POST`, as often as every few minutes if you want retries to go out sooner.
+
+It takes the same secrets as the daily cleanup (`CRON_SECRET` or `RETENTION_JOB_SECRET`). Without one it runs at most once a minute and answers with an empty response.
 
 ## Rate limits
 

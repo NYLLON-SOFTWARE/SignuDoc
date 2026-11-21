@@ -68,6 +68,47 @@ export function describeSignerCorrectedEvent(
   return `Signer corrected from ${formatSignerPerson(previousName, previousEmail)} to ${formatSignerPerson(name, email)}`;
 }
 
+// Code that wants to know an envelope audit event was committed registers
+// here: the notifications outbox (src/lib/notifications/kick.ts) uses it to
+// deliver soon after. The event is already queued for notifications by a
+// trigger in its own transaction, so a listener only speeds things up.
+// Kept on globalThis so that every bundle of the server shares one set.
+export type AuditEventCommittedListener = (event: {
+  envelopeId: string;
+  event: string;
+}) => void;
+
+declare global {
+  var __signudocAuditCommittedListeners:
+    Set<AuditEventCommittedListener> | undefined;
+}
+
+export function onAuditEventCommitted(
+  listener: AuditEventCommittedListener,
+): () => void {
+  const listeners = (globalThis.__signudocAuditCommittedListeners ??=
+    new Set());
+
+  listeners.add(listener);
+
+  return () => {
+    listeners.delete(listener);
+  };
+}
+
+function announceAuditEventCommitted(event: {
+  envelopeId: string;
+  event: string;
+}) {
+  for (const listener of globalThis.__signudocAuditCommittedListeners ?? []) {
+    try {
+      listener(event);
+    } catch (error) {
+      console.error("[audit] A listener for committed events failed:", error);
+    }
+  }
+}
+
 export type RecordAuditEventInput = {
   /** Given when the event was already shown on a certificate under this id. */
   id?: string;
@@ -261,6 +302,10 @@ async function insertChainedAuditEvent(
 
   afterCommit(database, () => {
     logAuditRecord({ ...fields, rowHash, trail: "envelope" });
+    announceAuditEventCommitted({
+      envelopeId: input.envelopeId,
+      event: input.event,
+    });
   });
 
   // In the same transaction, so a webhook exists exactly when its event does.

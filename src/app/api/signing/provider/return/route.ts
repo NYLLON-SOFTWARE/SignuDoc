@@ -18,7 +18,10 @@ import {
 
 // The last signer's return also finishes the envelope: long-term validation
 // asks certificate authorities, within 15 seconds, and the PDFs are stored.
-export const maxDuration = 60;
+// Any other signer's return is followed, after the response, by a wait of a
+// minute for the notifications that signature holds back (kick-loop.ts),
+// which shares this limit.
+export const maxDuration = 180;
 
 function seeOther(location: string, request: Request) {
   return NextResponse.redirect(new URL(location, request.url), {
