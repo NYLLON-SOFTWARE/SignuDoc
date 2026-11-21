@@ -3,7 +3,7 @@ import { type EnvSource } from "../../utils/env.ts";
 // Which storage the app uses. Kept free of the drivers themselves so the
 // request proxy can ask without loading them.
 
-export type StorageDriver = "blob" | "local";
+export type StorageDriver = "blob" | "local" | "s3";
 
 /** True when a Vercel Blob store is connected to the project. */
 export function hasBlobCredentials(env: EnvSource = process.env): boolean {
@@ -14,9 +14,9 @@ export function hasBlobCredentials(env: EnvSource = process.env): boolean {
 
 /**
  * - "blob": Vercel Blob. Chosen automatically once a Blob store is connected
- *   to the project, and always on Vercel, where there is no disk to keep
- *   files on.
+ *   to the project, or when running on Vercel with no driver set.
  * - "local": files on this machine's disk. The default everywhere else.
+ * - "s3": a private S3-compatible bucket. Chosen only when explicitly set.
  *
  * STORAGE_DRIVER overrides the choice.
  */
@@ -25,13 +25,17 @@ export function resolveStorageDriver(
 ): StorageDriver {
   const configuredDriver = env.STORAGE_DRIVER?.trim().toLowerCase();
 
-  if (configuredDriver === "blob" || configuredDriver === "local") {
+  if (
+    configuredDriver === "blob" ||
+    configuredDriver === "local" ||
+    configuredDriver === "s3"
+  ) {
     return configuredDriver;
   }
 
   if (configuredDriver) {
     throw new Error(
-      `Unknown STORAGE_DRIVER "${configuredDriver}". Use "blob" or "local", or leave it unset.`,
+      `Unknown STORAGE_DRIVER "${configuredDriver}". Use "blob", "local", or "s3", or leave it unset.`,
     );
   }
 

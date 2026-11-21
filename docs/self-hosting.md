@@ -12,6 +12,7 @@ Everything about running your own SignuDoc: deploying it, setting it up, what it
 - [Bot protection](#bot-protection)
 - [Hosted mode](#hosted-mode)
 - [Self-hosting somewhere else](#self-hosting-somewhere-else)
+  - [Use an S3-compatible bucket](#use-an-s3-compatible-bucket)
 
 ## Deploy to Vercel
 
@@ -304,7 +305,7 @@ Some data still leaves the EU: Vercel's and Resend's account metadata and logs, 
 
 ## Backups
 
-Turn on the daily backup to a second Blob store, and learn the restore steps, in [Backup and restore](backup-and-restore.md).
+The built-in daily backup and restore are for Vercel Blob installs. See [Backup and restore](backup-and-restore.md) for setup. For S3 installs, enable bucket versioning, arrange independent backups of the bucket and Postgres, and test restoring them together.
 
 ## Daily cleanup
 
@@ -365,3 +366,23 @@ Self-hosted operators are responsible for:
 - keeping the support address pointed at a mailbox someone reads, and verifying a sending domain for email;
 - configuring retention, consent, and compliance requirements for their own deployment; and
 - scheduling the [daily cleanup](#daily-cleanup) if they are not on Vercel, where it is scheduled for them.
+
+### Use an S3-compatible bucket
+
+Create a private bucket with your provider and set these variables on the app server.
+
+| Variable              | Value                                                                                            |
+| --------------------- | ------------------------------------------------------------------------------------------------ |
+| `STORAGE_DRIVER`      | `s3` explicitly selects the driver.                                                              |
+| `S3_BUCKET`           | Required. The name of the existing private bucket.                                               |
+| `S3_REGION`           | Required. The bucket's region or the signing region specified by your provider.                  |
+| `S3_ENDPOINT`         | Optional. The provider's S3 API URL. Leave it unset for AWS S3. Use HTTPS for remote endpoints.  |
+| `S3_FORCE_PATH_STYLE` | Optional. Set to `true` if the provider expects the bucket in the URL path. Defaults to `false`. |
+
+Use a workload role or an AWS profile, or set `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY` on the server. Include `AWS_SESSION_TOKEN` when using temporary environment credentials. See the [AWS SDK credential provider chain](https://docs.aws.amazon.com/sdk-for-javascript/v3/developer-guide/setting-credentials-node.html).
+
+On AWS, grant the app `s3:GetObject`, `s3:PutObject`, and `s3:DeleteObject` on the bucket's objects and `s3:ListBucket` on the bucket. AWS requires the latter to report a missing object as a 404, and the app checks bucket access before accepting an ambiguous HEAD 404 as an absent file. The provider must support conditional `PutObject` with `If-None-Match: *` to preserve existing files during concurrent writes.
+
+The browser uploads PDFs through the app, and the app authenticates reads and downloads from the bucket. Set your proxy's request body limit to allow the app's PDF uploads. On Vercel, uploads through the app are subject to the [4.5 MB function request body limit](https://vercel.com/docs/functions/limitations#request-body-size).
+
+To move an existing installation to S3, pause writes and copy its stored files to the bucket with their original keys before changing the driver. Keep backups of both Postgres and the bucket. See [Backups](#backups).

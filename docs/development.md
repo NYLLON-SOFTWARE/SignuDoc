@@ -56,7 +56,7 @@ The first time you open the app it takes you to `/setup`, where you name the org
 - React + TypeScript
 - Better Auth
 - Postgres (`pg`)
-- Vercel Blob object storage (local disk in development)
+- Vercel Blob, S3-compatible object storage, or local disk
 - Resend for transactional email
 - `pdf-lib` and `pdfjs-dist`
 - Tailwind CSS 4 + shadcn/ui
@@ -77,12 +77,13 @@ A document you send often can be kept as a template: open any envelope, sent or 
 
 ## Storage
 
-Documents, signed PDFs, audit certificates, drawn signature images, and the small first-page pictures shown on the dashboard are stored in one of two places:
+Documents, signed PDFs, audit certificates, drawn signature images, and the small first-page pictures shown on the dashboard are stored in one of three places:
 
-- **Vercel Blob**, in a private store. This is used whenever a Blob store is connected to the project (Vercel sets `BLOB_READ_WRITE_TOKEN`, or `BLOB_STORE_ID` for a store that signs in with the project's OIDC token), and always on Vercel. Nothing in the store has a public URL; every download goes through the app, which checks who is asking first.
+- **Vercel Blob**, in a private store. This is the default when a Blob store is connected to the project (Vercel sets `BLOB_READ_WRITE_TOKEN`, or `BLOB_STORE_ID` for a store that signs in with the project's OIDC token), or when the app runs on Vercel with no driver set. Nothing in the store has a public URL; every download goes through the app, which checks who is asking first.
+- **S3-compatible storage**, in a private bucket. Set `STORAGE_DRIVER=s3` and see [Self-hosting](self-hosting.md#use-an-s3-compatible-bucket) for the other settings and permissions. The app handles the browser upload and streams downloads from the bucket.
 - **Local disk**, under `.data/storage` (change it with `STORAGE_LOCAL_DIR`). This is the default everywhere else, including local development.
 
-`STORAGE_DRIVER=blob` or `STORAGE_DRIVER=local` overrides the choice.
+`STORAGE_DRIVER` explicitly selects `blob`, `s3`, or `local`.
 
 On Vercel Blob, the upload page sends the PDF straight from the browser to the store with a short-lived signed URL, because a request to a Vercel Function cannot be larger than 4.5 MB. The upload lands in a pending folder, the app reads it back and validates it like any other upload, stores its own copy, and deletes the pending one. A pending upload that is never picked up is deleted by Blob after a day.
 
@@ -90,6 +91,12 @@ To run the end-to-end test against a real Blob store instead of local disk:
 
 ```bash
 E2E_STORAGE_DRIVER=blob BLOB_READ_WRITE_TOKEN=... npm run test:e2e
+```
+
+To run the S3 storage integration tests, export the S3 settings and AWS credentials described in [Self-hosting](self-hosting.md#use-an-s3-compatible-bucket). Use a dedicated test bucket with versioning disabled. The tests write and delete only their own randomly prefixed objects.
+
+```bash
+S3_INTEGRATION_TEST=1 node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test src/lib/services/storage/s3.integration.test.ts
 ```
 
 ## Database

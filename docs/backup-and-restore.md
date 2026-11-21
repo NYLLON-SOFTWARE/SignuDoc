@@ -1,6 +1,8 @@
 # Backup and restore
 
-A SignuDoc install keeps its records in two places: the Postgres database (accounts, envelopes, audit trails, settings) and the Vercel Blob store (the PDFs, sealed copies and certificates). This page covers what protects each one, how to turn on SignuDoc's own daily backup, and how to restore from it.
+This backup and restore procedure applies to Vercel Blob installs. The daily backup copies Postgres records (accounts, envelopes, audit trails, settings) and Blob files (PDFs, sealed copies and certificates) to a second Vercel Blob store.
+
+For an S3 install, enable bucket versioning and set up independent backups of the bucket and Postgres. See [Self-hosting](self-hosting.md#use-an-s3-compatible-bucket).
 
 ## What you have without doing anything
 
