@@ -1,0 +1,54 @@
+{{- range $job := list "retention" "backup" }}
+{{- $settings := index $.Values.cron $job }}
+{{- if $settings.enabled }}
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: {{ include "signudoc.fullname" $ }}-{{ $job }}
+spec:
+  schedule: {{ $settings.schedule | quote }}
+  timeZone: {{ $.Values.cron.timeZone | quote }}
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      activeDeadlineSeconds: 300
+      backoffLimit: 0
+      template:
+        spec:
+          restartPolicy: Never
+          automountServiceAccountToken: false
+          securityContext:
+            {{- include "signudoc.podSecurityContext" $ | nindent 12 }}
+          {{- with $.Values.imagePullSecrets }}
+          imagePullSecrets:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          containers:
+            - name: request
+              image: {{ printf "%s:%s" $.Values.image.repository (include "signudoc.imageTag" $) | quote }}
+              imagePullPolicy: {{ $.Values.image.pullPolicy }}
+              securityContext:
+                {{- include "signudoc.containerSecurityContext" $ | nindent 16 }}
+              resources:
+                requests:
+                  cpu: 25m
+                  memory: 48Mi
+                limits:
+                  memory: 128Mi
+              env:
+                - name: JOB_URL
+                  value: {{ printf "http://%s:%v/api/internal/%s" (include "signudoc.fullname" $) $.Values.service.port $job | quote }}
+                - name: CRON_SECRET
+                  valueFrom:
+                    secretKeyRef:
+                      name: {{ $.Values.existingSecret | quote }}
+                      key: CRON_SECRET
+              command: [node, -e]
+              args:
+                - |-
+                  {{- $.Files.Get "files/run-cron.cjs" | nindent 18 }}
+{{- end }}
+{{- end }}

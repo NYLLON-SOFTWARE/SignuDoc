@@ -342,6 +342,8 @@ It is opt-in for now because it has not yet been proven against a live Vercel de
 
 ## Self-hosting somewhere else
 
+For production containers and the Helm chart, see [Run SignuDoc on Kubernetes](kubernetes.md).
+
 SignuDoc is a regular Next.js app and runs anywhere Node.js 24 and Postgres do:
 
 ```bash

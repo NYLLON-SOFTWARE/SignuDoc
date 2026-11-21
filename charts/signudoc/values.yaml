@@ -1,0 +1,87 @@
+image:
+  repository: signudoc
+  tag: "" # Defaults to appVersion.
+  pullPolicy: IfNotPresent
+imagePullSecrets: []
+
+appUrl: https://signudoc.example.com
+existingSecret: signudoc-env
+# Additional nonsecret application environment variables.
+config: {}
+# Added to both the app and the migration Job. Referenced objects must exist
+# before the migration hook runs. Use secretKeyRef for credentials.
+extraEnv: []
+extraVolumes: []
+extraVolumeMounts: []
+
+replicaCount: 1
+strategy: "" # Recreate for local, RollingUpdate for object storage.
+# Optional scheduling constraints for app pods.
+affinity: {}
+nodeSelector: {}
+tolerations: []
+terminationGracePeriodSeconds: 30
+resources:
+  requests:
+    cpu: 100m
+    memory: 256Mi
+  limits:
+    memory: 1Gi
+probes:
+  startup:
+    periodSeconds: 2
+    timeoutSeconds: 2
+    failureThreshold: 30
+  liveness:
+    periodSeconds: 10
+    timeoutSeconds: 2
+    failureThreshold: 3
+  readiness:
+    periodSeconds: 10
+    timeoutSeconds: 5
+    failureThreshold: 2
+
+autoscaling:
+  enabled: false
+  minReplicas: 1
+  maxReplicas: 3
+  targetCPUUtilizationPercentage: 80
+
+storage:
+  driver: local # local, blob, or s3 (requires an S3-capable image).
+  existingClaim: "" # A pre-existing ReadWriteOnce PVC. Local only.
+  storageClassName: null # null uses the cluster default. "" selects no class.
+  size: 5Gi
+
+service:
+  port: 80
+ingress:
+  enabled: false
+  className: ""
+  host: ""
+  annotations: {}
+  tls: []
+
+migration:
+  mode: helm # helm, argocd, or disabled.
+  image:
+    repository: "" # Defaults to the app image repository.
+    tag: "" # Defaults to the app image tag with -migrate appended.
+    pullPolicy: IfNotPresent
+  activeDeadlineSeconds: 240
+  backoffLimit: 1
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      memory: 256Mi
+
+cron:
+  timeZone: Etc/UTC
+  retention:
+    enabled: false # Also sends reminders and deadline notices.
+    schedule: "15 3 * * *"
+  backup:
+    enabled: false # Vercel Blob only.
+    schedule: "15 4 * * *"

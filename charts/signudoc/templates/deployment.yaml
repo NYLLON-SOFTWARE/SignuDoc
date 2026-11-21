@@ -1,0 +1,127 @@
+{{- include "signudoc.validate" . -}}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "signudoc.fullname" . | quote }}
+  labels:
+    {{- include "signudoc.selectorLabels" . | nindent 4 }}
+spec:
+  {{- if not .Values.autoscaling.enabled }}
+  replicas: {{ .Values.replicaCount }}
+  {{- end }}
+  strategy:
+    {{- $strategy := include "signudoc.strategy" . }}
+    type: {{ $strategy }}
+    {{- if eq $strategy "Recreate" }}
+    # Clear any server-defaulted settings on a Helm upgrade from RollingUpdate.
+    rollingUpdate: null
+    {{- end }}
+  selector:
+    matchLabels:
+      {{- include "signudoc.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "signudoc.selectorLabels" . | nindent 8 }}
+      annotations:
+        checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+    spec:
+      automountServiceAccountToken: false
+      terminationGracePeriodSeconds: {{ .Values.terminationGracePeriodSeconds }}
+      securityContext:
+        {{- include "signudoc.podSecurityContext" . | nindent 8 }}
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: app
+          image: {{ printf "%s:%s" .Values.image.repository (include "signudoc.imageTag" .) | quote }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          securityContext:
+            {{- include "signudoc.containerSecurityContext" . | nindent 12 }}
+          ports:
+            - name: http
+              containerPort: 3000
+          envFrom:
+            - configMapRef:
+                name: {{ include "signudoc.fullname" . | quote }}
+            - secretRef:
+                name: {{ required "existingSecret is required" .Values.existingSecret | quote }}
+          env:
+            - name: NODE_ENV
+              value: production
+            - name: HOSTNAME
+              value: 0.0.0.0
+            - name: PORT
+              value: "3000"
+            - name: STORAGE_DRIVER
+              value: {{ .Values.storage.driver | quote }}
+            {{- if eq .Values.storage.driver "local" }}
+            - name: STORAGE_LOCAL_DIR
+              value: /app/.data/storage
+            {{- end }}
+            {{- if or .Values.cron.retention.enabled .Values.cron.backup.enabled }}
+            - name: CRON_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.existingSecret | quote }}
+                  key: CRON_SECRET
+            {{- end }}
+            {{- with .Values.extraEnv }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          startupProbe:
+            httpGet:
+              path: /api/health/live
+              port: http
+            {{- toYaml .Values.probes.startup | nindent 12 }}
+          livenessProbe:
+            httpGet:
+              path: /api/health/live
+              port: http
+            {{- toYaml .Values.probes.liveness | nindent 12 }}
+          readinessProbe:
+            httpGet:
+              path: /api/health/ready
+              port: http
+            {{- toYaml .Values.probes.readiness | nindent 12 }}
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          volumeMounts:
+            - name: next-cache
+              mountPath: /app/.next/cache
+            - name: tmp
+              mountPath: /tmp
+            {{- if eq .Values.storage.driver "local" }}
+            - name: documents
+              mountPath: /app/.data/storage
+            {{- end }}
+            {{- with .Values.extraVolumeMounts }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+      volumes:
+        - name: next-cache
+          emptyDir: {}
+        - name: tmp
+          emptyDir: {}
+        {{- if eq .Values.storage.driver "local" }}
+        - name: documents
+          persistentVolumeClaim:
+            claimName: {{ default (printf "%s-documents" (include "signudoc.fullname" .)) .Values.storage.existingClaim | quote }}
+        {{- end }}
+        {{- with .Values.extraVolumes }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
