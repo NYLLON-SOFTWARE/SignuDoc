@@ -903,12 +903,12 @@ test("the last signer completes the envelope when no email provider is set (issu
       signed_pdf_key: string | null;
       signer_status: string;
       status: string;
-      values: string;
+      submitted_fields: string;
     }>(
       `
         select e.status, e.signed_pdf_key, s.status as signer_status,
           (select count(*) from fields f
-            where f.id = $2 and f.submitted_at is not null)::text as values
+            where f.id = $2 and f.submitted_at is not null)::text as submitted_fields
         from envelopes e join signers s on s.envelope_id = e.id
         where e.id = $1
       `,
@@ -918,7 +918,7 @@ test("the last signer completes the envelope when no email provider is set (issu
     assert.equal(state.rows[0]?.status, "completed");
     assert.equal(state.rows[0]?.signer_status, "signed");
     assert.ok(state.rows[0]?.signed_pdf_key);
-    assert.equal(state.rows[0]?.values, "1");
+    assert.equal(state.rows[0]?.submitted_fields, "1");
 
     const events = await auditEvents(envelope.envelopeId);
 

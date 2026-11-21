@@ -10,7 +10,11 @@ import { PDFDocument } from "pdf-lib";
 import type pg from "pg";
 
 import { exportEnvelopeAuditCsv } from "./audit-export.ts";
-import { afterStatement, openTestDatabase } from "./db/test-database.ts";
+import {
+  afterStatement,
+  besideOpenTransactions,
+  openTestDatabase,
+} from "./db/test-database.ts";
 import { ELECTRONIC_RECORDS_DISCLOSURE_VERSION } from "./electronic-records-disclosure.ts";
 import {
   correctSentEnvelopeSigner,
@@ -1288,17 +1292,20 @@ test("a failed invitation leaves no correction in the audit trail when a later e
   const { userId } = await createOwner();
   const envelopeId = await createEnvelope({ userId });
   const signer = await createSigner({ envelopeId });
+  const beside = besideOpenTransactions();
   const service: EmailService = {
     async send() {
-      await recordAuditEvent(
-        {
-          actorEmail: signer.email,
-          actorType: "signer",
-          envelopeId,
-          event: "viewed",
-          metadata: { signerId: signer.signerId },
-        },
-        database,
+      await beside.run(() =>
+        recordAuditEvent(
+          {
+            actorEmail: signer.email,
+            actorType: "signer",
+            envelopeId,
+            event: "viewed",
+            metadata: { signerId: signer.signerId },
+          },
+          database,
+        ),
       );
       throw new Error("mailbox down");
     },
@@ -1317,6 +1324,7 @@ test("a failed invitation leaves no correction in the audit trail when a later e
     ),
     { message: "mailbox down" },
   );
+  await beside.settled();
 
   const stored = await readSigner(signer.signerId);
   assert.equal(stored.email, signer.email);
@@ -1354,17 +1362,20 @@ test("a failed invitation restores consent and keeps it on the certificate", asy
     database,
   );
 
+  const beside = besideOpenTransactions();
   const service: EmailService = {
     async send() {
-      await recordAuditEvent(
-        {
-          actorEmail: "riley.fixed@example.test",
-          actorType: "signer",
-          envelopeId,
-          event: "viewed",
-          metadata: { signerId: signer.signerId },
-        },
-        database,
+      await beside.run(() =>
+        recordAuditEvent(
+          {
+            actorEmail: "riley.fixed@example.test",
+            actorType: "signer",
+            envelopeId,
+            event: "viewed",
+            metadata: { signerId: signer.signerId },
+          },
+          database,
+        ),
       );
       throw new Error("mailbox down");
     },
@@ -1383,6 +1394,7 @@ test("a failed invitation restores consent and keeps it on the certificate", asy
     ),
     { message: "mailbox down" },
   );
+  await beside.settled();
 
   const stored = await readSigner(signer.signerId);
   assert.equal(stored.email, signer.email);

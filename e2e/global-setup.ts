@@ -2,17 +2,9 @@ import { rm } from "node:fs/promises";
 
 import pg from "pg";
 
+import { assertDisposableDatabase } from "../src/lib/db/disposable-database.ts";
 import { e2eDataDir, e2eDatabaseUrl } from "../playwright.config";
-
-function assertDisposableDatabase(connectionString: string) {
-  const databaseName = new URL(connectionString).pathname.replace(/^\//, "");
-
-  if (!databaseName.toLowerCase().includes("e2e")) {
-    throw new Error(
-      `Refusing to wipe database "${databaseName}". The end-to-end test database must have "e2e" in its name.`,
-    );
-  }
-}
+import { isSqliteUrl, wipeSqliteDatabase } from "./support/database";
 
 async function ensureDatabaseExists(connectionString: string) {
   const targetUrl = new URL(connectionString);
@@ -44,17 +36,22 @@ async function ensureDatabaseExists(connectionString: string) {
 
 export default async function globalSetup() {
   assertDisposableDatabase(e2eDatabaseUrl);
-  await ensureDatabaseExists(e2eDatabaseUrl);
 
-  const client = new pg.Client({ connectionString: e2eDatabaseUrl });
+  if (isSqliteUrl(e2eDatabaseUrl)) {
+    await wipeSqliteDatabase(e2eDatabaseUrl);
+  } else {
+    await ensureDatabaseExists(e2eDatabaseUrl);
 
-  await client.connect();
+    const client = new pg.Client({ connectionString: e2eDatabaseUrl });
 
-  try {
-    await client.query("drop schema if exists public cascade");
-    await client.query("create schema public");
-  } finally {
-    await client.end();
+    await client.connect();
+
+    try {
+      await client.query("drop schema if exists public cascade");
+      await client.query("create schema public");
+    } finally {
+      await client.end();
+    }
   }
 
   // Called directly with the test database, so a DATABASE_URL_UNPOOLED or

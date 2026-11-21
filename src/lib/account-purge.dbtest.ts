@@ -8,7 +8,11 @@ import { after, before, test } from "node:test";
 import type pg from "pg";
 
 import { createApiKey } from "./api-keys.ts";
-import { afterStatement, openTestDatabase } from "./db/test-database.ts";
+import {
+  afterStatement,
+  afterStatementOrJustBefore,
+  openTestDatabase,
+} from "./db/test-database.ts";
 import { runRetentionSweep } from "./retention.ts";
 import {
   createStorageService,
@@ -156,7 +160,7 @@ test("an envelope completed while its sender's account is being deleted goes to 
   // The last signature lands just after the deletion has taken hold of the
   // account.
   const summary = await runRetentionSweep({
-    database: afterStatement(
+    database: afterStatementOrJustBefore(
       database,
       (text, values) =>
         text.includes(`FROM "user" WHERE id = $1 FOR UPDATE`) &&
@@ -253,7 +257,7 @@ test("with no administrator to take it, an envelope completed during the deletio
     await closeAccount(leaver);
 
     const summary = await runRetentionSweep({
-      database: afterStatement(
+      database: afterStatementOrJustBefore(
         database,
         (text, values) =>
           text.includes(`FROM "user" WHERE id = $1 FOR UPDATE`) &&

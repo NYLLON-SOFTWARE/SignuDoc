@@ -10,6 +10,7 @@ import { cache } from "react";
 
 import { type Branding } from "../branding.ts";
 import { getDb } from "../db/connection.ts";
+import { betterAuthDatabase } from "../db/sqlite/kysely.ts";
 import {
   createEmailService,
   type EmailService,
@@ -381,7 +382,7 @@ export function createAppAuth({
       useSecureCookies: baseURL.startsWith("https://"),
     },
     baseURL,
-    database,
+    database: betterAuthDatabase(database),
     emailVerification: {
       sendOnSignIn: true,
       sendOnSignUp: true,

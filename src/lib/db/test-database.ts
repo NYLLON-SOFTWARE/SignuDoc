@@ -6,6 +6,11 @@ import {
   recordAuditEvent,
   type RecordAuditEventInput,
 } from "../services/audit.ts";
+import { isSqliteUrl, SqlitePool } from "./sqlite/pool.ts";
+import {
+  beforeStatement,
+  openSqliteTestDatabase,
+} from "./sqlite/test-database.ts";
 
 // For the tests that need a real Postgres (npm run test:db). They use the
 // same disposable database as the end-to-end test and bring its schema up
@@ -46,6 +51,11 @@ async function ensureDatabaseExists(connectionString: string, name: string) {
 export async function openTestDatabase(): Promise<pg.Pool> {
   const connectionString =
     process.env.E2E_DATABASE_URL ?? DEFAULT_TEST_DATABASE_URL;
+
+  // A fresh SQLite file per test file (sqlite/test-database.ts).
+  if (isSqliteUrl(connectionString)) {
+    return openSqliteTestDatabase(connectionString);
+  }
   const name = new URL(connectionString).pathname.replace(/^\//, "");
 
   if (!name.toLowerCase().includes("e2e")) {
@@ -93,6 +103,71 @@ export async function waitUntilBlockedBy(
   }
 
   throw new Error("Nothing started waiting on the held lock.");
+}
+
+/**
+ * Another pool on the same test database, for a test that needs one of its
+ * own. On SQLite it shares the database's one write lock, and
+ * `connectionTimeoutMillis` is how long it waits for it.
+ */
+export function openAnotherPool(
+  database: pg.Pool,
+  options: { connectionTimeoutMillis: number; max: number },
+): pg.Pool {
+  const { connectionString } = (
+    database as unknown as { options: pg.PoolConfig }
+  ).options;
+
+  if (connectionString && isSqliteUrl(connectionString)) {
+    return new SqlitePool(connectionString, {
+      lockTimeoutMs: options.connectionTimeoutMillis,
+    }) as unknown as pg.Pool;
+  }
+
+  return new pg.Pool({ connectionString, ...options });
+}
+
+/**
+ * afterStatement, for a `then` that writes as another session would while
+ * the statement's transaction holds its rows, and waits for that write. On
+ * SQLite nothing can be written while a transaction holds the database, so
+ * there `then` runs right before the statement instead: the last moment the
+ * same write can land.
+ */
+export function afterStatementOrJustBefore(
+  pool: pg.Pool,
+  isTheStatement: (text: string, values: unknown[]) => boolean,
+  then: () => Promise<void>,
+): pg.Pool {
+  return isSqliteUrl(process.env.E2E_DATABASE_URL ?? "")
+    ? beforeStatement(pool, isTheStatement, then)
+    : afterStatement(pool, isTheStatement, then);
+}
+
+/**
+ * Writes made from inside another transaction's work, as another session
+ * would make them meanwhile. On Postgres each goes through at once. SQLite
+ * has one writer, so there it waits for the open transaction to end: it is
+ * started at once and awaited by `settled()`.
+ */
+export function besideOpenTransactions() {
+  const onSqlite = isSqliteUrl(process.env.E2E_DATABASE_URL ?? "");
+  const pending: Promise<unknown>[] = [];
+
+  return {
+    async run(write: () => Promise<unknown>) {
+      const written = write();
+
+      if (!onSqlite) {
+        await written;
+        return;
+      }
+
+      written.catch(() => undefined);
+      pending.push(written);
+    },
+    settled: () => Promise.all(pending),
+  };
 }
 
 type QueryFunction = (text: unknown, values?: unknown[]) => unknown;
@@ -204,3 +279,15 @@ export async function recordAuditEventWhileWaitedOn<T>(
     client.release();
   }
 }
+
+/**
+ * For a test where one session waits on row locks another holds
+ * (waitUntilBlockedBy), or writes while another's transaction holds the
+ * rows it writes to. SQLite has one writer, so the two can never overlap
+ * there.
+ */
+export const needsPostgresLocks = {
+  skip: isSqliteUrl(process.env.E2E_DATABASE_URL ?? "")
+    ? "needs Postgres"
+    : false,
+};

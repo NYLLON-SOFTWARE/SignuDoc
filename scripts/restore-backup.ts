@@ -2,6 +2,7 @@
 // a new, empty database and Blob store. See docs/backup-and-restore.md.
 //
 //   DATABASE_URL=postgres://...            the new, empty database
+//     (or sqlite:/path/file.db for the SQLite backend)
 //   BLOB_READ_WRITE_TOKEN=vercel_blob_rw_  the new install's Blob store
 //   BACKUP_BLOB_READ_WRITE_TOKEN=...       the backup store
 //
@@ -25,6 +26,7 @@ import {
   restoreFiles,
 } from "../src/lib/backup.ts";
 import { runMigrations } from "../db/migrate.mjs";
+import { isSqliteUrl, SqlitePool } from "../src/lib/db/sqlite/pool.ts";
 
 function readArgument(name: string): string | null {
   const index = process.argv.indexOf(name);
@@ -91,7 +93,10 @@ async function main() {
     console.log("Applying migrations…");
     await runMigrations({ connectionString });
 
-    const database = new pg.Pool({ connectionString, max: 2 });
+    // A sqlite: URL restores into a SQLite file (docs/design/database-backends.md).
+    const database = isSqliteUrl(connectionString)
+      ? (new SqlitePool(connectionString) as unknown as pg.Pool)
+      : new pg.Pool({ connectionString, max: 2 });
 
     try {
       console.log(`Restoring ${backupPath}…`);

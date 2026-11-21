@@ -21,6 +21,8 @@ import {
   normalizeDatabaseUrl,
   resolveMigrationDatabaseUrl,
 } from "./database-url.mjs";
+import { runSqliteMigrations } from "./sqlite/migrate.mjs";
+import { isSqliteUrl } from "./sqlite/open.mjs";
 
 const DEFAULT_MIGRATIONS_DIR = path.join(
   path.dirname(fileURLToPath(import.meta.url)),
@@ -43,6 +45,11 @@ export async function runMigrations({
   log = console.log,
   migrationsDir = DEFAULT_MIGRATIONS_DIR,
 }) {
+  // A SQLite database has schema files of its own (db/sqlite).
+  if (isSqliteUrl(connectionString)) {
+    return runSqliteMigrations({ connectionString, log });
+  }
+
   const client = new pg.Client({
     application_name: "signudoc-migrate",
     connectionString: normalizeDatabaseUrl(connectionString),

@@ -38,9 +38,23 @@ jobs:
       # the whole repository (issue #108).
       - run: node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/check-function-traces.ts
 
+  # Both database backends (docs/design/database-backends.md): Postgres, the
+  # default, and SQLite. The Postgres service is only used by the first.
   e2e:
-    name: End-to-end test
+    name: End-to-end test (${{ matrix.backend }})
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - backend: postgres
+            database: postgres://signudoc:signudoc@127.0.0.1:5432/signudoc_e2e
+            dbtest-database: postgres://signudoc:signudoc@127.0.0.1:5432/signudoc_e2e
+          - backend: sqlite
+            database: sqlite:/tmp/signudoc-sqlite/signudoc_e2e.db
+            # Its own file: the end-to-end server opens its database as it
+            # starts, before the test wipes it, and should find no leftovers.
+            dbtest-database: sqlite:/tmp/signudoc-sqlite/signudoc_e2e_dbtest.db
     services:
       postgres:
         image: postgres:17
@@ -66,14 +80,14 @@ jobs:
       # the cleanup job's lock.
       - run: npm run test:db
         env:
-          E2E_DATABASE_URL: postgres://signudoc:signudoc@127.0.0.1:5432/signudoc_e2e
+          E2E_DATABASE_URL: ${{ matrix.dbtest-database }}
       - run: npx playwright install --with-deps chromium
       - run: npm run test:e2e
         env:
-          E2E_DATABASE_URL: postgres://signudoc:signudoc@127.0.0.1:5432/signudoc_e2e
+          E2E_DATABASE_URL: ${{ matrix.database }}
       - uses: actions/upload-artifact@v6
         if: failure()
         with:
-          name: playwright-traces
+          name: playwright-traces-${{ matrix.backend }}
           path: test-results/
           retention-days: 7

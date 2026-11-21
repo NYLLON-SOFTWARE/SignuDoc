@@ -18,7 +18,11 @@ import {
 } from "../api/envelopes.ts";
 import { getApiEnvelopeWithOwner } from "../api/envelope-view.ts";
 import { withTransaction } from "../db/connection.ts";
-import { openTestDatabase, waitUntilBlockedBy } from "../db/test-database.ts";
+import {
+  needsPostgresLocks,
+  openTestDatabase,
+  waitUntilBlockedBy,
+} from "../db/test-database.ts";
 import { recordAuditEvent } from "../services/audit.ts";
 import { issueSigningLink } from "../services/signing-links.ts";
 import { getSigningPayloadForToken } from "../signing.ts";
@@ -367,56 +371,60 @@ test("a delivery is written with its audit event, and not when that rolls back",
   assert.equal((await deliveriesFor(endpoint.id)).length, 1);
 });
 
-test("an endpoint removed while an event is recorded is skipped, and the change still goes through", async () => {
-  const admin = await createAdmin();
-  const { endpoint } = await addEndpoint(admin, ["envelope.voided"]);
-  const envelope = await createEnvelope(admin);
-  const remover = await database.connect();
-  let recorded: Promise<unknown> | undefined;
+test(
+  "an endpoint removed while an event is recorded is skipped, and the change still goes through",
+  needsPostgresLocks,
+  async () => {
+    const admin = await createAdmin();
+    const { endpoint } = await addEndpoint(admin, ["envelope.voided"]);
+    const envelope = await createEnvelope(admin);
+    const remover = await database.connect();
+    let recorded: Promise<unknown> | undefined;
 
-  try {
-    // An administrator removes the endpoint, not yet committed, just as
-    // the envelope changes (here a void, as a signature would be).
-    await remover.query("begin");
-    await remover.query(`delete from webhook_endpoints where id = $1`, [
-      endpoint.id,
-    ]);
+    try {
+      // An administrator removes the endpoint, not yet committed, just as
+      // the envelope changes (here a void, as a signature would be).
+      await remover.query("begin");
+      await remover.query(`delete from webhook_endpoints where id = $1`, [
+        endpoint.id,
+      ]);
 
-    recorded = recordAuditEvent(
-      {
-        actorType: "sender",
-        envelopeId: envelope.id,
-        event: "voided",
-        metadata: { reason: "Wrong client" },
-      },
-      database,
+      recorded = recordAuditEvent(
+        {
+          actorType: "sender",
+          envelopeId: envelope.id,
+          event: "voided",
+          metadata: { reason: "Wrong client" },
+        },
+        database,
+      );
+      // Handled at once, so a failure before it waits is reported below
+      // instead of as an unhandled rejection.
+      recorded.catch(() => undefined);
+
+      await waitUntilBlockedBy(database, remover);
+      await remover.query("commit");
+    } finally {
+      // A no-op after the commit; otherwise the removal is let go, so the
+      // event can finish and the connection goes back clean.
+      await remover.query("rollback").catch(() => undefined);
+      await recorded?.catch(() => undefined);
+      remover.release();
+    }
+
+    // The change goes through; before, it failed on the foreign key.
+    await recorded;
+
+    assert.equal((await deliveriesFor(endpoint.id)).length, 0);
+
+    const voided = await database.query(
+      `select 1 from audit_events where envelope_id = $1 and event = 'voided'`,
+      [envelope.id],
     );
-    // Handled at once, so a failure before it waits is reported below
-    // instead of as an unhandled rejection.
-    recorded.catch(() => undefined);
 
-    await waitUntilBlockedBy(database, remover);
-    await remover.query("commit");
-  } finally {
-    // A no-op after the commit; otherwise the removal is let go, so the
-    // event can finish and the connection goes back clean.
-    await remover.query("rollback").catch(() => undefined);
-    await recorded?.catch(() => undefined);
-    remover.release();
-  }
-
-  // The change goes through; before, it failed on the foreign key.
-  await recorded;
-
-  assert.equal((await deliveriesFor(endpoint.id)).length, 0);
-
-  const voided = await database.query(
-    `select 1 from audit_events where envelope_id = $1 and event = 'voided'`,
-    [envelope.id],
-  );
-
-  assert.equal(voided.rowCount, 1);
-});
+    assert.equal(voided.rowCount, 1);
+  },
+);
 
 test("a payload reads the envelope and its signers on one snapshot", async () => {
   const admin = await createAdmin();

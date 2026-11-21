@@ -1,9 +1,10 @@
 import { createHash } from "node:crypto";
 
 import { expect, test } from "@playwright/test";
-import pg from "pg";
+import type pg from "pg";
 
 import { e2eDatabaseUrl } from "../playwright.config";
+import { openE2ePool } from "./support/database";
 
 // The cleanup route and the sign-in limit, as the running app serves them.
 // What sits underneath (the rate limit statement, the job's lock and its
@@ -16,7 +17,7 @@ const RETENTION_RATION_KEY = createHash("sha256")
 let database: pg.Pool;
 
 test.beforeAll(() => {
-  database = new pg.Pool({ connectionString: e2eDatabaseUrl });
+  database = openE2ePool(e2eDatabaseUrl);
 });
 
 test.afterAll(async () => {

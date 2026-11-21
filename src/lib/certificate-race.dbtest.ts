@@ -8,7 +8,11 @@ import { after, before, test } from "node:test";
 import { PDFDocument } from "pdf-lib";
 import type pg from "pg";
 
-import { afterStatement, openTestDatabase } from "./db/test-database.ts";
+import {
+  afterStatement,
+  needsPostgresLocks,
+  openTestDatabase,
+} from "./db/test-database.ts";
 import { getSenderEnvelopeDownload } from "./downloads.ts";
 import { ELECTRONIC_RECORDS_DISCLOSURE_VERSION } from "./electronic-records-disclosure.ts";
 import { EnvelopeMutationError, voidSentEnvelope } from "./envelopes.ts";
@@ -631,39 +635,46 @@ for (const [name, statement, end] of [
     declineEnvelope,
   ],
 ] as const) {
-  test(`${name} seals the audit events recorded while it was under way`, async () => {
-    const envelope = await createSignableEnvelope();
-    const lateActor = `late-${randomUUID().slice(0, 8)}@example.test`;
-    let recorded = false;
-    const pool = afterStatement(
-      database,
-      (text) => !recorded && text.includes(statement),
-      async () => {
-        recorded = true;
-        await recordAuditEvent(
-          {
-            actorEmail: lateActor,
-            actorType: "signer",
-            envelopeId: envelope.envelopeId,
-            event: "viewed",
-          },
-          database,
-        );
-      },
-    );
+  test(
+    `${name} seals the audit events recorded while it was under way`,
+    needsPostgresLocks,
+    async () => {
+      const envelope = await createSignableEnvelope();
+      const lateActor = `late-${randomUUID().slice(0, 8)}@example.test`;
+      let recorded = false;
+      const pool = afterStatement(
+        database,
+        (text) => !recorded && text.includes(statement),
+        async () => {
+          recorded = true;
+          await recordAuditEvent(
+            {
+              actorEmail: lateActor,
+              actorType: "signer",
+              envelopeId: envelope.envelopeId,
+              event: "viewed",
+            },
+            database,
+          );
+        },
+      );
 
-    await end(envelope, pool);
+      await end(envelope, pool);
 
-    assert.equal(recorded, true);
+      assert.equal(recorded, true);
 
-    const certificate = await storageService.getObject(
-      buildEnvelopeCertificateKey({ ...envelope, audience: "internal" }),
-    );
+      const certificate = await storageService.getObject(
+        buildEnvelopeCertificateKey({ ...envelope, audience: "internal" }),
+      );
 
-    assert.match(await extractPdfText(certificate.body), new RegExp(lateActor));
-    assert.equal(
-      (await verifyAuditChain(envelope.envelopeId, database)).ok,
-      true,
-    );
-  });
+      assert.match(
+        await extractPdfText(certificate.body),
+        new RegExp(lateActor),
+      );
+      assert.equal(
+        (await verifyAuditChain(envelope.envelopeId, database)).ok,
+        true,
+      );
+    },
+  );
 }

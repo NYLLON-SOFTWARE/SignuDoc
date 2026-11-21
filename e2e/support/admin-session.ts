@@ -1,7 +1,7 @@
 import { expect, type Page } from "@playwright/test";
-import pg from "pg";
 
 import { e2eDatabaseUrl } from "../../playwright.config";
+import { openE2eClient } from "./database";
 import { startSendLimitAfresh } from "./send-limit";
 import { startSignInWindowAfresh } from "./sign-in-limit";
 
@@ -15,7 +15,7 @@ export const E2E_PASSWORD = "correct horse battery staple 42";
  * password is enough for them.
  */
 export async function signInAsAdministrator(page: Page): Promise<string> {
-  const database = new pg.Client({ connectionString: e2eDatabaseUrl });
+  const database = openE2eClient(e2eDatabaseUrl);
   let adminEmail = "";
 
   await database.connect();

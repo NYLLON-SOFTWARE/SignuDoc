@@ -8,7 +8,12 @@ import { after, before, test } from "node:test";
 
 import type pg from "pg";
 
-import { openTestDatabase } from "./db/test-database.ts";
+import { isSqliteUrl } from "./db/sqlite/pool.ts";
+import {
+  afterStatement,
+  besideOpenTransactions,
+  openTestDatabase,
+} from "./db/test-database.ts";
 import {
   cancelEnvelopeDeletion,
   deleteScheduledEnvelope,
@@ -716,17 +721,22 @@ test("a cancellation email still owed is not sent once the deletion is scheduled
   );
 
   // While the daily run sends the first notice, an administrator schedules
-  // the second deletion again, and its sender is told so.
+  // the second deletion again, and its sender is told so. (On SQLite, with
+  // one writer, the reschedule waits for that notice's transaction and goes
+  // in before the run's next one.)
   const outbox = createOutbox();
+  const beside = besideOpenTransactions();
   let rescheduled = false;
   const reschedulingOutbox: EmailService = {
     ...outbox,
     async send(message, options) {
       if (!rescheduled && message.to === first.owner.email) {
         rescheduled = true;
-        await scheduleAs(admin, secondEnvelope.envelopeId, "Again.", {
-          now: start + DAY,
-        });
+        await beside.run(() =>
+          scheduleAs(admin, secondEnvelope.envelopeId, "Again.", {
+            now: start + DAY,
+          }),
+        );
       }
 
       return outbox.send(message, options);
@@ -734,6 +744,7 @@ test("a cancellation email still owed is not sent once the deletion is scheduled
   };
 
   await runDaily(start + DAY, reschedulingOutbox);
+  await beside.settled();
 
   assert.equal(rescheduled, true);
   // The old cancellation never followed the new notice.
@@ -864,36 +875,33 @@ test("notices that keep failing go behind the others, so later senders are still
   const start = 500_000_000;
 
   // A full batch of requests whose sender's email keeps bouncing…
+  // Two statements rather than one data-modifying WITH, so that the same
+  // setup runs on the SQLite backend too.
   await database.query(
     `
-      with made as (
-        insert into envelopes (
-          id, user_id, title, status, source_pdf_key, source_pdf_filename,
-          source_pdf_size_bytes, page_count, source_pdf_hash, sent_at,
-          completed_at
-        )
-        select
-          gen_random_uuid()::text, $1, 'Lease', 'completed',
-          'users/' || $1 || '/envelopes/' || n || '/source.pdf', 'lease.pdf',
-          4, 1, $2, $3, $3
-        from generate_series(1, $4::int) as n
-        returning id
+      insert into envelopes (
+        id, user_id, title, status, source_pdf_key, source_pdf_filename,
+        source_pdf_size_bytes, page_count, source_pdf_hash, sent_at,
+        completed_at
       )
+      select
+        gen_random_uuid()::text, $1, 'Lease', 'completed',
+        'users/' || $1 || '/envelopes/' || n || '/source.pdf', 'lease.pdf',
+        4, 1, $2, $3, $3
+      from generate_series(1, $4::int) as n
+    `,
+    [unreachable.userId, SOURCE_HASH, start, SCHEDULED_DELETIONS_PER_RUN],
+  );
+  await database.query(
+    `
       insert into scheduled_envelope_deletions (
         envelope_id, requested_by_user_id, requested_by_email, requested_at,
         delete_after
       )
-      select id, $5, $6, $3, $3 + $7 from made
+      select id, $2, $3, $4::bigint, $4::bigint + $5::bigint
+      from envelopes where user_id = $1
     `,
-    [
-      unreachable.userId,
-      SOURCE_HASH,
-      start,
-      SCHEDULED_DELETIONS_PER_RUN,
-      admin.userId,
-      admin.email,
-      WAIT,
-    ],
+    [unreachable.userId, admin.userId, admin.email, start, WAIT],
   );
   // …and one asked for after them.
   const later = await createEnvelope(reachable.userId, { status: "completed" });
@@ -947,6 +955,96 @@ test("a cancelled deletion can be scheduled again", async () => {
   );
   assert.equal(await deleteWhenDue(envelope.envelopeId, now + 20 + WAIT), true);
 });
+
+test(
+  "a cancelled deletion scheduled again while the daily run clears cancelled ones is kept",
+  {
+    // One writer: the run and the reschedule cannot overlap on SQLite.
+    skip: isSqliteUrl(process.env.E2E_DATABASE_URL) ? "needs Postgres" : false,
+  },
+  async () => {
+    const admin = await createUser("admin");
+    const envelope = await createEnvelope(admin.userId, { status: "voided" });
+    const start = 1_200_000_000;
+
+    await scheduleAs(admin, envelope.envelopeId, "First.", { now: start });
+    await cancelAs(admin, envelope.envelopeId, { now: start + 10 });
+
+    // Two days on, an administrator schedules it again. The reschedule has
+    // just replaced the cancelled request, and holds its row, when the
+    // daily run comes to clear the cancelled requests.
+    let holding!: () => void;
+    const held = new Promise<void>((resolve) => {
+      holding = resolve;
+    });
+    let release!: () => void;
+    const released = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const rescheduling = scheduleEnvelopeDeletion(
+      envelope.envelopeId,
+      { actor: admin, reason: "Again." },
+      {
+        database: afterStatement(
+          database,
+          (text) => text.includes("INSERT INTO scheduled_envelope_deletions"),
+          async () => {
+            holding();
+            await released;
+          },
+        ),
+        emailService: createOutbox(),
+        now: start + 2 * DAY,
+      },
+    );
+
+    rescheduling.catch(() => undefined);
+    await held;
+
+    const running = runDaily(start + 2 * DAY);
+
+    running.catch(() => undefined);
+
+    try {
+      // The run's clean-up waits for the reschedule's row…
+      for (let attempt = 0; ; attempt += 1) {
+        const waiting = await database.query(
+          `
+            select 1
+            from pg_stat_activity
+            where datname = current_database()
+              and wait_event_type = 'Lock'
+              and query ilike '%delete from scheduled_envelope_deletions%'
+            limit 1
+          `,
+        );
+
+        if (waiting.rowCount) {
+          break;
+        }
+
+        if (attempt === 500) {
+          throw new Error("The daily run never waited for the reschedule.");
+        }
+
+        await delay(10);
+      }
+    } finally {
+      // …which then goes in.
+      release();
+    }
+
+    await rescheduling;
+    await running;
+
+    // The request stands again; it is not cleared as the cancelled one was.
+    assert.equal(
+      (await getScheduledEnvelopeDeletion(envelope.envelopeId, database))
+        ?.reason,
+      "Again.",
+    );
+  },
+);
 
 test("when a file cannot be deleted, the envelope is still deleted and recorded, and the next cleanup deletes the file", async () => {
   const admin = await createUser("admin");

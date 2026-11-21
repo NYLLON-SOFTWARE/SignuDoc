@@ -1,7 +1,7 @@
 import { expect, type Page, test } from "@playwright/test";
-import pg from "pg";
 
 import { e2eDatabaseUrl } from "../playwright.config";
+import { openE2eClient } from "./support/database";
 import { signInAsAdministrator } from "./support/admin-session";
 import { writeSamplePdf } from "./support/sample-pdf";
 
@@ -26,7 +26,7 @@ async function expectTheDocumentAsSent(page: Page, documentUrl: string) {
 }
 
 async function countOriginalViews(envelopeId: string): Promise<number> {
-  const database = new pg.Client({ connectionString: e2eDatabaseUrl });
+  const database = openE2eClient(e2eDatabaseUrl);
 
   await database.connect();
 
@@ -155,7 +155,7 @@ test("a sender opens the document while it is out for signature, and after voidi
   });
 
   await test.step("an administrator opening another member's document is on record", async () => {
-    const database = new pg.Client({ connectionString: e2eDatabaseUrl });
+    const database = openE2eClient(e2eDatabaseUrl);
 
     await database.connect();
 

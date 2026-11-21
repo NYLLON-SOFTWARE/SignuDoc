@@ -1,0 +1,5 @@
+-- SQLite version of db/migrations/20261120110000_repair_edited_migrations.sql,
+-- which adds to a Postgres database what it missed by running an early copy
+-- of a migration that was edited later. A SQLite database has only ever had
+-- the final copies (the SQLite backend came after them), so there is
+-- nothing to repair here.

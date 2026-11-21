@@ -7,6 +7,7 @@ import type pg from "pg";
 
 import { createApiKey } from "../api-keys.ts";
 import { replaceDbPoolForTests } from "../db/connection.ts";
+import { isSqliteUrl } from "../db/sqlite/pool.ts";
 import { openTestDatabase } from "../db/test-database.ts";
 import { ReminderMutationError } from "../reminders.ts";
 import { claimIdempotencyKey, hashRequest } from "./idempotency.ts";
@@ -107,38 +108,45 @@ async function createContext(idempotencyKey: string) {
   };
 }
 
-test("a request whose envelope could not be noted keeps its key, so a retry cannot make a second one", async () => {
-  const key = `order-${randomUUID()}`;
-  const context = await createContext(key);
-  const body = '{"title":"Lease"}';
+test(
+  "a request whose envelope could not be noted keeps its key, so a retry cannot make a second one",
+  {
+    // The failure is Postgres refusing a NUL in text; SQLite keeps it.
+    skip: isSqliteUrl(process.env.E2E_DATABASE_URL) ? "needs Postgres" : false,
+  },
+  async () => {
+    const key = `order-${randomUUID()}`;
+    const context = await createContext(key);
+    const body = '{"title":"Lease"}';
 
-  await assert.rejects(
-    route.runIdempotently(
-      context,
-      "POST /api/v1/envelopes",
-      body,
-      async (remember) => {
-        // Postgres refuses a NUL in text, so noting the envelope fails the
-        // way it would if the database went away right after the send.
-        await remember("envelope\u0000id");
+    await assert.rejects(
+      route.runIdempotently(
+        context,
+        "POST /api/v1/envelopes",
+        body,
+        async (remember) => {
+          // Postgres refuses a NUL in text, so noting the envelope fails the
+          // way it would if the database went away right after the send.
+          await remember("envelope\u0000id");
 
-        return { body: {}, status: 201 };
-      },
-    ),
-  );
+          return { body: {}, status: 201 };
+        },
+      ),
+    );
 
-  assert.deepEqual(
-    await claimIdempotencyKey(
-      {
-        apiKeyId: context.actor.apiKeyId,
-        key,
-        requestHash: hashRequest("POST /api/v1/envelopes", body),
-      },
-      db(),
-    ),
-    { kind: "in_progress" },
-  );
-});
+    assert.deepEqual(
+      await claimIdempotencyKey(
+        {
+          apiKeyId: context.actor.apiKeyId,
+          key,
+          requestHash: hashRequest("POST /api/v1/envelopes", body),
+        },
+        db(),
+      ),
+      { kind: "in_progress" },
+    );
+  },
+);
 
 test(
   "a retry answering from the envelope does not replace the response the first request kept",

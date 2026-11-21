@@ -21,6 +21,7 @@
     "format:check": "prettier --check .",
     "test": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test \"src/**/*.test.ts\" \"db/**/*.test.mjs\"",
     "restore-backup": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/restore-backup.ts",
+    "transfer-database": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/transfer-database.ts",
     "test:db": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test --test-concurrency=1 \"src/**/*.dbtest.ts\"",
     "test:e2e": "playwright test"
   },
@@ -37,6 +38,7 @@
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "harfbuzzjs": "1.6.4",
+    "kysely": "^0.29.8",
     "lucide-react": "^0.577.0",
     "next": "16.4.6",
     "node-forge": "1.4.3",

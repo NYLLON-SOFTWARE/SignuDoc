@@ -8,6 +8,7 @@ import pg, {
 
 import { getEnv } from "../utils/env.ts";
 import { requireConfigValue } from "../services/service-config.ts";
+import { isSqliteUrl, SqlitePool } from "./sqlite/pool.ts";
 
 declare global {
   var __signudocPgPool: Pool | undefined;
@@ -32,14 +33,22 @@ export function getDb(): Pool {
     return cachedPool;
   }
 
+  const connectionString = requireConfigValue(
+    "database",
+    "DATABASE_URL",
+    getEnv().databaseUrl,
+  );
+
+  // A sqlite: URL picks the SQLite backend (docs/design/database-backends.md).
+  if (isSqliteUrl(connectionString)) {
+    cachedPool = new SqlitePool(connectionString) as unknown as Pool;
+    return cachedPool;
+  }
+
   const isOnVercel = process.env.VERCEL === "1";
   const pool = new Pool({
     application_name: "signudoc",
-    connectionString: requireConfigValue(
-      "database",
-      "DATABASE_URL",
-      getEnv().databaseUrl,
-    ),
+    connectionString,
     connectionTimeoutMillis: 10_000,
     // A Vercel function instance is suspended between requests, so idle
     // connections are released quickly there instead of being left to die.

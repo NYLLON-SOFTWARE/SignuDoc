@@ -14,7 +14,11 @@ import {
   createEnvelopeForApi,
   type ApiActor,
 } from "./api/envelopes.ts";
-import { openTestDatabase, waitUntilBlockedBy } from "./db/test-database.ts";
+import {
+  needsPostgresLocks,
+  openTestDatabase,
+  waitUntilBlockedBy,
+} from "./db/test-database.ts";
 import { ELECTRONIC_RECORDS_DISCLOSURE_VERSION } from "./electronic-records-disclosure.ts";
 import {
   addEmbedOrigin,
@@ -808,90 +812,94 @@ test("a finished embedded link opened again in its site says what happened, not 
   );
 });
 
-test("a signing already under way when its site is removed does not finish", async () => {
-  const admin = await createAdmin();
+test(
+  "a signing already under way when its site is removed does not finish",
+  needsPostgresLocks,
+  async () => {
+    const admin = await createAdmin();
 
-  await addEmbedOrigin(admin, ORIGIN, { database });
+    await addEmbedOrigin(admin, ORIGIN, { database });
 
-  const envelope = await create(admin);
-  const signerId = envelope.signers[0]!.id;
-  const token = await linkFor(admin, envelope.id, signerId);
-  const field = await database.query<{ id: string }>(
-    `select id from fields where envelope_id = $1 and signer_id = $2`,
-    [envelope.id, signerId],
-  );
+    const envelope = await create(admin);
+    const signerId = envelope.signers[0]!.id;
+    const token = await linkFor(admin, envelope.id, signerId);
+    const field = await database.query<{ id: string }>(
+      `select id from fields where envelope_id = $1 and signer_id = $2`,
+      [envelope.id, signerId],
+    );
 
-  await openEmbedLink(token, ORIGIN, database);
-  await recordSignerConsent(
-    token,
-    { disclosureVersion: ELECTRONIC_RECORDS_DISCLOSURE_VERSION },
-    { database },
-  );
-
-  // The removal holds the signer's row while the submission starts, and
-  // expires the link (as removeEmbedOrigin does) once the submission waits.
-  const remover = await database.connect();
-  let submitted: Promise<unknown> | undefined;
-
-  try {
-    await remover.query("begin");
-    await remover.query(`select id from signers where id = $1 for update`, [
-      signerId,
-    ]);
-    submitted = submitSigningForToken(
+    await openEmbedLink(token, ORIGIN, database);
+    await recordSignerConsent(
       token,
-      {
-        clientTimezoneOffsetMinutes: 0,
-        fields: [
-          {
-            fieldId: field.rows[0]!.id,
-            imageDataUrl: DRAWN_SIGNATURE,
-            inputMethod: "drawn",
-            type: "signature",
-          },
-        ],
-      },
+      { disclosureVersion: ELECTRONIC_RECORDS_DISCLOSURE_VERSION },
       { database },
     );
-    // Handled at once, so a failure before it waits is reported below
-    // instead of as an unhandled rejection.
-    submitted.catch(() => undefined);
 
-    await waitUntilBlockedBy(database, remover);
+    // The removal holds the signer's row while the submission starts, and
+    // expires the link (as removeEmbedOrigin does) once the submission waits.
+    const remover = await database.connect();
+    let submitted: Promise<unknown> | undefined;
 
-    // The removal lands seconds after the submission is seen waiting, so
-    // the link's new expiry is later than any time the submission read
-    // before it began to wait. A check against such a time would still let
-    // the link through.
-    const waitingAt = Math.floor(Date.now() / 1000);
-    while (Math.floor(Date.now() / 1000) < waitingAt + 2) {
-      await new Promise((resolve) => setTimeout(resolve, 100));
+    try {
+      await remover.query("begin");
+      await remover.query(`select id from signers where id = $1 for update`, [
+        signerId,
+      ]);
+      submitted = submitSigningForToken(
+        token,
+        {
+          clientTimezoneOffsetMinutes: 0,
+          fields: [
+            {
+              fieldId: field.rows[0]!.id,
+              imageDataUrl: DRAWN_SIGNATURE,
+              inputMethod: "drawn",
+              type: "signature",
+            },
+          ],
+        },
+        { database },
+      );
+      // Handled at once, so a failure before it waits is reported below
+      // instead of as an unhandled rejection.
+      submitted.catch(() => undefined);
+
+      await waitUntilBlockedBy(database, remover);
+
+      // The removal lands seconds after the submission is seen waiting, so
+      // the link's new expiry is later than any time the submission read
+      // before it began to wait. A check against such a time would still let
+      // the link through.
+      const waitingAt = Math.floor(Date.now() / 1000);
+      while (Math.floor(Date.now() / 1000) < waitingAt + 2) {
+        await new Promise((resolve) => setTimeout(resolve, 100));
+      }
+
+      await remover.query(
+        `update signers set signing_token_expires_at = $2 where id = $1`,
+        [signerId, Math.floor(Date.now() / 1000) - 1],
+      );
+      await remover.query("commit");
+    } finally {
+      await remover.query("rollback").catch(() => undefined);
+      await submitted?.catch(() => undefined);
+      remover.release();
     }
 
-    await remover.query(
-      `update signers set signing_token_expires_at = $2 where id = $1`,
-      [signerId, Math.floor(Date.now() / 1000) - 1],
+    await assert.rejects(
+      submitted!,
+      (error: unknown) =>
+        error instanceof SigningMutationError && error.statusCode === 409,
     );
-    await remover.query("commit");
-  } finally {
-    await remover.query("rollback").catch(() => undefined);
-    await submitted?.catch(() => undefined);
-    remover.release();
-  }
 
-  await assert.rejects(
-    submitted!,
-    (error: unknown) =>
-      error instanceof SigningMutationError && error.statusCode === 409,
-  );
+    const signer = await database.query<{ status: string }>(
+      `select status from signers where id = $1`,
+      [signerId],
+    );
 
-  const signer = await database.query<{ status: string }>(
-    `select status from signers where id = $1`,
-    [signerId],
-  );
-
-  assert.equal(signer.rows[0]?.status, "notified");
-});
+    assert.equal(signer.rows[0]?.status, "notified");
+  },
+);
 
 test("the evidence names the key that asked for the link, not the one that made the envelope", async () => {
   const admin = await createAdmin();

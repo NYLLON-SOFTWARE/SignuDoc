@@ -8,10 +8,10 @@ import { after, before, test } from "node:test";
 import { promisify } from "node:util";
 
 import { PDFDocument, StandardFonts } from "pdf-lib";
-import pg from "pg";
+import type pg from "pg";
 
 import { replaceDbPoolForTests } from "./db/connection.ts";
-import { openTestDatabase } from "./db/test-database.ts";
+import { openAnotherPool, openTestDatabase } from "./db/test-database.ts";
 import { ELECTRONIC_RECORDS_DISCLOSURE_VERSION } from "./electronic-records-disclosure.ts";
 import {
   EnvelopeMutationError,
@@ -847,9 +847,7 @@ test("two submissions by the last signer at once finish the envelope once, and k
 test("the last signature needs no second connection while it holds the envelope", async () => {
   // A pool of one connection: anything that needed another one while the
   // envelope is locked would wait for it, and give up after 3 seconds.
-  const single = new pg.Pool({
-    connectionString: (database as unknown as { options: pg.PoolConfig })
-      .options.connectionString,
+  const single = openAnotherPool(database, {
     connectionTimeoutMillis: 3000,
     max: 1,
   });

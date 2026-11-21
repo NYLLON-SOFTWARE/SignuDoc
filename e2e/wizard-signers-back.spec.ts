@@ -1,7 +1,7 @@
 import { expect, test } from "@playwright/test";
-import pg from "pg";
 
 import { e2eDatabaseUrl } from "../playwright.config";
+import { openE2eClient } from "./support/database";
 import { signInAsAdministrator } from "./support/admin-session";
 import { writeSamplePdf } from "./support/sample-pdf";
 
@@ -9,7 +9,7 @@ import { writeSamplePdf } from "./support/sample-pdf";
 // administrator.
 
 async function countDrafts(title: string): Promise<number> {
-  const database = new pg.Client({ connectionString: e2eDatabaseUrl });
+  const database = openE2eClient(e2eDatabaseUrl);
 
   await database.connect();
 
