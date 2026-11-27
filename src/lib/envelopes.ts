@@ -122,7 +122,6 @@ import {
   THUMBNAIL_CONTENT_TYPE,
 } from "./services/thumbnails.ts";
 import {
-  formatReminderAvailableAt,
   getManualNudgeAvailableAt,
   isManualNudgeAvailable,
 } from "./services/reminders.ts";
@@ -444,6 +443,10 @@ export type PrepareEnvelopeData = {
   title: string;
 };
 
+// The envelope page. Every time in these is the moment itself, in Unix
+// seconds: the page writes it out in the reader's own time zone
+// (src/lib/local-time.ts).
+
 export type EnvelopeDetailSignerView = {
   email: string;
   id: string;
@@ -453,34 +456,37 @@ export type EnvelopeDetailSignerView = {
   /** An approver's "signed" is an approval and "declined" a rejection. */
   role: RecipientRole;
   status: "declined" | "pending" | "signed" | "waiting";
-  statusDateLabel?: string;
+  /** What last happened with this signer, such as "Signed", and when. */
+  statusDetail?: { label: string; timestamp?: number };
   /** The step of the signing order; signers who share one sign together. */
   step: number;
 };
 
 export type EnvelopeDetailTimelineItem = {
+  /** The new deadline, when the event is a change of deadline. */
+  deadlineAt?: number;
   description: string;
   id: string;
-  timestamp: string;
+  timestamp: number;
   tone: "accent" | "danger" | "neutral" | "success";
 };
 
 export type EnvelopeDetailManualReminderState = {
   canSend: boolean;
-  nextAvailableAtLabel: string | null;
+  nextAvailableAt: number | null;
 };
 
 export type EnvelopeDetailDeadline = {
   /** True once the deadline has passed and nobody can sign any more. */
   expired: boolean;
   /** Null for an envelope sent before deadlines existed. */
-  expiresAtLabel: string | null;
+  expiresAt: number | null;
 };
 
 export type EnvelopeDetailData = {
   /** People who get a copy of the finished document without signing. */
   copyRecipients: readonly CopyRecipientRecord[];
-  createdAtLabel: string;
+  createdAt: number;
   /** Set while the envelope is out for signature. */
   deadline: EnvelopeDetailDeadline | null;
   /** Days between automatic reminders while it is out. Null when off. */
@@ -622,21 +628,6 @@ const shortDateFormatter = new Intl.DateTimeFormat("en-US", {
   month: "short",
   timeZone: "UTC",
   year: "numeric",
-});
-
-const longDateFormatter = new Intl.DateTimeFormat("en-US", {
-  day: "numeric",
-  month: "long",
-  timeZone: "UTC",
-  year: "numeric",
-});
-
-const timelineDateFormatter = new Intl.DateTimeFormat("en-US", {
-  day: "numeric",
-  hour: "numeric",
-  minute: "2-digit",
-  month: "short",
-  timeZone: "UTC",
 });
 
 export async function createDraftEnvelope(
@@ -1194,14 +1185,6 @@ function pluralize(count: number, singular: string, plural = `${singular}s`) {
 
 function formatShortDate(timestamp: number): string {
   return shortDateFormatter.format(new Date(timestamp * 1000));
-}
-
-function formatLongDate(timestamp: number): string {
-  return longDateFormatter.format(new Date(timestamp * 1000));
-}
-
-function formatTimelineTimestamp(timestamp: number): string {
-  return timelineDateFormatter.format(new Date(timestamp * 1000));
 }
 
 function formatFileSize(sizeBytes: number): string {
@@ -1914,39 +1897,47 @@ function buildTimelineDescription(event: AuditEventRecord): string {
   }
 }
 
-function buildDetailSignerStatusLabel(
+function buildDetailSignerStatusDetail(
   envelope: EnvelopeRecord,
   signer: PersistedSignerRecord,
   previousSignerName?: string,
-): string | undefined {
+): EnvelopeDetailSignerView["statusDetail"] {
   const approver = signer.role === "approver";
 
   if (signer.status === "signed" && signer.signedAt) {
-    return `${approver ? "Approved" : "Signed"} ${formatShortDate(signer.signedAt)}`;
+    return {
+      label: approver ? "Approved" : "Signed",
+      timestamp: signer.signedAt,
+    };
   }
 
   if (signer.status === "declined" && signer.declinedAt) {
-    return `${approver ? "Rejected" : "Declined"} ${formatShortDate(signer.declinedAt)}`;
+    return {
+      label: approver ? "Rejected" : "Declined",
+      timestamp: signer.declinedAt,
+    };
   }
 
   if (signer.status === "notified") {
     const sentAt = signer.lastNotifiedAt ?? signer.turnStartedAt;
     if (envelope.status === "voided") {
       return sentAt
-        ? `Notified ${formatShortDate(sentAt)}`
-        : "Notified before void";
+        ? { label: "Notified", timestamp: sentAt }
+        : { label: "Notified before void" };
     }
 
-    return sentAt ? `Sent ${formatShortDate(sentAt)}` : undefined;
+    return sentAt ? { label: "Sent", timestamp: sentAt } : undefined;
   }
 
   if (envelope.status === "draft") {
-    return previousSignerName
-      ? `Ready to notify after ${previousSignerName}`
-      : "Ready to notify after send";
+    return {
+      label: previousSignerName
+        ? `Ready to notify after ${previousSignerName}`
+        : "Ready to notify after send",
+    };
   }
 
-  return "No notification sent";
+  return { label: "No notification sent" };
 }
 
 function buildDetailSignerMetaLabel(
@@ -2255,9 +2246,15 @@ export async function getEnvelopeDetailDataForUser(
     ),
   );
   const timeline = auditEvents.map((event) => ({
+    // The page writes the new deadline in the reader's time zone, in place
+    // of the UTC one in the description.
+    ...(event.event === "deadline_changed" &&
+    typeof event.metadata?.expiresAt === "number"
+      ? { deadlineAt: event.metadata.expiresAt }
+      : {}),
     description: buildTimelineDescription(event),
     id: event.id,
-    timestamp: formatTimelineTimestamp(event.createdAt),
+    timestamp: event.createdAt,
     tone: TIMELINE_TONE_MAP[event.event],
   }));
 
@@ -2294,7 +2291,7 @@ export async function getEnvelopeDetailDataForUser(
       order: signer.signOrder,
       role: signer.role ?? "signer",
       status: signerStatus,
-      statusDateLabel: buildDetailSignerStatusLabel(
+      statusDetail: buildDetailSignerStatusDetail(
         envelope,
         signer,
         previousSignerName,
@@ -2315,7 +2312,7 @@ export async function getEnvelopeDetailDataForUser(
 
   if (envelope.status === "sent" && waitingSigners.length > 0 && expired) {
     // A reminder would carry a link that no longer works.
-    manualReminder = { canSend: false, nextAvailableAtLabel: null };
+    manualReminder = { canSend: false, nextAvailableAt: null };
   } else if (envelope.status === "sent" && waitingSigners.length > 0) {
     const canSend = waitingSigners.some((signer) =>
       isManualNudgeAvailable(signer.lastNudgedAt, nowUnixTimestamp),
@@ -2334,25 +2331,16 @@ export async function getEnvelopeDetailDataForUser(
 
     manualReminder = {
       canSend,
-      nextAvailableAtLabel:
-        !canSend && typeof nextAvailableAt === "number"
-          ? formatReminderAvailableAt(nextAvailableAt)
-          : null,
+      nextAvailableAt: canSend ? null : nextAvailableAt,
     };
   }
 
   return {
     copyRecipients,
-    createdAtLabel: formatLongDate(envelope.createdAt),
+    createdAt: envelope.createdAt,
     deadline:
       envelope.status === "sent"
-        ? {
-            expired,
-            expiresAtLabel:
-              typeof envelope.expiresAt === "number"
-                ? formatDeadline(envelope.expiresAt)
-                : null,
-          }
+        ? { expired, expiresAt: envelope.expiresAt ?? null }
         : null,
     envelopeId,
     reminderIntervalDays:

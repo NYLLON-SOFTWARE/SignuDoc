@@ -15,6 +15,7 @@ import { type ReactNode, useState } from "react";
 
 import { DocumentThumbnail } from "@/components/shared/document-thumbnail";
 import { ShellButton } from "@/components/shared/form-shell";
+import { LocalTime } from "@/components/shared/local-time";
 import { Textarea } from "@/components/ui/textarea";
 import { StatusPanel } from "@/components/shared/status-panel";
 import { SaveTemplateDialog } from "@/components/templates/save-template-dialog";
@@ -39,7 +40,8 @@ import { getSignerPalette } from "./signer-palette";
 
 /** A finished envelope an administrator has scheduled to be deleted. */
 export type EnvelopeDeletionNotice = {
-  deleteOnLabel: string;
+  /** Unix seconds. */
+  deleteAfter: number;
   /** Shown to administrators only. */
   reason: string | null;
   requestedByEmail: string;
@@ -80,14 +82,14 @@ type EnvelopeDetailSigner = {
   /** An approver's "signed" is shown as approved, "declined" as rejected. */
   role?: "approver" | "signer";
   status: SignerStatus;
-  statusDateLabel?: string;
+  statusDetail?: { label: string; timestamp?: number };
   /** Signers who share a step sign at the same time. */
   step?: number;
   tint?: string;
 };
 
 type EnvelopeDetailRecord = {
-  createdAtLabel: string;
+  createdAt: number;
   signers: readonly EnvelopeDetailSigner[];
   status: EnvelopeStatus;
   timeline: readonly EnvelopeDetailTimelineItem[];
@@ -226,7 +228,7 @@ export function EnvelopeDetailShell({
   }
 
   const activeRecord: EnvelopeDetailRecord = {
-    createdAtLabel: record.createdAtLabel,
+    createdAt: record.createdAt,
     signers: record.signers,
     status: record.status,
     timeline: record.timeline,
@@ -240,16 +242,26 @@ export function EnvelopeDetailShell({
     manualReminderState !== null &&
     !manualReminderState.canSend;
   const reminderHelperText =
-    activeRecord.status === "sent" && manualReminderState?.nextAvailableAtLabel
-      ? `You can send another reminder after ${manualReminderState.nextAvailableAtLabel}.`
-      : null;
-  const deadlineText = !deadline
-    ? null
-    : isExpired
-      ? `Expired ${deadline.expiresAtLabel}. Nobody can sign until you set a new deadline.`
-      : deadline.expiresAtLabel
-        ? `Expires ${deadline.expiresAtLabel}.`
-        : "No deadline. Each signing link lasts seven days.";
+    activeRecord.status === "sent" &&
+    typeof manualReminderState?.nextAvailableAt === "number" ? (
+      <>
+        You can send another reminder after{" "}
+        <LocalTime timestamp={manualReminderState.nextAvailableAt} />.
+      </>
+    ) : null;
+  const expiresAt = deadline?.expiresAt ?? null;
+  const deadlineText = !deadline ? null : expiresAt === null ? (
+    "No deadline. Each signing link lasts seven days."
+  ) : isExpired ? (
+    <>
+      Expired <LocalTime timestamp={expiresAt} />. Nobody can sign until you set
+      a new deadline.
+    </>
+  ) : (
+    <>
+      Expires <LocalTime timestamp={expiresAt} />.
+    </>
+  );
   const reminderIntervalDays = record.reminderIntervalDays ?? null;
   const remindersText =
     reminderIntervalDays === null
@@ -615,7 +627,8 @@ export function EnvelopeDetailShell({
                   {isExpired ? "Expired" : statusLabelMap[activeRecord.status]}
                 </span>
                 <p className="text-sm text-(--secondary)">
-                  Created {activeRecord.createdAtLabel}
+                  Created{" "}
+                  <LocalTime format="date" timestamp={activeRecord.createdAt} />
                 </p>
                 {ownerLabel ? (
                   <p className="text-sm text-(--secondary)">
@@ -768,7 +781,11 @@ export function EnvelopeDetailShell({
             role="status"
           >
             <p className="font-semibold">
-              Scheduled to be deleted on {scheduledDeletion.deleteOnLabel}
+              Scheduled to be deleted on{" "}
+              <LocalTime
+                format="date"
+                timestamp={scheduledDeletion.deleteAfter}
+              />
             </p>
             <p className="text-(--secondary)">
               {canDeleteFinished
@@ -945,9 +962,18 @@ export function EnvelopeDetailShell({
                                 ? "Rejected"
                                 : signerStatusLabelMap[signer.status]}
                           </span>
-                          {signer.statusDateLabel ? (
+                          {signer.statusDetail ? (
                             <p className="text-xs text-(--tertiary)">
-                              {signer.statusDateLabel}
+                              {signer.statusDetail.label}
+                              {signer.statusDetail.timestamp !== undefined ? (
+                                <>
+                                  {" "}
+                                  <LocalTime
+                                    format="shortDate"
+                                    timestamp={signer.statusDetail.timestamp}
+                                  />
+                                </>
+                              ) : null}
                             </p>
                           ) : null}
                           {isOwnEnvelope &&
@@ -1033,10 +1059,19 @@ export function EnvelopeDetailShell({
                   />
                 ) : null}
                 <p className="text-[0.8125rem] font-semibold text-(--tertiary)">
-                  {event.timestamp}
+                  <LocalTime
+                    format="shortDateTime"
+                    timestamp={event.timestamp}
+                  />
                 </p>
                 <p className="mt-0.5 text-sm leading-6 text-(--fg)">
-                  {event.description}
+                  {event.deadlineAt === undefined ? (
+                    event.description
+                  ) : (
+                    <>
+                      Deadline set to <LocalTime timestamp={event.deadlineAt} />
+                    </>
+                  )}
                 </p>
               </li>
             ))}

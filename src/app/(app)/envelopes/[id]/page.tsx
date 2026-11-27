@@ -12,13 +12,6 @@ import {
 import { getScheduledEnvelopeDeletion } from "@/lib/envelope-deletion";
 import { getEnvelopeDetailDataForUser } from "@/lib/envelopes";
 
-const deletionDateFormatter = new Intl.DateTimeFormat("en-US", {
-  day: "numeric",
-  month: "long",
-  timeZone: "UTC",
-  year: "numeric",
-});
-
 type EnvelopeDetailPageProps = {
   params: Promise<{
     id: string;
@@ -66,9 +59,7 @@ export default async function EnvelopeDetailPage({
 
     scheduledDeletion = scheduled
       ? {
-          deleteOnLabel: deletionDateFormatter.format(
-            new Date(scheduled.deleteAfter * 1000),
-          ),
+          deleteAfter: scheduled.deleteAfter,
           // Why is for administrators; the sender is told who asked.
           reason: canDeleteFinished ? scheduled.reason : null,
           requestedByEmail: scheduled.requestedByEmail,
