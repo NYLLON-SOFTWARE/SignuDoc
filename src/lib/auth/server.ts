@@ -20,6 +20,7 @@ import { consumeRateLimit } from "../security/rate-limit.ts";
 import {
   getClientIpHeaderNames,
   getRequestClient,
+  readClientIpSettings,
 } from "../security/request.ts";
 import {
   requireConfigValue,
@@ -374,8 +375,12 @@ export function createAppAuth({
       // migrated would refuse every sign-in until it was restarted.
       database: { validateSchema: false },
       // Where the visitor's address is read from, for rate limits and
-      // sessions: the same headers the rest of the app trusts.
-      ipAddress: { ipAddressHeaders: getClientIpHeaderNames(env) },
+      // sessions: the same headers, and the same trusted proxies, the rest
+      // of the app reads (src/lib/security/request.ts).
+      ipAddress: {
+        ipAddressHeaders: getClientIpHeaderNames(env),
+        trustedProxies: readClientIpSettings(env)?.trustedProxies,
+      },
       // Secure cookies whenever the site is served over HTTPS, which is
       // always in production except for a build run on localhost.
       useSecureCookies: baseURL.startsWith("https://"),

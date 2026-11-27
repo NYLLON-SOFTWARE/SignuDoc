@@ -328,6 +328,17 @@ To close the route, set a secret. A caller then has to send `Authorization: Bear
 
 Sign-in, sign-up, password reset, the signing pages, uploads and sending are rate limited per visitor. The counts are kept in the `rate_limits` table in Postgres, so they hold across every instance of the app. On Vercel the visitor's address is read from the header Vercel sets itself, which a visitor cannot forge. If the database cannot be reached, each instance falls back to counting in its own memory.
 
+### The visitor's address away from Vercel
+
+The same address goes into the audit trail with each signature, so it matters that a visitor cannot choose it. Away from Vercel, the app can only learn it from a header your reverse proxy sets, so tell it which one:
+
+- `CLIENT_IP_HEADER`: the header your proxy writes the visitor's address to, replacing whatever the visitor sent. For example `x-real-ip` with nginx's `proxy_set_header X-Real-IP $remote_addr;`, or `cf-connecting-ip` behind Cloudflare.
+- `TRUSTED_PROXIES`: only with `CLIENT_IP_HEADER=x-forwarded-for`. A comma-separated list of your proxies' addresses or CIDR ranges, such as `10.0.0.0/8`. The list is read from its end, passing over these, and the first address left is the visitor. Without it, an X-Forwarded-For holding more than one address is not trusted at all.
+
+Set them, and no other header is read. A value that is not a header name, or a proxy entry that is not an address or range, stops the app with a message rather than being ignored.
+
+Left unset, the app guesses from X-Forwarded-For, CF-Connecting-IP and X-Real-IP in turn, as earlier versions did, and logs a warning once in production. A visitor can send those headers too, so they can then dodge the rate limits and put an address of their choosing in the audit trail. Set `CLIENT_IP_HEADER` on every self-hosted install that faces the internet.
+
 ## Bot protection
 
 The app can use [Vercel BotID](https://vercel.com/docs/botid), an invisible check that a request comes from a real browser, on the requests a script would go for: creating an account, signing in, asking for a password reset or verification email, the contact form and first-run setup.
@@ -358,6 +369,7 @@ Away from Vercel, a few things Vercel does for you are yours to set:
 - `RESEND_API_KEY`, from your Resend account.
 - Files are kept on the machine's disk under `.data/storage` (`STORAGE_LOCAL_DIR` changes where), so that disk must survive restarts. To use a Vercel Blob store from elsewhere, set `BLOB_READ_WRITE_TOKEN`.
 - Leave `EMAIL_DRIVER` unset. The capture driver is for development only.
+- `CLIENT_IP_HEADER`, and `TRUSTED_PROXIES` with X-Forwarded-For, to match your reverse proxy. See [The visitor's address away from Vercel](#the-visitors-address-away-from-vercel).
 
 Self-hosted operators are responsible for:
 

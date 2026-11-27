@@ -49,7 +49,19 @@ function resolveBlobUploadSource() {
   return `${apiUrl.replace(/\/+$/, "")}/`;
 }
 
-function buildContentSecurityPolicy(frameAncestors: string) {
+/**
+ * A fresh value for each request. Next.js reads it from the policy on the
+ * request and puts it on the scripts it writes into the page, so they run
+ * and a script that found its way into the page some other way does not.
+ * https://nextjs.org/docs/app/guides/content-security-policy
+ */
+function createNonce() {
+  const bytes = new Uint8Array(16);
+  crypto.getRandomValues(bytes);
+  return btoa(String.fromCharCode(...bytes));
+}
+
+function buildContentSecurityPolicy(frameAncestors: string, nonce: string) {
   const preview = isVercelPreview();
   const botProtection = process.env.NEXT_PUBLIC_BOTID === "1";
   const directives: Array<[name: string, sources: Array<string | false>]> = [
@@ -97,15 +109,20 @@ function buildContentSecurityPolicy(frameAncestors: string) {
       ],
     ],
     ["worker-src", ["'self'", "blob:"]],
+    // Styles keep 'unsafe-inline': React writes style attributes, which a
+    // nonce cannot cover, and a nonce here would turn 'unsafe-inline' off.
     [
       "style-src",
       ["'self'", "'unsafe-inline'", preview && "https://vercel.live"],
     ],
+    // Scripts from this site, and inline ones only with this request's
+    // nonce. No 'strict-dynamic', so the hosts listed for previews still
+    // count, and the scripts Next.js and BotID load are from 'self'.
     [
       "script-src",
       [
         "'self'",
-        "'unsafe-inline'",
+        `'nonce-${nonce}'`,
         !isProductionEnvironment() && "'unsafe-eval'",
         preview && "https://vercel.live",
       ],
@@ -123,21 +140,14 @@ function buildContentSecurityPolicy(frameAncestors: string) {
 function applySecurityHeaders(
   response: NextResponse,
   pathname: string,
-  searchParams: URLSearchParams,
+  policy: { contentSecurityPolicy: string; frameAncestors: string },
 ) {
-  // Only an embedded signing page may be framed, and only by the site its
-  // link names (see src/lib/embed-origin.ts). Everything else, never.
-  const frameAncestors = frameAncestorsFor(pathname, searchParams);
-
-  response.headers.set(
-    "Content-Security-Policy",
-    buildContentSecurityPolicy(frameAncestors),
-  );
+  response.headers.set("Content-Security-Policy", policy.contentSecurityPolicy);
   response.headers.set("Permissions-Policy", DEFAULT_PERMISSIONS_POLICY);
   response.headers.set("Referrer-Policy", "strict-origin-when-cross-origin");
   response.headers.set("X-Content-Type-Options", "nosniff");
 
-  if (frameAncestors === "'none'") {
+  if (policy.frameAncestors === "'none'") {
     response.headers.set("X-Frame-Options", "DENY");
   }
 
@@ -177,10 +187,26 @@ function applySecurityHeaders(
 
 export function proxy(request: NextRequest) {
   const pathname = request.nextUrl.pathname;
-  return applySecurityHeaders(
-    NextResponse.next(),
+  // Only an embedded signing page may be framed, and only by the site its
+  // link names (see src/lib/embed-origin.ts). Everything else, never.
+  const frameAncestors = frameAncestorsFor(
     pathname,
     request.nextUrl.searchParams,
+  );
+  const contentSecurityPolicy = buildContentSecurityPolicy(
+    frameAncestors,
+    createNonce(),
+  );
+
+  // The policy goes on the request too: that is where Next.js finds the
+  // nonce while it renders the page.
+  const requestHeaders = new Headers(request.headers);
+  requestHeaders.set("Content-Security-Policy", contentSecurityPolicy);
+
+  return applySecurityHeaders(
+    NextResponse.next({ request: { headers: requestHeaders } }),
+    pathname,
+    { contentSecurityPolicy, frameAncestors },
   );
 }
 

@@ -1,5 +1,10 @@
 import { isIP } from "node:net";
 
+import {
+  findInvalidTrustedProxies,
+  getIPFromHeader,
+} from "@better-auth/core/utils/ip";
+
 type IpEnv = Record<string, string | undefined>;
 
 function firstAddress(value: string | null): string | null {
@@ -65,21 +70,100 @@ function forwardedForAddress(value: string | null): string | null {
 }
 
 /**
+ * Which header an install's own reverse proxy writes the visitor's address
+ * to, read from CLIENT_IP_HEADER, and for an X-Forwarded-For list the
+ * proxies (TRUSTED_PROXIES, addresses or CIDR ranges) whose entries at its
+ * end are passed over. Null when the install has not said, and always on
+ * Vercel, whose own header is trusted instead.
+ *
+ * A value that cannot be right throws, so a typo stops the app with a
+ * message instead of leaving it reading headers anyone can send.
+ */
+export type ClientIpSettings = { header: string; trustedProxies: string[] };
+
+const HEADER_NAME_PATTERN = /^[a-z0-9-]+$/;
+
+export function readClientIpSettings(
+  env: IpEnv = process.env,
+): ClientIpSettings | null {
+  if (env.VERCEL === "1") {
+    return null;
+  }
+
+  const header = env.CLIENT_IP_HEADER?.trim().toLowerCase();
+  const trustedProxies = (env.TRUSTED_PROXIES ?? "")
+    .split(",")
+    .map((entry) => entry.trim())
+    .filter(Boolean);
+
+  if (!header) {
+    if (trustedProxies.length > 0) {
+      throw new Error(
+        "TRUSTED_PROXIES is set but CLIENT_IP_HEADER is not. Set CLIENT_IP_HEADER to the header your reverse proxy writes the visitor's address to.",
+      );
+    }
+
+    return null;
+  }
+
+  if (!HEADER_NAME_PATTERN.test(header)) {
+    throw new Error(
+      `CLIENT_IP_HEADER must be a header name, such as x-real-ip or x-forwarded-for, not "${header}".`,
+    );
+  }
+
+  const invalid = findInvalidTrustedProxies(trustedProxies);
+
+  if (invalid.length > 0) {
+    throw new Error(
+      `TRUSTED_PROXIES must list addresses or CIDR ranges. These are neither: ${invalid.join(", ")}.`,
+    );
+  }
+
+  return { header, trustedProxies };
+}
+
+let warnedUnconfigured = false;
+
+/**
+ * Said once per process, in production away from Vercel, while the install
+ * still guesses the visitor's address from headers a visitor can also send.
+ */
+function warnUnconfiguredOnce(env: IpEnv) {
+  if (warnedUnconfigured || env.NODE_ENV !== "production") {
+    return;
+  }
+
+  warnedUnconfigured = true;
+  console.warn(
+    "[security] CLIENT_IP_HEADER is not set, so visitors' addresses are guessed from X-Forwarded-For, CF-Connecting-IP and X-Real-IP, which a visitor can also send. Rate limits can then be dodged and the audit trail can record a forged address. Set CLIENT_IP_HEADER (and TRUSTED_PROXIES for X-Forwarded-For) to match your reverse proxy; see docs/self-hosting.md.",
+  );
+}
+
+/**
  * The headers that carry the visitor's address, most trustworthy first.
  *
  * On Vercel, x-vercel-forwarded-for and x-real-ip are written by Vercel
  * itself and cannot be set by the visitor, so they come first.
  * https://vercel.com/docs/headers/request-headers
  *
- * Anywhere else those two names mean nothing special and anyone could send
- * them, so the usual proxy headers are used instead. There the app has to
- * sit behind a reverse proxy that sets them: X-Forwarded-For is read from
- * its end (see forwardedForAddress), so what a visitor puts at its start
- * does not count.
+ * Anywhere else, with CLIENT_IP_HEADER set, that one header and nothing
+ * else: the install's proxy writes it over whatever the visitor sent.
+ *
+ * Without it, those names mean nothing special and anyone could send them,
+ * so the usual proxy headers are tried in turn. X-Forwarded-For is read
+ * from its end (see forwardedForAddress), so what a visitor puts at its
+ * start does not count, but a visitor can still send the other two.
  */
 export function getClientIpHeaderNames(env: IpEnv = process.env): string[] {
-  return env.VERCEL === "1"
-    ? ["x-vercel-forwarded-for", "x-real-ip", "x-forwarded-for"]
+  if (env.VERCEL === "1") {
+    return ["x-vercel-forwarded-for", "x-real-ip", "x-forwarded-for"];
+  }
+
+  const settings = readClientIpSettings(env);
+
+  return settings
+    ? [settings.header]
     : ["x-forwarded-for", "cf-connecting-ip", "x-real-ip"];
 }
 
@@ -88,6 +172,26 @@ export function getClientIpAddress(
   env: IpEnv = process.env,
 ): string | null {
   const offVercel = env.VERCEL !== "1";
+  const settings = readClientIpSettings(env);
+
+  if (settings) {
+    const value = headers.get(settings.header);
+
+    // Better Auth's reading of the same header, so the app's own rate
+    // limits and audit records name the same visitor its sign-in limits
+    // do. A list is walked from its end past the trusted proxies; a single
+    // value must be one address. Full IPv6 addresses, for the audit trail.
+    return value
+      ? getIPFromHeader(value, {
+          ipv6Subnet: 128,
+          trustedProxies: settings.trustedProxies,
+        })
+      : null;
+  }
+
+  if (offVercel) {
+    warnUnconfiguredOnce(env);
+  }
 
   for (const name of getClientIpHeaderNames(env)) {
     const address =
