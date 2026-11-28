@@ -51,6 +51,13 @@ replace the licenses for redistributed third-party files.
 - **License:** SIL Open Font License 1.1
 - **License text already bundled at:** `public/pdfjs/5.5.207/standard_fonts/LICENSE_LIBERATION`
 
+### 7. HarfBuzz WebAssembly subsetter
+
+- **Bundled by:** `harfbuzzjs` (runtime asset `dist/harfbuzz-subset.wasm`)
+- **Source project:** [HarfBuzz](https://github.com/harfbuzz/harfbuzz/tree/35f656a1a2bab548ea7f54a6dd3fba2b09680d14)
+- **License:** Old MIT
+- **Full license text:** `LICENSES/HarfBuzz-COPYING.txt`
+
 ## Notes
 
 - Include this file and the referenced license texts in release archives and other redistributions of the repository contents.

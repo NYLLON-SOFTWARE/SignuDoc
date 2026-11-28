@@ -11,6 +11,11 @@ const { version } = JSON.parse(readFileSync("./package.json", "utf8")) as {
 };
 
 const nextConfig: NextConfig = {
+  ...(process.env.NEXT_STANDALONE === "1" && {
+    output: "standalone",
+    // A 20 MiB PDF needs room for multipart overhead through Next's proxy.
+    experimental: { proxyClientMaxBodySize: "25mb" },
+  }),
   env: {
     NEXT_PUBLIC_SIGNUDOC_VERSION: version,
     // Whether Vercel BotID is on, decided once at build time so the browser

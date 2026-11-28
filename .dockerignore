@@ -1,0 +1,19 @@
+# Build from source and the lockfile, without local data, credentials or builds.
+**
+!package.json
+!package-lock.json
+!LICENSE
+!THIRD_PARTY_NOTICES.md
+!LICENSES/
+!LICENSES/Apache-2.0.txt
+!LICENSES/HarfBuzz-COPYING.txt
+!next.config.ts
+!postcss.config.mjs
+!tsconfig.json
+!db/
+!db/**
+!public/
+!public/**
+!src/
+!src/**
+**/.env*
