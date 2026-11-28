@@ -984,10 +984,59 @@ function describeEmailStatus(status: EmailStatus): {
         ready: true,
         title: "Email is working",
       };
+    case "mailgun":
+      return describeMailgunStatus(status);
     case "error":
       return {
         lines: [
           `Resend could not be asked about this site's email: ${status.message}`,
+        ],
+        ready: false,
+        title: "Email could not be checked",
+      };
+  }
+}
+
+function describeMailgunStatus(
+  status: Extract<EmailStatus, { state: "mailgun" }>,
+): { lines: string[]; ready: boolean; title: string } {
+  switch (status.problem) {
+    case "config":
+      return {
+        lines: [
+          `EMAIL_DRIVER is mailgun, but its settings are incomplete: ${status.message ?? ""}`.trim(),
+        ],
+        ready: false,
+        title: "Mailgun is not configured",
+      };
+    case "no_sender":
+      return {
+        lines: [
+          `This site sends through Mailgun from its domain ${status.domain}. Enter an address at that domain in "Send email from" above and save.`,
+        ],
+        ready: false,
+        title: "Email needs a sender address",
+      };
+    case "wrong_domain":
+      return {
+        lines: [
+          `Mailgun sends this site's email from ${status.domain}, but "Send email from" is ${status.senderAddress ?? "empty"}. Use an address at ${status.domain}.`,
+        ],
+        ready: false,
+        title: "Sender address is not at the Mailgun domain",
+      };
+    case "unverified":
+      return {
+        lines: [
+          `Mailgun has not verified ${status.domain} yet. Finish its DNS records in Mailgun's dashboard, then reload this page.`,
+        ],
+        ready: false,
+        title: "Finish the domain in Mailgun",
+      };
+    case "error":
+      return {
+        lines: [
+          `Mailgun could not be asked about this site's email: ${status.message ?? "no answer"}`,
         ],
         ready: false,
         title: "Email could not be checked",

@@ -355,9 +355,9 @@ Away from Vercel, a few things Vercel does for you are yours to set:
 - `DATABASE_URL`, pointing at your Postgres. Run `npm run db:migrate` on every deploy; it only applies what is new.
 - `APP_URL`, the site's public HTTPS address.
 - `BETTER_AUTH_SECRET`, at least 32 characters (`openssl rand -hex 32`). Without it a secret is derived from the database password, which must then be at least 12 characters long.
-- `RESEND_API_KEY`, from your Resend account.
+- `RESEND_API_KEY`, from your Resend account. To send through Mailgun instead, set `EMAIL_DRIVER=mailgun`, `MAILGUN_API_KEY`, `MAILGUN_DOMAIN` (the sending domain in Mailgun; "Send email from" must be an address at it) and, for a domain in Mailgun's EU region, `MAILGUN_REGION=eu`. Settings, Organization checks the domain with Mailgun. Mailgun has no idempotency key, so a send retried after a lost answer can arrive twice.
 - Files are kept on the machine's disk under `.data/storage` (`STORAGE_LOCAL_DIR` changes where), so that disk must survive restarts. To use a Vercel Blob store from elsewhere, set `BLOB_READ_WRITE_TOKEN`.
-- Leave `EMAIL_DRIVER` unset. The capture driver is for development only.
+- Leave `EMAIL_DRIVER` unset (or `mailgun`, above). The capture driver is for development only.
 
 Self-hosted operators are responsible for:
 
