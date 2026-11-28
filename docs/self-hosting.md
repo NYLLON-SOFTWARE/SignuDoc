@@ -324,6 +324,24 @@ To close the route, set a secret. A caller then has to send `Authorization: Bear
 - `CRON_SECRET` is the one to use on Vercel, because Vercel sends it on its own cron calls.
 - `RETENTION_JOB_SECRET` does the same for a scheduler of your own. On Vercel, a deployment that sets only this one turns Vercel's cron call away, so store the secret as `CRON_SECRET` there instead.
 
+## Sender emails
+
+Enable these options independently with the environment variables below. They apply to envelope owners with verified email addresses.
+
+| Setting                                          | What the sender receives                                                                                                                                                    |
+| ------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `SIGNUDOC_EMAIL_SENDER_ACTIVITY=1`               | An email when a recipient first opens the document or finishes a turn while others are still waiting. The final turn is covered by the completion email.                    |
+| `SIGNUDOC_EMAIL_SENDER_DAILY_DIGEST=1`           | Up to one email per UTC day when the sender has documents awaiting a signature or approval. The retention job sends it when called with its configured bearer secret.       |
+| `SIGNUDOC_EMAIL_SENDER_COMPLETION_ATTACHMENTS=1` | The signed PDF attached to the completion email when it fits the provider's size limit. The dashboard link is always included and provides access to the audit certificate. |
+
+For digests on Vercel, set `CRON_SECRET`. For another scheduler, set `RETENTION_JOB_SECRET` and include it in the Authorization header. Large installations can run the job more often during the same UTC day if it reports that the digest ran out of time. A sender who already received a digest that day is skipped.
+
+Signing continues if an activity email fails. The app logs delivery errors and records the activity in the envelope's audit trail.
+
+For requests sent by email, `SIGNUDOC_EMAIL_COPY_ACTIVITY=1` sends copy recipients a notice when the request goes out, is first opened by a recipient, or advances to another turn. `SIGNUDOC_EMAIL_ORDERED_SIGNING_STARTED=1` lets later signers know that the request is underway. Their signing link arrives when their turn begins.
+
+`SIGNUDOC_EMAIL_SENDER_SENT_ATTACHMENT=1` sends the sender a copy of the original PDF when the request goes out. `SIGNUDOC_EMAIL_SIGNER_INVITATION_ATTACHMENT=1` attaches it to each invitation within the provider's attachment limit. Signers who require an access code, an email code, or a Part 11 account open the document through the signing page.
+
 ## Rate limits
 
 Sign-in, sign-up, password reset, the signing pages, uploads and sending are rate limited per visitor. The counts are kept in the `rate_limits` table in Postgres, so they hold across every instance of the app. On Vercel the visitor's address is read from the header Vercel sets itself, which a visitor cannot forge. If the database cannot be reached, each instance falls back to counting in its own memory.

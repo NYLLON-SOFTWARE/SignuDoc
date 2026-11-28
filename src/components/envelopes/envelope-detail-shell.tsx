@@ -29,7 +29,13 @@ import type {
   EnvelopeDetailData,
   EnvelopeDetailTimelineItem,
 } from "@/lib/envelopes";
-import { formatReminderInterval } from "@/lib/services/reminders";
+import {
+  FIXED_REMINDER_SCHEDULE,
+  formatReminderInterval,
+  parseReminderSelection,
+  type ReminderSelection,
+  reminderSelectionOptions,
+} from "@/lib/services/reminders";
 import {
   DEFAULT_ENVELOPE_DEADLINE_DAYS,
   ENVELOPE_DEADLINE_DAY_OPTIONS,
@@ -250,11 +256,12 @@ export function EnvelopeDetailShell({
       : deadline.expiresAtLabel
         ? `Expires ${deadline.expiresAtLabel}.`
         : "No deadline. Each signing link lasts seven days.";
-  const reminderIntervalDays = record.reminderIntervalDays ?? null;
+  const reminderSelection =
+    record.reminderSchedule ?? record.reminderIntervalDays ?? null;
   const remindersText =
-    reminderIntervalDays === null
+    reminderSelection === null
       ? "Automatic reminders are off."
-      : `Automatic reminders: ${formatReminderInterval(reminderIntervalDays).toLowerCase()}.`;
+      : `Automatic reminders: ${formatReminderInterval(reminderSelection).toLowerCase()}.`;
   // The document as it was sent, before anyone signed: while it is out for
   // signature, and once it was declined or voided. A completed envelope
   // has its signed PDF instead.
@@ -377,13 +384,13 @@ export function EnvelopeDetailShell({
     }
   }
 
-  async function handleConfirmChangeReminders(intervalDays: number | null) {
+  async function handleConfirmChangeReminders(selection: ReminderSelection) {
     setActionError(null);
     setIsChangingReminders(true);
 
     try {
       const response = await fetch(`/api/envelopes/${envelopeId}/reminders`, {
-        body: JSON.stringify({ reminderIntervalDays: intervalDays }),
+        body: JSON.stringify(reminderSelectionOptions(selection)),
         headers: { "content-type": "application/json" },
         method: "POST",
       });
@@ -1057,7 +1064,7 @@ export function EnvelopeDetailShell({
       {activeModal === "change-reminders" ? (
         <RemindersDialog
           errorMessage={actionError}
-          initialIntervalDays={reminderIntervalDays}
+          initialSelection={reminderSelection}
           onCancel={() => setActiveModal(null)}
           onConfirm={handleConfirmChangeReminders}
           processing={isChangingReminders}
@@ -1368,27 +1375,26 @@ function DeadlineDialog({
 
 type RemindersDialogProps = {
   errorMessage?: string | null;
-  initialIntervalDays: number | null;
+  initialSelection: ReminderSelection;
   onCancel: () => void;
-  onConfirm: (intervalDays: number | null) => void | Promise<void>;
+  onConfirm: (selection: ReminderSelection) => void | Promise<void>;
   processing?: boolean;
 };
 
 function RemindersDialog({
   errorMessage,
-  initialIntervalDays,
+  initialSelection,
   onCancel,
   onConfirm,
   processing = false,
 }: RemindersDialogProps) {
-  const [intervalDays, setIntervalDays] = useState<number | null>(
-    initialIntervalDays,
-  );
+  const [intervalDays, setIntervalDays] =
+    useState<ReminderSelection>(initialSelection);
   // An interval set some other way than these choices is still offered.
   const options = [
     ...new Set([
       ...ENVELOPE_REMINDER_DAY_OPTIONS,
-      ...(initialIntervalDays === null ? [] : [initialIntervalDays]),
+      ...(typeof initialSelection === "number" ? [initialSelection] : []),
     ]),
   ].sort((left, right) => left - right);
 
@@ -1408,9 +1414,10 @@ function RemindersDialog({
             <DialogDescription asChild>
               <div className="space-y-2 text-sm leading-6 text-(--secondary)">
                 <p>
-                  A reminder goes to the signer whose turn it is when they have
-                  not heard from you for this long. Reminders stop once everyone
-                  has signed or the deadline passes.
+                  Reminders go to the signer whose turn it is. Recurring
+                  reminders count from their last email. Days 3 and 7 count from
+                  the start of their turn. Reminders stop when they sign or the
+                  deadline passes.
                 </p>
               </div>
             </DialogDescription>
@@ -1425,15 +1432,14 @@ function RemindersDialog({
               className="field-input"
               disabled={processing}
               onChange={(event) =>
-                setIntervalDays(
-                  event.target.value === "off"
-                    ? null
-                    : Number(event.target.value),
-                )
+                setIntervalDays(parseReminderSelection(event.target.value))
               }
               value={intervalDays ?? "off"}
             >
               <option value="off">{formatReminderInterval(null)}</option>
+              <option value={FIXED_REMINDER_SCHEDULE}>
+                {formatReminderInterval(FIXED_REMINDER_SCHEDULE)}
+              </option>
               {options.map((option) => (
                 <option key={option} value={option}>
                   {formatReminderInterval(option)}

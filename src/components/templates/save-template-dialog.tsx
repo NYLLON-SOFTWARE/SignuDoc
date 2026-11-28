@@ -3,6 +3,7 @@
 import { useId, useState, type FormEvent } from "react";
 
 import { ShellButton } from "@/components/shared/form-shell";
+import { InvitationCopyFields } from "@/components/shared/invitation-copy-fields";
 import {
   Dialog,
   DialogContent,
@@ -11,6 +12,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { MAX_TEMPLATE_ROLE_NAME_LENGTH } from "@/lib/schemas/template";
+import type { InvitationCopy } from "@/lib/schemas/invitation";
 
 type SaveTemplateDialogProps = {
   envelopeId: string;
@@ -41,6 +43,10 @@ export function SaveTemplateDialog({
 }: SaveTemplateDialogProps) {
   const formId = useId();
   const [name, setName] = useState(initialName);
+  const [invitation, setInvitation] = useState<InvitationCopy>({
+    subject: null,
+    message: null,
+  });
   const [roleNames, setRoleNames] = useState(() =>
     signers.map((_, index) => `Signer ${String(index + 1)}`),
   );
@@ -68,7 +74,7 @@ export function SaveTemplateDialog({
 
     try {
       const response = await fetch(`/api/envelopes/${envelopeId}/template`, {
-        body: JSON.stringify({ name, roleNames: trimmedRoleNames }),
+        body: JSON.stringify({ invitation, name, roleNames: trimmedRoleNames }),
         headers: { "content-type": "application/json" },
         method: "POST",
       });
@@ -99,7 +105,10 @@ export function SaveTemplateDialog({
         }
       }}
     >
-      <DialogContent className="max-w-lg sm:p-8" showCloseButton={false}>
+      <DialogContent
+        className="max-h-[90dvh] max-w-lg overflow-y-auto sm:p-8"
+        showCloseButton={false}
+      >
         <form className="space-y-5" onSubmit={handleSubmit}>
           <DialogHeader className="space-y-3">
             <DialogTitle>Save as a template</DialogTitle>
@@ -179,6 +188,12 @@ export function SaveTemplateDialog({
               </p>
             ) : null}
           </fieldset>
+
+          <InvitationCopyFields
+            disabled={isSaving}
+            onChange={setInvitation}
+            value={invitation}
+          />
 
           {errorMessage ? (
             <div className="notice notice-danger" role="alert">

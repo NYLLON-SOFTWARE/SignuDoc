@@ -60,7 +60,7 @@ For documents that need more than an email link, ask a signer for an access code
 
 ### Follow every envelope
 
-The dashboard shows each document as a card with its first page, its status (draft, sent, completed, declined, voided or expired) and who it waits on, with search and a status filter. Each envelope has its own signing deadline, from 3 to 90 days, which you can change while it is out, and automatic reminders every 1, 2, 3 or 7 days, on top of the reminder you can send by hand. If a signer's email address was wrong, correct it after sending: the old link stops working and the new address gets a fresh invitation. A finished envelope can be copied into a new draft with the same document, signers and fields.
+The dashboard shows each document as a card with its first page, its status (draft, sent, completed, declined, voided or expired) and who it waits on, with search and a status filter. Each envelope has its own signing deadline, from 3 to 90 days, which you can change while it is out. Automatic reminders can repeat every 1, 2, 3 or 7 days, or go out on days 3 and 7 of each signer's turn. You can also send a reminder by hand. If a signer's email address was wrong, correct it after sending: the old link stops working and the new address gets a fresh invitation. A finished envelope can be copied into a new draft with the same document, signers and fields.
 
 ![The dashboard: the Mine and Everyone's switch, and six documents as cards, with drafts, a sent offer letter, an NDA one of two signed, and completed agreements](docs/images/dashboard.png)
 

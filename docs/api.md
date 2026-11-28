@@ -164,7 +164,9 @@ Things to know:
   business agreement and not one of the kinds of document that the law does
   not let be signed electronically (see `/electronic-signatures` on your
   install). `expiresInDays` (1 to 365) and `reminderIntervalDays` (1 to 30)
-  are as in the web app, and `signatureLevel` is `advanced` or `qualified` on
+  are as in the web app. Set `"reminderSchedule": "days_3_and_7"` to remind
+  each waiting signer on days 3 and 7 of their turn. The fixed schedule takes
+  precedence over `reminderIntervalDays`. `signatureLevel` is `advanced` or `qualified` on
   installs with a signing provider. `"delivery": "embedded"` sends no
   emails and has your app show the signing page instead (see
   [Embedded signing](#embedded-signing)); the default is `"email"`.

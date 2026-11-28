@@ -62,6 +62,32 @@ test("a template can have as many roles as the ceiling allows", () => {
   );
 });
 
+test("a template accepts plain-text email copy and a single-line subject", () => {
+  const input = {
+    name: "Lease",
+    invitation: { subject: " Please sign ", message: " " },
+  };
+
+  assert.deepEqual(saveTemplateSchema.parse(input).invitation, {
+    subject: "Please sign",
+    message: null,
+  });
+  assert.equal(
+    saveTemplateSchema.safeParse({
+      ...input,
+      invitation: { subject: "Please sign\r\nBcc: other@example.test" },
+    }).success,
+    false,
+  );
+  assert.equal(
+    saveTemplateSchema.safeParse({
+      ...input,
+      invitation: { message: "x".repeat(2001) },
+    }).success,
+    false,
+  );
+});
+
 test("using a template takes a title and one person for each signer", () => {
   const parsed = useTemplateSchema.parse({
     // Anything else about a signer is set on the draft afterwards.

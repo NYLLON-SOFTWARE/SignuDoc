@@ -4,6 +4,8 @@ import { ReviewShell } from "@/components/envelopes/review-shell";
 import { getAuthSession } from "@/lib/auth/server";
 import { getDb } from "@/lib/db/connection";
 import { getReviewEnvelopeDataForUser } from "@/lib/envelopes";
+import { readInvitationCopy } from "@/lib/invitation-copy";
+import type { InvitationCopy } from "@/lib/schemas/invitation";
 
 type ReviewPageProps = {
   params: Promise<{
@@ -16,6 +18,7 @@ export default async function ReviewPage({ params }: ReviewPageProps) {
   let reviewRecord: Awaited<ReturnType<typeof getReviewEnvelopeDataForUser>> =
     null;
   let initialState: "error" | undefined;
+  let invitation: InvitationCopy | undefined;
 
   try {
     const session = await getAuthSession();
@@ -24,6 +27,9 @@ export default async function ReviewPage({ params }: ReviewPageProps) {
     reviewRecord = session
       ? await getReviewEnvelopeDataForUser(session.user.id, id, database)
       : null;
+    if (reviewRecord?.status === "draft") {
+      invitation = await readInvitationCopy(id, database);
+    }
   } catch {
     initialState = "error";
   }
@@ -42,6 +48,7 @@ export default async function ReviewPage({ params }: ReviewPageProps) {
     <ReviewShell
       envelopeId={id}
       initialState={initialState}
+      initialInvitation={invitation}
       key={id}
       record={reviewRecord ?? undefined}
     />

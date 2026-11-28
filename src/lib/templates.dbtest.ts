@@ -19,6 +19,7 @@ import {
   replaceDraftEnvelopeFields,
   replaceDraftEnvelopeSigners,
 } from "./envelopes.ts";
+import { readInvitationCopy } from "./invitation-copy.ts";
 import { runRetentionSweep } from "./retention.ts";
 import { buildTemplatePdfKey } from "./services/storage-keys.ts";
 import {
@@ -33,6 +34,7 @@ import {
   MAX_TEMPLATES_PER_USER,
   saveEnvelopeAsTemplate,
   TemplateError,
+  updateTemplateInvitation,
 } from "./templates.ts";
 
 // Templates against a real Postgres and real files: what a template keeps
@@ -207,6 +209,75 @@ test("a template keeps the document, the fields and the order, and no one's name
   assert.deepEqual(
     form?.roles.map((role) => role.name),
     ["Tenant", "Landlord"],
+  );
+});
+
+test("a template's updated invitation defaults are copied only into new drafts", async () => {
+  const userId = await createUser();
+  const otherUserId = await createUser();
+  const { envelopeId } = await createPreparedDraft(userId);
+  const options = { database, storageService };
+  const invitation = {
+    subject: "Please sign the lease",
+    message: "Please review the document before signing.\nThank you.",
+  };
+  const template = await saveEnvelopeAsTemplate(
+    userId,
+    envelopeId,
+    { name: "Lease", invitation },
+    options,
+  );
+  const people = {
+    signers: [
+      { email: "tess@example.test", name: "Tess Tenant" },
+      { email: "lou@example.test", name: "Lou Landlord" },
+    ],
+    title: "Lease",
+  };
+  const first = await createDraftFromTemplate(
+    userId,
+    template.id,
+    people,
+    options,
+  );
+
+  await assert.rejects(
+    updateTemplateInvitation(
+      otherUserId,
+      template.id,
+      { message: null },
+      database,
+    ),
+    (error: unknown) =>
+      error instanceof TemplateError && error.statusCode === 404,
+  );
+  await updateTemplateInvitation(
+    userId,
+    template.id,
+    { message: "Updated invitation." },
+    database,
+  );
+  const second = await createDraftFromTemplate(
+    userId,
+    template.id,
+    { ...people, invitation: { subject: null } },
+    options,
+  );
+
+  assert.deepEqual(
+    await readInvitationCopy(first.envelopeId, database),
+    invitation,
+  );
+  assert.deepEqual(await readInvitationCopy(second.envelopeId, database), {
+    subject: null,
+    message: "Updated invitation.",
+  });
+  assert.deepEqual(
+    (await listTemplatesForUser(userId, database))[0]?.invitation,
+    {
+      subject: invitation.subject,
+      message: "Updated invitation.",
+    },
   );
 });
 

@@ -5,7 +5,11 @@ import {
   signatureMeanings,
 } from "../types/domain.ts";
 import { emailSchema, nameSchema } from "./common.ts";
-import { deadlineDaysSchema, reminderIntervalDaysSchema } from "./envelope.ts";
+import {
+  deadlineDaysSchema,
+  reminderIntervalDaysSchema,
+  reminderScheduleSchema,
+} from "./envelope.ts";
 import { duplicateCopyRecipientEmailMessage } from "./signer.ts";
 
 /** Enough for 200 rows with names, addresses and a title. */
@@ -46,6 +50,7 @@ export const bulkSendRequestSchema = z.object({
   expiresInDays: deadlineDaysSchema.optional(),
   permittedUseConfirmed: z.boolean().optional(),
   reminderIntervalDays: reminderIntervalDaysSchema.optional(),
+  reminderSchedule: reminderScheduleSchema.optional(),
   requireEmailCode: z.boolean().optional(),
   signatureMeaning: z.enum(signatureMeanings).nullable().optional(),
 });

@@ -4,6 +4,7 @@ import { requireVerifiedSenderSession } from "@/lib/auth/route-session";
 import { getDb } from "@/lib/db/connection";
 import { EnvelopeMutationError, sendDraftEnvelope } from "@/lib/envelopes";
 import { sendEnvelopeOptionsSchema } from "@/lib/schemas/envelope";
+import { invitationCopySchema } from "@/lib/schemas/invitation";
 import { logRouteError } from "@/lib/security/logging";
 import {
   applyRateLimit,
@@ -24,8 +25,10 @@ type EnvelopeSendRouteContext = {
 type SendEnvelopeRequest = {
   expiresInDays?: unknown;
   reminderIntervalDays?: unknown;
+  reminderSchedule?: unknown;
   signatureLevel?: unknown;
   permittedUseConfirmed?: boolean;
+  invitation?: unknown;
 };
 
 export async function POST(
@@ -72,6 +75,7 @@ export async function POST(
   const options = sendEnvelopeOptionsSchema.safeParse({
     expiresInDays: body.expiresInDays ?? undefined,
     reminderIntervalDays: body.reminderIntervalDays ?? undefined,
+    reminderSchedule: body.reminderSchedule ?? undefined,
     signatureLevel: body.signatureLevel ?? undefined,
   });
 
@@ -85,13 +89,27 @@ export async function POST(
     );
   }
 
+  const invitation = invitationCopySchema.optional().safeParse(body.invitation);
+
+  if (!invitation.success) {
+    return NextResponse.json(
+      {
+        error:
+          "Use a single-line subject of up to 160 characters and a message of up to 2,000 characters.",
+      },
+      { status: 400 },
+    );
+  }
+
   try {
     const result = await sendDraftEnvelope(
       session.user.id,
       id,
       {
         expiresInDays: options.data.expiresInDays,
+        invitation: invitation.data,
         reminderIntervalDays: options.data.reminderIntervalDays,
+        reminderSchedule: options.data.reminderSchedule,
         signatureLevel: options.data.signatureLevel,
         ipAddress,
         senderEmail: session.user.email,

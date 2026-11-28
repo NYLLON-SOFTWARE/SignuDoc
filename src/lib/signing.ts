@@ -1,7 +1,10 @@
 import { Buffer } from "node:buffer";
 import { randomUUID } from "node:crypto";
 
+import { waitUntil } from "@vercel/functions";
+
 import { type Branding } from "./branding.ts";
+import { readInvitationCopy } from "./invitation-copy.ts";
 import { removeUnclaimedEnvelopeCertificates } from "./certificate-cleanup.ts";
 import {
   type DbExecutor,
@@ -71,6 +74,10 @@ import {
   type EmailService,
 } from "./services/email.ts";
 import { withUserEmailLegalFooter } from "./services/email-legal-footer.ts";
+import {
+  sendEnvelopeNotices,
+  sendSigningInvitation,
+} from "./services/envelope-notice-email.ts";
 import { hashOpaqueToken } from "./services/opaque-tokens.ts";
 import {
   finalizeEnvelope,
@@ -80,7 +87,7 @@ import {
   storeRecipientEnvelopeCertificatePdf,
 } from "./services/pdf-finalize.ts";
 import { buildSigningInvitationEmail } from "./services/signing-invitation-email.ts";
-import { readEmbedEvidence } from "./embedding.ts";
+import { isEmbeddedEnvelope, readEmbedEvidence } from "./embedding.ts";
 import { issueSigningLink } from "./services/signing-links.ts";
 import { signingProviderById } from "./services/signing-providers.ts";
 import {
@@ -382,10 +389,121 @@ function getEnvelopeUrl(envelopeId: string): string {
   return new URL(`/envelopes/${envelopeId}`, appUrl).toString();
 }
 
+function getVerifiedEnvelopeSender(
+  envelopeId: string,
+  userId: string,
+  database: DbExecutor,
+) {
+  return queryOne<SenderRow>(
+    database,
+    `SELECT u.name, u.email
+     FROM envelopes e JOIN "user" u ON u.id = e.user_id
+     WHERE e.id = $1 AND e.user_id = $2 AND u."emailVerified"
+       AND NOT EXISTS (
+         SELECT 1 FROM account_closure_requests c WHERE c.user_id = u.id
+       )`,
+    [envelopeId, userId],
+  );
+}
+
+async function notifySenderOfActivity(
+  event: "viewed" | "signed" | "approved",
+  eventId: string,
+  context: ResolvedSigningContext,
+  database: DbPool,
+  emailService?: EmailService,
+): Promise<void> {
+  const sendSender = process.env.SIGNUDOC_EMAIL_SENDER_ACTIVITY === "1";
+  const sendCopies = process.env.SIGNUDOC_EMAIL_COPY_ACTIVITY === "1";
+  if (!sendSender && !sendCopies) return;
+
+  const { envelope, signer } = context;
+  const mailer = emailService ?? createLazyEmailService();
+  const verb = event === "viewed" ? "opened" : event;
+  const subject = `${signer.name} ${verb} "${envelope.title}"`.replace(
+    /\s+/g,
+    " ",
+  );
+  const senderDelivery = (async () => {
+    if (!sendSender) return;
+    const sender = await getVerifiedEnvelopeSender(
+      envelope.id,
+      envelope.userId,
+      database,
+    );
+    if (!sender || sender.email.toLowerCase() === signer.email.toLowerCase()) {
+      return;
+    }
+
+    const template = `sender_signer_${event}` as const;
+    const url = getEnvelopeUrl(envelope.id);
+    const name = sender.name?.trim().split(/\s+/, 1)[0] || "there";
+    const content = withUserEmailLegalFooter(
+      {
+        textBody: `Hi ${name},\n\n${subject}.\n\nReview the envelope:\n${url}`,
+        htmlBody: `<p>Hi ${escapeHtml(name)},</p><p>${escapeHtml(subject)}.</p><p><a href="${escapeHtml(url)}">Review the envelope</a></p>`,
+      },
+      await getBranding(),
+    );
+    const delivery = await mailer.send(
+      { ...content, subject, template, to: sender.email },
+      { idempotencyKey: `sender-activity/${eventId}` },
+    );
+    await recordEmailSent(
+      {
+        envelopeId: envelope.id,
+        messageId: delivery.messageId,
+        recipient: sender.email,
+        signerId: signer.id,
+        template,
+      },
+      database,
+    );
+  })().catch((error: unknown) => {
+    console.error(
+      `Failed to send sender activity email for envelope ${envelope.id}:`,
+      error,
+    );
+  });
+  const copyDelivery = (async () => {
+    if (!sendCopies || (await isEmbeddedEnvelope(envelope.id, database)))
+      return;
+    const source = await listCopyRecipientRows(envelope.id, database);
+    const excluded = new Set([
+      signer.email.toLowerCase(),
+      context.sender.email.toLowerCase(),
+    ]);
+    await sendEnvelopeNotices({
+      database,
+      emailService: mailer,
+      envelope,
+      eventKey: eventId,
+      message: `${subject}.`,
+      recipients: source.filter(
+        (recipient) => !excluded.has(recipient.email.toLowerCase()),
+      ),
+      template: "copy_recipient_activity",
+    });
+  })().catch((error: unknown) => {
+    console.error(
+      `Failed to list copy recipients for envelope ${envelope.id}:`,
+      error,
+    );
+  });
+  const delivery = Promise.all([senderDelivery, copyDelivery]);
+  if (process.env.VERCEL === "1") {
+    waitUntil(delivery);
+  } else {
+    // Cloud Run can suspend request-based CPU after the response.
+    await delivery;
+  }
+}
+
 const RECIPIENT_DOWNLOAD_LINK_TTL_DAYS =
   RECIPIENT_DOWNLOAD_LINK_TTL_SECONDS / (24 * 60 * 60);
 
 function buildCompletionSenderEmail(input: {
+  attachments?: EmailAttachment[];
   branding: Branding;
   envelopeId: string;
   envelopeTitle: string;
@@ -394,11 +512,14 @@ function buildCompletionSenderEmail(input: {
 }) {
   const completedUrl = getEnvelopeUrl(input.envelopeId);
   const subject = `"${input.envelopeTitle}" is fully signed`;
+  const documentAvailability = input.attachments
+    ? "The final signed PDF is attached. The certificate is available in your dashboard."
+    : "The final signed PDF and certificate are ready in your dashboard.";
   const textBody = [
     `Hi ${input.senderName},`,
     "",
     `"${input.envelopeTitle}" has been fully signed in ${input.branding.productName}.`,
-    "The final signed PDF and certificate are ready in your dashboard.",
+    documentAvailability,
     "",
     "Review the completed envelope:",
     completedUrl,
@@ -406,7 +527,7 @@ function buildCompletionSenderEmail(input: {
   const htmlBody = [
     `<p>Hi ${escapeHtml(input.senderName)},</p>`,
     `<p>&ldquo;${escapeHtml(input.envelopeTitle)}&rdquo; has been fully signed in ${escapeHtml(input.branding.productName)}.</p>`,
-    "<p>The final signed PDF and certificate are ready in your dashboard.</p>",
+    `<p>${documentAvailability}</p>`,
     `<p><a href="${escapeHtml(completedUrl)}">Review the completed envelope</a></p>`,
   ].join("");
   const legalFooter = withUserEmailLegalFooter(
@@ -418,6 +539,7 @@ function buildCompletionSenderEmail(input: {
   );
 
   return {
+    ...(input.attachments ? { attachments: input.attachments } : {}),
     htmlBody: legalFooter.htmlBody,
     subject,
     template: "completion_notification" as const,
@@ -868,8 +990,8 @@ async function recordViewedEventOnce(
   context: Pick<ResolvedSigningContext, "envelope" | "signer">,
   meta: SigningRequestMeta,
   database: DbPool,
-): Promise<void> {
-  await withTransaction(async (tx) => {
+): Promise<string | undefined> {
+  return withTransaction(async (tx) => {
     // Two first openings at once must not both pass the check below and
     // record two first views (and send two signer.viewed webhooks). This
     // lock is taken only here, before any other, so it cannot deadlock.
@@ -897,7 +1019,7 @@ async function recordViewedEventOnce(
       return;
     }
 
-    await recordAuditEvent(
+    const viewed = await recordAuditEvent(
       {
         actorEmail: context.signer.email,
         actorType: "signer",
@@ -914,6 +1036,7 @@ async function recordViewedEventOnce(
       },
       tx,
     );
+    return viewed.id;
   }, database);
 }
 
@@ -1209,29 +1332,45 @@ async function sendCompletionEmails(input: {
     signedPdf: Uint8Array;
   };
   copyRecipients: readonly CopyRecipientRecord[];
-  database?: DbExecutor;
+  database: DbExecutor;
   emailService: EmailService;
   envelopeId: string;
   envelopeTitle: string;
   sender: SenderRow;
+  senderUserId: string;
   signers: Array<ReturnType<typeof signerRecordSchema.parse>>;
 }) {
   const fileNameStem =
     sanitizeFileNameSegment(input.envelopeTitle) ||
     `envelope-${input.envelopeId}`;
-  const attachments: EmailAttachment[] = [
-    {
-      content: input.attachments.signedPdf,
-      contentType: "application/pdf",
-      filename: `${fileNameStem} - signed.pdf`,
-    },
-    {
-      content: input.attachments.recipientCertificate,
-      contentType: "application/pdf",
-      filename: `${fileNameStem} - certificate.pdf`,
-    },
-  ];
+  const signedAttachment: EmailAttachment = {
+    content: input.attachments.signedPdf,
+    contentType: "application/pdf",
+    filename: `${fileNameStem} - signed.pdf`,
+  };
+  const recipientCertificateAttachment: EmailAttachment = {
+    content: input.attachments.recipientCertificate,
+    contentType: "application/pdf",
+    filename: `${fileNameStem} - certificate.pdf`,
+  };
+  const attachments = [signedAttachment, recipientCertificateAttachment];
+  const senderAttachments = [signedAttachment];
   const attach = fitsAsAttachments(attachments);
+  const verifiedSender =
+    process.env.SIGNUDOC_EMAIL_SENDER_COMPLETION_ATTACHMENTS === "1" &&
+    fitsAsAttachments(senderAttachments)
+      ? await getVerifiedEnvelopeSender(
+          input.envelopeId,
+          input.senderUserId,
+          input.database,
+        ).catch((error: unknown) => {
+          console.error(
+            `Failed to verify sender for completion attachment on envelope ${input.envelopeId}:`,
+            error,
+          );
+          return null;
+        })
+      : null;
   const senderName = normalizeSenderName(input.sender);
   const issuedAt = Math.floor(Date.now() / 1000);
   const branding = await getBranding();
@@ -1302,6 +1441,10 @@ async function sendCompletionEmails(input: {
   const messages = [
     {
       message: buildCompletionSenderEmail({
+        attachments:
+          verifiedSender?.email === input.sender.email
+            ? senderAttachments
+            : undefined,
         branding,
         envelopeId: input.envelopeId,
         envelopeTitle: input.envelopeTitle,
@@ -2098,7 +2241,14 @@ export async function getSigningPayloadForToken(
   const storageService = createStorageService();
   const disclosure = await readSignerDisclosure(context, database);
 
-  await recordViewedEventOnce(context, requestMeta, database);
+  const viewedEventId = await recordViewedEventOnce(
+    context,
+    requestMeta,
+    database,
+  );
+  if (viewedEventId) {
+    await notifySenderOfActivity("viewed", viewedEventId, context, database);
+  }
 
   const signerNamesById = new Map(
     context.signers.map((signer) => [signer.id, signer.name] as const),
@@ -2860,6 +3010,7 @@ async function submitSigningOnce(
       id: string;
       name: string;
       role: "approver" | "signer";
+      tokenHash: string;
       url: string;
     }[] = [];
 
@@ -3076,6 +3227,7 @@ async function submitSigningOnce(
             id: nextSigner.id,
             name: activatedNextSigner.name,
             role: activatedNextSigner.role,
+            tokenHash: link.tokenHash,
             url: link.url,
           });
         }
@@ -3107,18 +3259,27 @@ async function submitSigningOnce(
 
       for (const nextSignerDelivery of invitations) {
         try {
-          const delivery = await emailService.send(
-            buildSigningInvitationEmail({
+          const delivery = await sendSigningInvitation({
+            database,
+            emailService,
+            envelopeId: context.envelope.id,
+            signerId: nextSignerDelivery.id,
+            tokenHash: nextSignerDelivery.tokenHash,
+            message: buildSigningInvitationEmail({
               branding: await getBranding(),
               envelopeTitle: context.envelope.title,
               expiresAt: nextSignerDeadline,
+              invitation: await readInvitationCopy(
+                context.envelope.id,
+                database,
+              ),
               role: nextSignerDelivery.role,
               senderName: normalizeSenderName(context.sender),
               signerEmail: nextSignerDelivery.email,
               signerName: nextSignerDelivery.name,
               signingUrl: nextSignerDelivery.url,
             }),
-          );
+          });
 
           await recordEmailSent(
             {
@@ -3137,6 +3298,14 @@ async function submitSigningOnce(
           );
         }
       }
+
+      await notifySenderOfActivity(
+        approval ? "approved" : "signed",
+        signedAuditEvent.id,
+        context,
+        database,
+        emailService,
+      );
 
       return signingSubmitResponseSchema.parse({
         envelopeId: context.envelope.id,
@@ -3424,6 +3593,7 @@ async function submitSigningOnce(
         envelopeId: context.envelope.id,
         envelopeTitle: context.envelope.title,
         sender: context.sender,
+        senderUserId: context.envelope.userId,
         signers: completedSigners,
       });
     } catch (error) {

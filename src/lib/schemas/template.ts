@@ -13,6 +13,7 @@ import {
   nonEmptyStringSchema,
 } from "./common.ts";
 import { duplicateSignerEmailMessage } from "./signer.ts";
+import { invitationCopySchema } from "./invitation.ts";
 
 export const MAX_TEMPLATE_ROLE_NAME_LENGTH = 60;
 
@@ -71,6 +72,7 @@ export const templateRolesSchema = z
 
 /** Saving an envelope as a template. */
 export const saveTemplateSchema = z.object({
+  invitation: invitationCopySchema.optional(),
   name: templateNameSchema,
   // What to call each signer, in signing order. Left out, they are called
   // "Signer 1", "Signer 2" and so on.
@@ -83,6 +85,7 @@ export const saveTemplateSchema = z.object({
 
 /** Starting an envelope from a template: who fills each role, in order. */
 export const useTemplateSchema = z.object({
+  invitation: invitationCopySchema.optional(),
   signers: z
     .array(
       z.object({

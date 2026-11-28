@@ -14,13 +14,17 @@ import {
   changeEnvelopeReminders,
   EnvelopeMutationError,
 } from "./envelopes.ts";
-import { sendAutomaticEnvelopeReminder } from "./reminders.ts";
+import {
+  sendAutomaticEnvelopeReminder,
+  sendManualEnvelopeNudge,
+} from "./reminders.ts";
 import { verifyAuditChain } from "./services/audit.ts";
 import type {
   EmailService,
   TransactionalEmailMessage,
 } from "./services/email.ts";
 import { hashOpaqueToken } from "./services/opaque-tokens.ts";
+import { FIXED_REMINDER_SCHEDULE } from "./services/reminders.ts";
 import { issueSigningLink } from "./services/signing-links.ts";
 
 // Automatic reminders against a real Postgres: who the daily job reminds,
@@ -54,10 +58,12 @@ after(async () => {
 async function createSentEnvelope({
   expiresAt = SENT_AT + 30 * DAY,
   reminderIntervalDays,
+  turnStartedAt = SENT_AT,
   signerStatus = "notified",
 }: {
   expiresAt?: number | null;
   reminderIntervalDays: number | null;
+  turnStartedAt?: number;
   signerStatus?: "notified" | "signed";
 }) {
   const userId = randomUUID();
@@ -95,8 +101,8 @@ async function createSentEnvelope({
     `
       insert into signers (
         id, envelope_id, name, email, sign_order, status,
-        signing_token_hash, signing_token_expires_at, last_notified_at
-      ) values ($1, $2, 'Riley Recipient', $3, 1, $4, $5, $6, $7)
+        signing_token_hash, signing_token_expires_at, last_notified_at, turn_started_at
+      ) values ($1, $2, 'Riley Recipient', $3, 1, $4, $5, $6, $7, $7)
     `,
     [
       signerId,
@@ -105,7 +111,7 @@ async function createSentEnvelope({
       signerStatus,
       signerStatus === "notified" ? link.tokenHash : null,
       signerStatus === "notified" ? link.exp : null,
-      SENT_AT,
+      turnStartedAt,
     ],
   );
 
@@ -214,6 +220,96 @@ test("the daily job reminds the waiting signer once per interval", async () => {
   await run(firstRunAt + 3 * DAY, service);
   assert.equal(toSigner().length, 2);
   assert.equal((await verifyAuditChain(due.envelopeId, database)).ok, true);
+});
+
+test("fixed reminders follow the signer turn on days 3 and 7 and stop", async () => {
+  const turnStartedAt = SENT_AT + DAY;
+  const due = await createSentEnvelope({
+    reminderIntervalDays: null,
+    turnStartedAt,
+  });
+  const { sent, service } = recordingEmailService();
+  const sentToSigner = () =>
+    sent.filter((message) => message.to.startsWith(due.signerId));
+
+  assert.deepEqual(
+    await changeEnvelopeReminders(due.userId, due.envelopeId, null, {
+      database,
+      reminderSchedule: FIXED_REMINDER_SCHEDULE,
+    }),
+    {
+      envelopeId: due.envelopeId,
+      reminderIntervalDays: null,
+      reminderSchedule: FIXED_REMINDER_SCHEDULE,
+    },
+  );
+
+  await run(turnStartedAt + 3 * DAY - 1, service);
+  assert.equal(sentToSigner().length, 0);
+
+  await Promise.all([
+    run(turnStartedAt + 3 * DAY, service),
+    run(turnStartedAt + 3 * DAY, service),
+  ]);
+  assert.equal(sentToSigner().length, 1);
+
+  await sendManualEnvelopeNudge(
+    due.userId,
+    due.envelopeId,
+    { senderEmail: "sender@example.test", senderName: "Sam Sender" },
+    {
+      database,
+      emailService: service,
+      nowUnixTimestamp: turnStartedAt + 6 * DAY,
+    },
+  );
+  await run(turnStartedAt + 7 * DAY - 1, service);
+  assert.equal(sentToSigner().length, 2);
+
+  await run(turnStartedAt + 7 * DAY, service);
+  await run(turnStartedAt + 14 * DAY, service);
+  assert.deepEqual(
+    sentToSigner().map(({ template }) => template),
+    ["automatic_reminder", "manual_nudge", "automatic_reminder"],
+  );
+});
+
+test("a missed first fixed milestone is skipped and a failed reminder remains due", async () => {
+  const due = await createSentEnvelope({ reminderIntervalDays: null });
+  const { sent, service } = recordingEmailService();
+  const { service: failingService } = recordingEmailService(
+    new Error("retry me"),
+  );
+
+  await changeEnvelopeReminders(due.userId, due.envelopeId, null, {
+    database,
+    reminderSchedule: FIXED_REMINDER_SCHEDULE,
+  });
+  const nextRun = SENT_AT + 7 * DAY;
+
+  await assert.rejects(
+    sendAutomaticEnvelopeReminder(due.envelopeId, {
+      database,
+      emailService: failingService,
+      nowUnixTimestamp: nextRun,
+    }),
+    /retry me/,
+  );
+  await run(nextRun, service);
+  await run(nextRun + DAY, service);
+  assert.equal(
+    sent.filter((message) => message.to.startsWith(due.signerId)).length,
+    1,
+  );
+
+  const rows = await database.query<{ day: string }>(
+    `
+    SELECT metadata->>'reminderDay' AS day
+    FROM audit_events WHERE envelope_id = $1 AND event = 'reminded_auto'
+  `,
+    [due.envelopeId],
+  );
+  assert.deepEqual(rows.rows, [{ day: "7" }]);
 });
 
 test("no reminder when they are off, the deadline passed, or nobody is waiting", async () => {

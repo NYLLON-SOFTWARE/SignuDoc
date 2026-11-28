@@ -1,10 +1,11 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useState } from "react";
+import { useState, type FormEvent } from "react";
 
 import { DocumentThumbnail } from "@/components/shared/document-thumbnail";
 import { ShellButton } from "@/components/shared/form-shell";
+import { InvitationCopyFields } from "@/components/shared/invitation-copy-fields";
 import { PageHeader } from "@/components/shared/page-header";
 import { StatusPanel } from "@/components/shared/status-panel";
 import {
@@ -14,6 +15,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import type { InvitationCopy } from "@/lib/schemas/invitation";
 import type { TemplateListItem } from "@/lib/templates";
 
 type TemplatesShellProps = {
@@ -34,6 +36,48 @@ export function TemplatesShell({
   );
   const [deleteError, setDeleteError] = useState<string | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
+  const [editingTemplate, setEditingTemplate] =
+    useState<TemplateListItem | null>(null);
+  const [invitation, setInvitation] = useState<InvitationCopy>({
+    subject: null,
+    message: null,
+  });
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const [isSaving, setIsSaving] = useState(false);
+
+  async function handleSaveInvitation(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!editingTemplate || isSaving) {
+      return;
+    }
+
+    const genericError = "Unable to save the template invitation.";
+    setSaveError(null);
+    setIsSaving(true);
+
+    try {
+      const response = await fetch(`/api/templates/${editingTemplate.id}`, {
+        body: JSON.stringify(invitation),
+        headers: { "content-type": "application/json" },
+        method: "PATCH",
+      });
+
+      if (!response.ok) {
+        const payload = (await response.json().catch(() => null)) as {
+          error?: string;
+        } | null;
+        setSaveError(payload?.error ?? genericError);
+        return;
+      }
+
+      setEditingTemplate(null);
+      router.refresh();
+    } catch {
+      setSaveError(genericError);
+    } finally {
+      setIsSaving(false);
+    }
+  }
 
   async function handleConfirmDelete() {
     if (!pendingDelete || isDeleting) {
@@ -143,6 +187,20 @@ export function TemplatesShell({
                 </div>
                 <div className="flex shrink-0 flex-wrap items-center gap-2">
                   <button
+                    aria-label={`Edit invitation for ${template.name}`}
+                    className="btn-quiet min-h-11 px-4"
+                    onClick={() => {
+                      setInvitation(
+                        template.invitation ?? { subject: null, message: null },
+                      );
+                      setSaveError(null);
+                      setEditingTemplate(template);
+                    }}
+                    type="button"
+                  >
+                    Edit invitation
+                  </button>
+                  <button
                     aria-label={`Delete the template ${template.name}`}
                     className="btn-quiet btn-quiet-danger min-h-11 px-4"
                     onClick={() => {
@@ -172,6 +230,51 @@ export function TemplatesShell({
           </ul>
         </section>
       )}
+
+      {editingTemplate ? (
+        <Dialog
+          open
+          onOpenChange={(open) => {
+            if (!open && !isSaving) {
+              setEditingTemplate(null);
+            }
+          }}
+        >
+          <DialogContent className="max-w-lg sm:p-8" showCloseButton={false}>
+            <form className="space-y-4" onSubmit={handleSaveInvitation}>
+              <DialogHeader className="space-y-3">
+                <DialogTitle>Edit invitation</DialogTitle>
+                <DialogDescription>
+                  Future drafts from {editingTemplate.name} will start with this
+                  email subject and message.
+                </DialogDescription>
+              </DialogHeader>
+              <InvitationCopyFields
+                disabled={isSaving}
+                onChange={setInvitation}
+                value={invitation}
+              />
+              {saveError ? (
+                <div className="notice notice-danger" role="alert">
+                  <p>{saveError}</p>
+                </div>
+              ) : null}
+              <div className="flex flex-col-reverse gap-3 pt-2 sm:flex-row sm:justify-end">
+                <ShellButton
+                  disabled={isSaving}
+                  onClick={() => setEditingTemplate(null)}
+                  variant="secondary"
+                >
+                  Cancel
+                </ShellButton>
+                <ShellButton loading={isSaving} type="submit">
+                  {isSaving ? "Saving..." : "Save invitation"}
+                </ShellButton>
+              </div>
+            </form>
+          </DialogContent>
+        </Dialog>
+      ) : null}
 
       {pendingDelete ? (
         <Dialog

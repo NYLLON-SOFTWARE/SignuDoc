@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 
 import { DocumentThumbnail } from "@/components/shared/document-thumbnail";
 import { ShellButton } from "@/components/shared/form-shell";
+import { InvitationCopyFields } from "@/components/shared/invitation-copy-fields";
 import { PageHeader } from "@/components/shared/page-header";
 import { StatusPanel } from "@/components/shared/status-panel";
 import { StepIndicator } from "@/components/shared/step-indicator";
@@ -17,7 +18,14 @@ import {
 } from "@/components/ui/dialog";
 import type { ReviewEnvelopeData } from "@/lib/envelopes";
 import { PERMITTED_USE_PATH } from "@/lib/permitted-uses";
-import { formatReminderInterval } from "@/lib/services/reminders";
+import type { InvitationCopy } from "@/lib/schemas/invitation";
+import {
+  FIXED_REMINDER_SCHEDULE,
+  formatReminderInterval,
+  parseReminderSelection,
+  type ReminderSelection,
+  reminderSelectionOptions,
+} from "@/lib/services/reminders";
 import {
   DEFAULT_ENVELOPE_DEADLINE_DAYS,
   DEFAULT_ENVELOPE_REMINDER_DAYS,
@@ -32,6 +40,7 @@ const defaultSendErrorMessage = "Failed to send. Please try again.";
 
 type ReviewShellProps = {
   envelopeId: string;
+  initialInvitation?: InvitationCopy;
   initialState?: "error";
   record?: ReviewEnvelopeData;
 };
@@ -91,13 +100,17 @@ function buildSuccessMessage(firstSignerName: string) {
 
 export function ReviewShell({
   envelopeId,
+  initialInvitation,
   initialState,
   record,
 }: ReviewShellProps) {
+  const [invitation, setInvitation] = useState<InvitationCopy>(
+    initialInvitation ?? { subject: null, message: null },
+  );
   const [deadlineDays, setDeadlineDays] = useState<number>(
     DEFAULT_ENVELOPE_DEADLINE_DAYS,
   );
-  const [reminderDays, setReminderDays] = useState<number | null>(
+  const [reminderDays, setReminderDays] = useState<ReminderSelection>(
     DEFAULT_ENVELOPE_REMINDER_DAYS,
   );
   const [signatureLevel, setSignatureLevel] =
@@ -149,8 +162,9 @@ export function ReviewShell({
       const response = await fetch(`/api/envelopes/${envelopeId}/send`, {
         body: JSON.stringify({
           expiresInDays: deadlineDays,
+          invitation,
           permittedUseConfirmed: true,
-          reminderIntervalDays: reminderDays,
+          ...reminderSelectionOptions(reminderDays),
           ...(record?.signingProvider ? { signatureLevel } : {}),
         }),
         headers: {
@@ -402,6 +416,14 @@ export function ReviewShell({
             </p>
 
             <div className="well mt-4 p-4">
+              <InvitationCopyFields
+                disabled={sendPhase === "sending" || Boolean(notice)}
+                onChange={setInvitation}
+                value={invitation}
+              />
+            </div>
+
+            <div className="well mt-4 p-4">
               <div className="grid gap-4 sm:grid-cols-2">
                 <label className="grid gap-1.5">
                   <span className="text-[0.8125rem] font-semibold text-(--secondary)">
@@ -431,14 +453,15 @@ export function ReviewShell({
                     disabled={sendPhase === "sending" || Boolean(notice)}
                     onChange={(event) =>
                       setReminderDays(
-                        event.target.value === "off"
-                          ? null
-                          : Number(event.target.value),
+                        parseReminderSelection(event.target.value),
                       )
                     }
                     value={reminderDays ?? "off"}
                   >
                     <option value="off">{formatReminderInterval(null)}</option>
+                    <option value={FIXED_REMINDER_SCHEDULE}>
+                      {formatReminderInterval(FIXED_REMINDER_SCHEDULE)}
+                    </option>
                     {ENVELOPE_REMINDER_DAY_OPTIONS.map((days) => (
                       <option key={days} value={days}>
                         {formatReminderInterval(days)}
@@ -449,8 +472,8 @@ export function ReviewShell({
               </div>
               <p className="mt-3 text-sm leading-6 text-(--secondary)">
                 Signing links stop working at the deadline. Reminders go to the
-                signer whose turn it is until they sign. You can change both
-                later from the envelope.
+                signer whose turn it is. Days 3 and 7 are counted from the start
+                of their turn. You can change both settings later.
               </p>
             </div>
 

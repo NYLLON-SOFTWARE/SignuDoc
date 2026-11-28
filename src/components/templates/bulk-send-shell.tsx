@@ -24,7 +24,13 @@ import {
   serializeBulkSendResultsCsv,
 } from "@/lib/bulk-send-csv";
 import { PERMITTED_USE_PATH } from "@/lib/permitted-uses";
-import { formatReminderInterval } from "@/lib/services/reminders";
+import {
+  FIXED_REMINDER_SCHEDULE,
+  formatReminderInterval,
+  parseReminderSelection,
+  type ReminderSelection,
+  reminderSelectionOptions,
+} from "@/lib/services/reminders";
 import { SIGNATURE_MEANING_DETAILS } from "@/lib/signature-meanings";
 import type { UseTemplateData } from "@/lib/templates";
 import {
@@ -124,7 +130,7 @@ export function BulkSendShell({
   const [deadlineDays, setDeadlineDays] = useState(
     DEFAULT_ENVELOPE_DEADLINE_DAYS,
   );
-  const [reminderDays, setReminderDays] = useState<number | null>(
+  const [reminderDays, setReminderDays] = useState<ReminderSelection>(
     DEFAULT_ENVELOPE_REMINDER_DAYS,
   );
   const [copyName, setCopyName] = useState("");
@@ -180,7 +186,7 @@ export function BulkSendShell({
     copyRecipients: copyRecipients.length > 0 ? copyRecipients : undefined,
     csv,
     expiresInDays: deadlineDays,
-    reminderIntervalDays: reminderDays,
+    ...reminderSelectionOptions(reminderDays),
     requireEmailCode,
     signatureMeaning: signatureMeaning || null,
   };
@@ -189,7 +195,7 @@ export function BulkSendShell({
     copyName,
     csv,
     expiresInDays: deadlineDays,
-    reminderIntervalDays: reminderDays,
+    ...reminderSelectionOptions(reminderDays),
     requireEmailCode,
     signatureMeaning: signatureMeaning || null,
   });
@@ -449,15 +455,14 @@ export function BulkSendShell({
                 <select
                   className="field-input"
                   onChange={(event) =>
-                    setReminderDays(
-                      event.target.value === "off"
-                        ? null
-                        : Number(event.target.value),
-                    )
+                    setReminderDays(parseReminderSelection(event.target.value))
                   }
                   value={reminderDays ?? "off"}
                 >
                   <option value="off">{formatReminderInterval(null)}</option>
+                  <option value={FIXED_REMINDER_SCHEDULE}>
+                    {formatReminderInterval(FIXED_REMINDER_SCHEDULE)}
+                  </option>
                   {ENVELOPE_REMINDER_DAY_OPTIONS.map((days) => (
                     <option key={days} value={days}>
                       {formatReminderInterval(days)}

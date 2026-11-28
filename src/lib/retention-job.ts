@@ -208,6 +208,9 @@ export async function runRetentionJob({
     });
 
     const schedule = await runEnvelopeSchedule({
+      // A public call may perform cleanup but cannot send a sender's
+      // once-a-day digest ahead of the authenticated scheduler.
+      allowSenderDigest: caller === "authorized",
       database,
       emailService,
     }).catch((error: unknown) => {

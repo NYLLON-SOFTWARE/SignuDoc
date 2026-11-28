@@ -123,6 +123,7 @@ type SendRowContext = {
   expiresInDays: BulkSendRequest["expiresInDays"];
   progress: { envelopeId: string | null };
   reminderIntervalDays: BulkSendRequest["reminderIntervalDays"];
+  reminderSchedule: BulkSendRequest["reminderSchedule"];
   requireEmailCode: boolean;
   sender: BulkSendSender;
   signatureMeaning: SignatureMeaning | null;
@@ -232,6 +233,9 @@ function fingerprintBulkSendRequest(
         csv: input.csv,
         expiresInDays: input.expiresInDays ?? null,
         reminderIntervalDays: input.reminderIntervalDays ?? null,
+        ...(input.reminderSchedule
+          ? { reminderSchedule: input.reminderSchedule }
+          : {}),
         requireEmailCode: input.requireEmailCode === true,
         signatureMeaning: input.signatureMeaning ?? null,
         templateId,
@@ -573,6 +577,7 @@ async function sendOneRow(
     expiresInDays,
     progress,
     reminderIntervalDays,
+    reminderSchedule,
     requireEmailCode,
     sender,
     signatureMeaning,
@@ -712,6 +717,7 @@ async function sendOneRow(
         expiresInDays,
         ipAddress: sender.ipAddress,
         reminderIntervalDays,
+        reminderSchedule,
         senderEmail: sender.email,
         senderName: sender.name,
         signatureLevel: "simple",
@@ -895,6 +901,7 @@ export async function bulkSendFromTemplate(
           expiresInDays: parsedInput.expiresInDays,
           progress,
           reminderIntervalDays: parsedInput.reminderIntervalDays,
+          reminderSchedule: parsedInput.reminderSchedule,
           requireEmailCode,
           sender: sender!,
           signatureMeaning,

@@ -1,5 +1,6 @@
 import { z } from "zod";
 
+import { FIXED_REMINDER_SCHEDULE } from "../services/reminders.ts";
 import {
   auditActorTypes,
   auditEventTypes,
@@ -46,21 +47,33 @@ export const reminderIntervalDaysSchema = z
   .max(MAX_ENVELOPE_REMINDER_DAYS)
   .nullable();
 
+export const reminderScheduleSchema = z
+  .literal(FIXED_REMINDER_SCHEDULE)
+  .nullable();
+
 /** What the sender chooses on the last step before sending. */
 export const sendEnvelopeOptionsSchema = z.object({
   expiresInDays: deadlineDaysSchema.optional(),
   reminderIntervalDays: reminderIntervalDaysSchema.optional(),
+  reminderSchedule: reminderScheduleSchema.optional(),
   /** Simple unless the install has a signing provider. */
   signatureLevel: z.enum(["simple", "advanced", "qualified"]).optional(),
 });
 
-export const changeRemindersSchema = z.object({
-  reminderIntervalDays: reminderIntervalDaysSchema,
-});
+export const changeRemindersSchema = z
+  .object({
+    reminderIntervalDays: reminderIntervalDaysSchema.optional(),
+    reminderSchedule: reminderScheduleSchema.optional(),
+  })
+  .refine(
+    ({ reminderIntervalDays, reminderSchedule }) =>
+      reminderIntervalDays !== undefined || reminderSchedule !== undefined,
+  );
 
 export const changeRemindersResponseSchema = z.object({
   envelopeId: idSchema,
   reminderIntervalDays: reminderIntervalDaysSchema,
+  reminderSchedule: reminderScheduleSchema.optional(),
 });
 
 export const changeDeadlineSchema = z.object({
@@ -159,6 +172,7 @@ export const envelopeRecordSchema = z.object({
   expiresAt: unixTimestampSchema.nullable().optional(),
   /** Days between automatic reminders, or null for none. */
   reminderIntervalDays: reminderIntervalDaysSchema.optional(),
+  reminderSchedule: reminderScheduleSchema.optional(),
   /** Sent in Part 11 mode. See part11.ts. */
   part11: z.boolean().optional(),
   /**

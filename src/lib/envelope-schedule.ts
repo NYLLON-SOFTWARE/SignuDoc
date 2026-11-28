@@ -6,17 +6,19 @@ import {
 } from "./db/connection.ts";
 import { formatDeadline } from "./envelope-deadline.ts";
 import { sendAutomaticEnvelopeReminder } from "./reminders.ts";
+import { sendSenderDigests } from "./sender-digest.ts";
 import { recordAuditEvent } from "./services/audit.ts";
 import { createEmailService, type EmailService } from "./services/email.ts";
 import { AUTOMATIC_REMINDER_SLACK_SECONDS } from "./services/reminders.ts";
-import { resolveAppUrl } from "./utils/env.ts";
+import { type EnvSource, readEnv, resolveAppUrl } from "./utils/env.ts";
 
 // What the daily job does for envelopes that are out for signature:
 //
 // - it tells a sender once when a deadline has passed with signatures still
 //   missing;
 // - it reminds the signer whose turn it is, on envelopes whose sender asked
-//   for automatic reminders.
+//   for automatic reminders;
+// - when enabled, it sends senders a digest of their outstanding envelopes.
 //
 // It runs from the same cron call as the cleanup (see retention-job.ts), so
 // an install needs no second schedule, and that call's lock means two runs
@@ -36,12 +38,14 @@ const BATCH_SIZE = 200;
 // takes about half a second per message. Past this, what is left waits for
 // the next run instead of risking the call being cut off mid-send.
 const TIME_BUDGET_MS = 60_000;
+const SENDER_DIGEST_TIME_BUDGET_MS = 30_000;
 
 export type EnvelopeScheduleSummary = {
   expiryNoticeFailures: string[];
   expiryNoticesSent: number;
   reminderFailures: string[];
   remindersSent: number;
+  senderDigest?: { failures: string[]; sent: number; stoppedEarly: boolean };
   /** True when the time ran out and some envelopes wait for the next run. */
   stoppedEarly: boolean;
 };
@@ -246,16 +250,28 @@ async function listSignersDueForReminder(
         -- Embedded envelopes get no reminders; left out here, before the
         -- batch limit, so they cannot fill every batch.
         AND e.delivery = 'email'
-        AND e.reminder_interval_days IS NOT NULL
         AND (e.expires_at IS NULL OR e.expires_at > $1)
-        AND GREATEST(
-          COALESCE(s.last_notified_at, 0),
-          COALESCE(s.last_nudged_at, 0)
-        ) > 0
-        AND GREATEST(
-          COALESCE(s.last_notified_at, 0),
-          COALESCE(s.last_nudged_at, 0)
-        ) + e.reminder_interval_days * 86400 - $2 <= $1
+        AND (
+          (
+            e.reminder_interval_days IS NOT NULL
+            AND GREATEST(
+              COALESCE(s.last_notified_at, 0),
+              COALESCE(s.last_nudged_at, 0)
+            ) > 0
+            AND GREATEST(
+              COALESCE(s.last_notified_at, 0),
+              COALESCE(s.last_nudged_at, 0)
+            ) + e.reminder_interval_days * 86400 - $2 <= $1
+          )
+          OR (
+            e.reminder_schedule = 'days_3_and_7'
+            AND CASE s.last_automatic_reminder_day
+              WHEN 7 THEN false
+              WHEN 3 THEN s.turn_started_at + 7 * 86400 <= $1
+              ELSE s.turn_started_at + 3 * 86400 <= $1
+            END
+          )
+        )
       ORDER BY
         GREATEST(
           COALESCE(s.last_notified_at, 0),
@@ -307,14 +323,20 @@ async function sendAutomaticReminders({
 }
 
 export async function runEnvelopeSchedule({
+  allowSenderDigest = false,
   database,
   emailService,
+  env = process.env,
   now = Math.floor(Date.now() / 1000),
+  senderDigestTimeBudgetMs = SENDER_DIGEST_TIME_BUDGET_MS,
   timeBudgetMs = TIME_BUDGET_MS,
 }: {
+  allowSenderDigest?: boolean;
   database: DbPool;
   emailService?: EmailService;
+  env?: EnvSource;
   now?: number;
+  senderDigestTimeBudgetMs?: number;
   timeBudgetMs?: number;
 }): Promise<EnvelopeScheduleSummary> {
   const summary: EnvelopeScheduleSummary = {
@@ -341,6 +363,27 @@ export async function runEnvelopeSchedule({
   await sendExpiryNotices(run);
   await sendAutomaticReminders(run);
 
+  if (
+    allowSenderDigest &&
+    readEnv(env, "SIGNUDOC_EMAIL_SENDER_DAILY_DIGEST") === "1"
+  ) {
+    const digestStopAt = Date.now() + senderDigestTimeBudgetMs;
+    const digest = await sendSenderDigests({
+      database,
+      emailService: getEmailService,
+      env,
+      now,
+      outOfTime: () => Date.now() >= digestStopAt,
+    });
+    summary.senderDigest = digest;
+    summary.stoppedEarly ||= digest.stoppedEarly;
+    if (digest.stoppedEarly) {
+      console.warn(
+        "[retention] Daily sender digest stopped early. Run the job again today to reach the remaining senders.",
+      );
+    }
+  }
+
   return summary;
 }
 
@@ -349,6 +392,10 @@ export function envelopeScheduleFailed(
 ): boolean {
   return (
     summary.expiryNoticeFailures.length > 0 ||
-    summary.reminderFailures.length > 0
+    summary.reminderFailures.length > 0 ||
+    Boolean(
+      summary.senderDigest?.failures.length ||
+      summary.senderDigest?.stoppedEarly,
+    )
   );
 }

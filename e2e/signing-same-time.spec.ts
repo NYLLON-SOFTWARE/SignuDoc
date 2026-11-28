@@ -12,6 +12,8 @@ const SIGNERS = [
   { email: "blake.together@example.com", name: "Blake Together" },
   { email: "casey.after@example.com", name: "Casey After" },
 ] as const;
+const INVITATION_SUBJECT = "Please review our agreement";
+const INVITATION_MESSAGE = "Please review the work & schedule.\nThank you.";
 
 /** Opens a signer's invitation, applies their signature and finishes. */
 async function signFromInvitation(browser: Browser, email: string) {
@@ -19,6 +21,9 @@ async function signFromInvitation(browser: Browser, email: string) {
     template: "signing_invitation",
     to: email,
   });
+  expect(invitation.subject).toBe(INVITATION_SUBJECT);
+  expect(invitation.text).toContain(INVITATION_MESSAGE);
+  expect(invitation.html).toContain("work &amp; schedule.");
   const context = await browser.newContext({
     viewport: { height: 900, width: 1440 },
   });
@@ -122,6 +127,8 @@ test("two signers of one step sign in any order, then the next step is invited",
     await expect(
       page.getByText("everyone numbered 1 receives an email", { exact: false }),
     ).toBeVisible();
+    await page.getByLabel("Email subject (optional)").fill(INVITATION_SUBJECT);
+    await page.getByLabel("Email message (optional)").fill(INVITATION_MESSAGE);
     await page.getByRole("button", { name: "Send envelope" }).click();
 
     const confirmation = page.getByRole("dialog", {
@@ -149,6 +156,15 @@ test("two signers of one step sign in any order, then the next step is invited",
       template: "signing_invitation",
       to: SIGNERS[2].email,
     });
+    if (process.env.SIGNUDOC_EMAIL_ORDERED_SIGNING_STARTED === "1") {
+      const notice = await waitForEmail({
+        template: "ordered_signing_started",
+        to: SIGNERS[2].email,
+      });
+      expect(notice.text).toContain("when it is your turn");
+      expect(notice.text).not.toContain("/sign/");
+      expect(notice.attachments ?? []).toHaveLength(0);
+    }
   });
 
   await test.step("the second signer signs first; the third still waits", async () => {

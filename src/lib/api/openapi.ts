@@ -296,6 +296,12 @@ export function buildOpenApiDocument(
               minimum: 1,
               type: ["integer", "null"],
             },
+            reminderSchedule: {
+              description:
+                "When set, reminds each waiting signer on days 3 and 7 of their turn and overrides reminderIntervalDays.",
+              enum: ["days_3_and_7", null],
+              type: ["string", "null"],
+            },
             signatureLevel: {
               description:
                 "advanced and qualified are sent by email only, not with delivery embedded.",

@@ -1,10 +1,11 @@
 import assert from "node:assert/strict";
 import { createHash, randomUUID } from "node:crypto";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, readdir, readFile, rm } from "node:fs/promises";
 import { createRequire, syncBuiltinESMExports } from "node:module";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { after, before, test } from "node:test";
+import { after, before, test, type TestContext } from "node:test";
+import { setTimeout as delay } from "node:timers/promises";
 
 import { PDFDocument } from "pdf-lib";
 import type pg from "pg";
@@ -27,6 +28,7 @@ import {
 import { saveSettings } from "./settings.ts";
 import {
   declineSigningForToken,
+  getSigningPayloadForToken,
   recordSignerConsent,
   submitSigningForToken,
 } from "./signing.ts";
@@ -282,6 +284,37 @@ async function invitationsTo(envelopeId: string, signerId: string) {
   return result.rows[0]?.count ?? 0;
 }
 
+type CapturedMail = {
+  attachments?: { filename: string; sha256: string }[];
+  template: string;
+  to: string[];
+  text: string;
+};
+
+async function mailForSender(userId: string) {
+  const outbox = path.join(workDir, "outbox");
+  const messages = await Promise.all(
+    (await readdir(outbox))
+      .filter((file) => file.endsWith(".json"))
+      .map(
+        async (file) =>
+          JSON.parse(
+            await readFile(path.join(outbox, file), "utf8"),
+          ) as CapturedMail,
+      ),
+  );
+  return messages.filter((mail) => mail.to.includes(`${userId}@example.test`));
+}
+
+function enableSenderEmail(t: TestContext, key: string) {
+  const previous = process.env[key];
+  process.env[key] = "1";
+  t.after(() => {
+    if (previous === undefined) delete process.env[key];
+    else process.env[key] = previous;
+  });
+}
+
 /** Resolves once another session is held up behind a lock, or `isOver()`. */
 async function waitForLockWaiter(isOver: () => boolean) {
   for (let attempt = 0; attempt < 300; attempt += 1) {
@@ -372,6 +405,78 @@ test("signers of one step are invited together, and the next step waits for all 
     (await verifyAuditChain(envelope.envelopeId, database)).ok,
     true,
   );
+});
+
+test("the sender receives one first-open alert and one progress alert without a signing link", async (t) => {
+  enableSenderEmail(t, "SIGNUDOC_EMAIL_SENDER_ACTIVITY");
+
+  const { envelopeId, parties, userId } = await createSteppedEnvelope([1, 2]);
+  const [first] = parties;
+  assert.ok(first?.token);
+  const token = first.token;
+  await database.query(
+    `update public."user" set "emailVerified" = true where id = $1`,
+    [userId],
+  );
+
+  await Promise.all(
+    Array.from({ length: 4 }, () =>
+      getSigningPayloadForToken(token, { database }),
+    ),
+  );
+  await sign(first);
+
+  const events = ["sender_signer_viewed", "sender_signer_signed"];
+  let messages: CapturedMail[] = [];
+  for (let attempt = 0; attempt < 40; attempt += 1) {
+    messages = (await mailForSender(userId)).filter((mail) =>
+      events.includes(mail.template),
+    );
+    if (messages.length >= events.length) break;
+    await delay(50);
+  }
+
+  assert.deepEqual(
+    messages.map((mail) => mail.template).sort(),
+    [...events].sort(),
+  );
+  for (const mail of messages) {
+    assert.deepEqual(mail.to, [`${userId}@example.test`]);
+    assert.ok(mail.text.includes(first.name));
+    assert.ok(mail.text.includes(`/envelopes/${envelopeId}`));
+    assert.ok(!mail.text.includes(token));
+  }
+  assert.equal(await countEvents(envelopeId, "viewed"), 1);
+});
+
+test("sender completion attaches only the signed PDF for a verified owner", async (t) => {
+  enableSenderEmail(t, "SIGNUDOC_EMAIL_SENDER_COMPLETION_ATTACHMENTS");
+
+  for (const verified of [true, false]) {
+    const { envelopeId, parties, userId } = await createSteppedEnvelope([1]);
+    const [signer] = parties as [Party];
+    await database.query(
+      `update public."user" set "emailVerified" = $2 where id = $1`,
+      [userId, verified],
+    );
+    await sign(signer);
+
+    const [completion] = (await mailForSender(userId)).filter(
+      (mail) => mail.template === "completion_notification",
+    );
+    assert.ok(completion);
+    assert.ok(completion.text.includes(`/envelopes/${envelopeId}`));
+    const { rows } = await database.query<{ sha: string }>(
+      "select signed_pdf_sha256 as sha from envelopes where id = $1",
+      [envelopeId],
+    );
+    const attachments = completion.attachments ?? [];
+    assert.equal(attachments.length, verified ? 1 : 0);
+    if (verified) {
+      assert.equal(attachments[0]?.filename, "Contract - signed.pdf");
+      assert.equal(attachments[0]?.sha256, rows[0]?.sha);
+    }
+  }
 });
 
 test("a step's signers start the next step together when it has several", async () => {

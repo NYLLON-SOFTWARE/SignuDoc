@@ -59,7 +59,7 @@ export async function POST(
     return NextResponse.json(
       {
         error:
-          "Choose reminders between 1 and 30 days apart, or turn them off.",
+          "Choose reminders on days 3 and 7, between 1 and 30 days apart, or off.",
       },
       { headers: noStore, status: 400 },
     );
@@ -69,8 +69,8 @@ export async function POST(
     const result = await changeEnvelopeReminders(
       session.user.id,
       id,
-      parsed.data.reminderIntervalDays,
-      { database: getDb() },
+      parsed.data.reminderIntervalDays ?? null,
+      { database: getDb(), reminderSchedule: parsed.data.reminderSchedule },
     );
 
     return NextResponse.json(result, { headers: noStore, status: 200 });

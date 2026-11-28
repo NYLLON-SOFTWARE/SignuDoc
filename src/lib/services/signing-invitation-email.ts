@@ -7,6 +7,7 @@ import { type TransactionalEmailMessage } from "./email.ts";
 type SigningInvitationEmailInput = {
   branding: Branding;
   envelopeTitle: string;
+  invitation?: { message: string | null; subject: string | null };
   /** The envelope's deadline, when it has one. */
   expiresAt?: number | null;
   /** An approver is asked to approve, not to sign. A signer by default. */
@@ -50,12 +51,16 @@ export function buildSigningInvitationEmail(
 ): TransactionalEmailMessage {
   const { productName } = input.branding;
   const action = describeRequestedAction(input.role);
-  const subject = `${input.senderName} requested your ${action.noun} on "${input.envelopeTitle}"`;
+  const subject =
+    input.invitation?.subject ??
+    `${input.senderName} requested your ${action.noun} on "${input.envelopeTitle}"`;
+  const message = input.invitation?.message;
   const deadlineLine = buildDeadlineLine(input.expiresAt);
   const textBody = [
     `Hi ${input.signerName},`,
     "",
     `${input.senderName} sent you "${input.envelopeTitle}" through ${productName}.`,
+    ...(message ? ["", message] : []),
     "",
     `${action.linkText} here:`,
     input.signingUrl,
@@ -67,6 +72,7 @@ export function buildSigningInvitationEmail(
   const htmlBody = [
     `<p>Hi ${escapeHtml(input.signerName)},</p>`,
     `<p>${escapeHtml(input.senderName)} sent you &ldquo;${escapeHtml(input.envelopeTitle)}&rdquo; through ${escapeHtml(productName)}.</p>`,
+    message ? `<p>${escapeHtml(message).replace(/\r?\n/g, "<br>")}</p>` : "",
     `<p><a href="${escapeHtml(input.signingUrl)}">${escapeHtml(action.linkText)}</a></p>`,
     deadlineLine ? `<p>${escapeHtml(deadlineLine)}</p>` : "",
     `<p>You do not need a ${escapeHtml(productName)} account to ${action.accountLine}.</p>`,

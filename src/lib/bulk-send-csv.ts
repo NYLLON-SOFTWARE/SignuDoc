@@ -4,6 +4,7 @@ import {
   nameSchema,
 } from "./schemas/common.ts";
 import { duplicateSignerEmailMessage } from "./schemas/signer.ts";
+import type { FixedReminderSchedule } from "./services/reminders.ts";
 
 // CSV for sending one template to many people: a header that names the
 // template's signer roles, then one envelope per row. The parser is small
@@ -83,6 +84,7 @@ export function bulkSendPreviewKey(input: {
   csv: string;
   expiresInDays: number;
   reminderIntervalDays: number | null;
+  reminderSchedule?: FixedReminderSchedule | null;
   requireEmailCode: boolean;
   signatureMeaning: string | null;
 }): string {
@@ -92,6 +94,7 @@ export function bulkSendPreviewKey(input: {
     csv: input.csv,
     expiresInDays: input.expiresInDays,
     reminderIntervalDays: input.reminderIntervalDays,
+    reminderSchedule: input.reminderSchedule,
     requireEmailCode: input.requireEmailCode,
     signatureMeaning: input.signatureMeaning,
   });

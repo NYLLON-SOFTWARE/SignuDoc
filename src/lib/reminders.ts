@@ -36,7 +36,9 @@ import {
 import { isEmbeddedEnvelope } from "./embedding.ts";
 import { withUserEmailLegalFooter } from "./services/email-legal-footer.ts";
 import {
+  type FixedReminderSchedule,
   formatReminderAvailableAt,
+  getFixedReminderDay,
   getManualNudgeAvailableAt,
   isAutomaticReminderDue,
 } from "./services/reminders.ts";
@@ -53,6 +55,7 @@ type ReminderEnvelopeRow = {
   ownerEmail: string;
   ownerName: string | null;
   reminderIntervalDays: number | null;
+  reminderSchedule: FixedReminderSchedule | null;
   status: EnvelopeRecord["status"];
   title: string;
   updatedAt: number;
@@ -63,6 +66,7 @@ type ReminderSignerRow = {
   email: string;
   envelopeId: string;
   id: string;
+  lastAutomaticReminderDay: number | null;
   lastNotifiedAt: number | null;
   lastNudgedAt: number | null;
   name: string;
@@ -71,6 +75,7 @@ type ReminderSignerRow = {
   signingTokenExpiresAt: number | null;
   signingTokenHash: string | null;
   status: SignerRecord["status"];
+  turnStartedAt: number | null;
   updatedAt: number;
 };
 
@@ -100,6 +105,7 @@ type PersistedReminder = {
   previousSigner: Pick<
     ReminderSignerRow,
     | "id"
+    | "lastAutomaticReminderDay"
     | "lastNotifiedAt"
     | "lastNudgedAt"
     | "signingTokenExpiresAt"
@@ -173,6 +179,7 @@ async function getReminderEnvelope(
         e.delivery,
         e.expires_at AS "expiresAt",
         e.reminder_interval_days AS "reminderIntervalDays",
+        e.reminder_schedule AS "reminderSchedule",
         e.updated_at AS "updatedAt",
         u.email AS "ownerEmail",
         u.name AS "ownerName"
@@ -229,8 +236,10 @@ async function getCurrentSignerForEnvelope(
         status,
         signing_token_hash AS "signingTokenHash",
         signing_token_expires_at AS "signingTokenExpiresAt",
+        last_automatic_reminder_day AS "lastAutomaticReminderDay",
         last_notified_at AS "lastNotifiedAt",
         last_nudged_at AS "lastNudgedAt",
+        turn_started_at AS "turnStartedAt",
         updated_at AS "updatedAt"
       FROM signers
       WHERE envelope_id = $1
@@ -308,7 +317,14 @@ function getAutomaticReminderObstacle(
   envelope: ReminderEnvelopeRow,
   signer: ReminderSignerRow,
   now: number,
+  fixedReminderDay: number | null,
 ): string | null {
+  if (envelope.reminderSchedule) {
+    return fixedReminderDay !== null
+      ? null
+      : "This envelope's next reminder is not due yet.";
+  }
+
   if (envelope.reminderIntervalDays === null) {
     return "Automatic reminders are off for this envelope.";
   }
@@ -427,11 +443,21 @@ async function persistReminder(
       );
     }
 
+    const fixedReminderDay =
+      request.kind === "automatic" && persistedEnvelope.reminderSchedule
+        ? getFixedReminderDay(
+            persistedSigner.turnStartedAt,
+            persistedSigner.lastAutomaticReminderDay,
+            dispatchedAt,
+          )
+        : null;
+
     if (request.kind === "automatic") {
       const obstacle = getAutomaticReminderObstacle(
         persistedEnvelope,
         persistedSigner,
         dispatchedAt,
+        fixedReminderDay,
       );
 
       if (obstacle) {
@@ -472,6 +498,7 @@ async function persistReminder(
           signing_token_expires_at = $2,
           last_notified_at = $3,
           last_nudged_at = $4,
+          last_automatic_reminder_day = COALESCE($8, last_automatic_reminder_day),
           updated_at = $5
         WHERE id = $6
           AND envelope_id = $7
@@ -485,6 +512,7 @@ async function persistReminder(
         dispatchedAt,
         persistedSigner.id,
         envelopeId,
+        fixedReminderDay,
       ],
     );
 
@@ -520,7 +548,9 @@ async function persistReminder(
             event: "reminded_auto",
             metadata: {
               ...signerMetadata,
-              intervalDays: persistedEnvelope.reminderIntervalDays,
+              ...(fixedReminderDay === null
+                ? { intervalDays: persistedEnvelope.reminderIntervalDays }
+                : { reminderDay: fixedReminderDay }),
             },
           },
       tx,
@@ -536,6 +566,7 @@ async function persistReminder(
       previousEnvelopeUpdatedAt: persistedEnvelope.updatedAt,
       previousSigner: {
         id: persistedSigner.id,
+        lastAutomaticReminderDay: persistedSigner.lastAutomaticReminderDay,
         lastNotifiedAt: persistedSigner.lastNotifiedAt,
         lastNudgedAt: persistedSigner.lastNudgedAt,
         signingTokenExpiresAt: persistedSigner.signingTokenExpiresAt,
@@ -616,6 +647,7 @@ async function deliverReminder(
             END,
             last_notified_at = $3,
             last_nudged_at = $4,
+            last_automatic_reminder_day = $10,
             updated_at = $5
           WHERE id = $6
             AND envelope_id = $7
@@ -636,6 +668,7 @@ async function deliverReminder(
           persisted.envelopeId,
           persisted.issuedLink.exp,
           persisted.issuedLink.tokenHash,
+          persisted.previousSigner.lastAutomaticReminderDay,
         ],
       );
 

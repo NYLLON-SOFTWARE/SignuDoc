@@ -17,6 +17,7 @@ import {
 import {
   deadlineDaysSchema,
   reminderIntervalDaysSchema,
+  reminderScheduleSchema,
 } from "../schemas/envelope.ts";
 import { fieldTypeSchema } from "../schemas/field.ts";
 import {
@@ -75,6 +76,7 @@ export const apiSendOptionsSchema = z.object({
       "Set permittedUseConfirmed to true to confirm the envelope is an ordinary business agreement (see /electronic-signatures on your install).",
   }),
   reminderIntervalDays: reminderIntervalDaysSchema.optional(),
+  reminderSchedule: reminderScheduleSchema.optional(),
   signatureLevel: z.enum(["simple", "advanced", "qualified"]).optional(),
 });
 
@@ -185,6 +187,7 @@ export async function sendEnvelopeForApi(
       expiresInDays: options.expiresInDays,
       ipAddress: actor.ipAddress,
       reminderIntervalDays: options.reminderIntervalDays,
+      reminderSchedule: options.reminderSchedule,
       senderEmail: actor.email,
       senderName: actor.name.trim() ? actor.name : actor.email,
       signatureLevel: options.signatureLevel,
