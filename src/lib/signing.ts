@@ -20,6 +20,7 @@ import {
   createRecipientDownloadLink,
   sanitizeFileNameSegment,
 } from "./downloads.ts";
+import { fileCompletedEnvelopeInDrive } from "./google-drive-filing.ts";
 import {
   fieldRecordSchema,
   MAX_DRAWN_SIGNATURE_BYTES,
@@ -3399,7 +3400,6 @@ async function submitSigningOnce(
         return artifacts;
       }, database);
       signingStatePersisted = true;
-      await deleteReplacedRevision(replacedRevisionKey, storageService);
     } catch (error) {
       if (finalArtifactsStored) {
         await Promise.all(
@@ -3411,6 +3411,13 @@ async function submitSigningOnce(
 
       throw error;
     }
+
+    const driveFiling = fileCompletedEnvelopeInDrive({
+      database,
+      envelopeId: context.envelope.id,
+      storageService,
+    });
+    await deleteReplacedRevision(replacedRevisionKey, storageService);
 
     try {
       await sendCompletionEmails({
@@ -3433,6 +3440,7 @@ async function submitSigningOnce(
       );
     }
 
+    await driveFiling;
     return signingSubmitResponseSchema.parse({
       envelopeId: context.envelope.id,
       redirectPath: doneRedirectPath,

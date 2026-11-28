@@ -41,6 +41,7 @@ async function handle(request: Request) {
           ? {
               ...outcome.summary,
               deletions: outcome.deletions,
+              driveFiling: outcome.driveFiling,
               schedule: outcome.schedule,
             }
           : outcome,

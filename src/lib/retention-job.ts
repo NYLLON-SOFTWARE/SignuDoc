@@ -2,6 +2,11 @@ import { createHash, timingSafeEqual } from "node:crypto";
 
 import { deleteExpiredIdempotencyKeys } from "./api/idempotency.ts";
 import { getDb, type DbPool } from "./db/connection.ts";
+import {
+  runGoogleDriveFiling,
+  type DriveFilingSummary,
+} from "./google-drive-filing.ts";
+import { GoogleDriveClientError } from "./services/google-drive.ts";
 import { deleteOldWebhookDeliveries } from "./webhooks/log.ts";
 import {
   runScheduledEnvelopeDeletions,
@@ -48,6 +53,7 @@ export type RetentionJobOutcome =
   | {
       /** Null when that part could not run. The cleanup still counts. */
       deletions: ScheduledDeletionSummary | null;
+      driveFiling?: DriveFilingSummary;
       /** Null when that part could not run. The cleanup still counts. */
       schedule: EnvelopeScheduleSummary | null;
       status: "ran";
@@ -166,6 +172,24 @@ export async function runRetentionJob({
       return { reason: "already_running", status: "skipped" };
     }
 
+    const driveFiling =
+      caller === "authorized"
+        ? await runGoogleDriveFiling({
+            database,
+            storageService,
+          }).catch((error: unknown): DriveFilingSummary => {
+            console.error(
+              "[retention] Google Drive filing could not start:",
+              error instanceof GoogleDriveClientError
+                ? error.message
+                : error instanceof Error
+                  ? error.name
+                  : "unknown error",
+            );
+            return { failures: 1, filed: 0, stoppedEarly: false };
+          })
+        : undefined;
+
     const summary = await runRetentionSweep({
       database,
       emailService,
@@ -228,7 +252,13 @@ export async function runRetentionJob({
       };
     });
 
-    return { deletions, schedule, status: "ran", summary };
+    return {
+      deletions,
+      ...(driveFiling ? { driveFiling } : {}),
+      schedule,
+      status: "ran",
+      summary,
+    };
   } finally {
     await lockClient.query("rollback").catch(() => undefined);
     lockClient.release();
@@ -244,12 +274,13 @@ export function retentionSweepFailed(summary: RetentionSweepSummary): boolean {
   );
 }
 
-/** True when any part of a finished run left work undone. */
+/** True when any part of a finished run failed. Bounded filing defers its backlog. */
 export function retentionJobFailed(
   outcome: Extract<RetentionJobOutcome, { status: "ran" }>,
 ): boolean {
   return (
     retentionSweepFailed(outcome.summary) ||
+    (outcome.driveFiling?.failures ?? 0) > 0 ||
     outcome.deletions === null ||
     outcome.deletions.failures.length > 0 ||
     outcome.deletions.noticeFailures.length > 0 ||

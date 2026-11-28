@@ -213,6 +213,26 @@ test("a caller with the secret is not rationed, and gets the summary", async () 
   }
 });
 
+test("Drive failures mark a run as failed and a deferred batch can finish normally", async () => {
+  const outcome = await run("authorized");
+  assert.equal(outcome.status, "ran");
+  assert.equal(retentionJobFailed(outcome), false);
+  assert.equal(
+    retentionJobFailed({
+      ...outcome,
+      driveFiling: { failures: 1, filed: 0, stoppedEarly: false },
+    }),
+    true,
+  );
+  assert.equal(
+    retentionJobFailed({
+      ...outcome,
+      driveFiling: { failures: 0, filed: 1, stoppedEarly: true },
+    }),
+    false,
+  );
+});
+
 test("a run clears finished rate limit windows", async () => {
   await database.query(
     `insert into public.rate_limits (key, count, expires_at)
