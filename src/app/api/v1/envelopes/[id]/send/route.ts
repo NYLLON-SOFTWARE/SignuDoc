@@ -6,7 +6,11 @@ import {
   getApiEnvelope,
   sendEnvelopeForApi,
 } from "@/lib/api/envelopes";
-import { API_SEND_LIMIT, handleApi, runIdempotently } from "@/lib/api/route";
+import {
+  API_SEND_LIMIT,
+  handleApiEnvelope,
+  runIdempotently,
+} from "@/lib/api/route";
 
 type Context = { params: Promise<{ id: string }> };
 
@@ -14,10 +18,11 @@ type Context = { params: Promise<{ id: string }> };
 export async function POST(request: Request, context: Context) {
   const { id } = await context.params;
 
-  return handleApi(
+  return handleApiEnvelope(
     request,
     "write",
     "api_envelope_send_failure",
+    id,
     async (api) => {
       const raw = await readBodyWithin(request, MAX_JSON_BODY_BYTES);
 

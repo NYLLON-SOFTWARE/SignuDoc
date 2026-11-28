@@ -596,7 +596,12 @@ export function OrganizationSettings({
             one organization, so it has no list of them here. */}
         {!values.hosted ? <PeoplePanel part11Mode={values.part11Mode} /> : null}
 
-        {!values.hosted ? <TeamsPanel /> : null}
+        {!values.hosted ? (
+          <>
+            {" "}
+            <TeamsPanel /> <TeamsPanel kind="folder" />{" "}
+          </>
+        ) : null}
 
         {!values.hosted ? (
           <SecurityPanel

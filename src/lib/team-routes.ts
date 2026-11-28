@@ -20,9 +20,13 @@ import { readLimitedBody } from "./utils/limited-body.ts";
 
 const noStore = { "cache-control": "private, no-store" };
 
-export async function respondWithTeams(status = 200) {
+export function isFolderRequest(request: Request): boolean {
+  return new URL(request.url).searchParams.get("kind") === "folder";
+}
+
+export async function respondWithTeams(request: Request, status = 200) {
   return NextResponse.json(
-    { teams: await listTeams() },
+    { teams: await listTeams(undefined, isFolderRequest(request)) },
     { headers: noStore, status },
   );
 }
@@ -68,7 +72,7 @@ export async function handleTeamChange(
       () => readJsonBody(request),
     );
 
-    return await respondWithTeams();
+    return await respondWithTeams(request);
   } catch (error) {
     if (error instanceof TeamError) {
       return NextResponse.json(

@@ -11,6 +11,7 @@ import {
 } from "@/lib/security/route-controls";
 import { getClientIpAddress, getRequestPathname } from "@/lib/security/request";
 import { DocumentImportError } from "@/lib/services/document-import";
+import { TeamError } from "@/lib/teams";
 import { createDraftFromTemplate, TemplateError } from "@/lib/templates";
 
 type UseTemplateRouteContext = {
@@ -62,6 +63,7 @@ export async function POST(request: Request, context: UseTemplateRouteContext) {
 
     if (
       error instanceof TemplateError ||
+      error instanceof TeamError ||
       error instanceof EnvelopeMutationError
     ) {
       return NextResponse.json(

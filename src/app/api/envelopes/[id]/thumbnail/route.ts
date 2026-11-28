@@ -31,16 +31,14 @@ const privateNoStore = { "cache-control": "private, no-store" };
 
 // The picture itself. The browser may keep its copy, but must ask here
 // before showing it again, so every showing still takes a signed-in request
-// from the account that owns the envelope. When the copy is still good the
+// from an account that can open the envelope. When the copy is still good the
 // answer is a 304 with no picture in it, and nothing is read from file
 // storage. A dashboard of twenty documents would otherwise take twenty reads
 // each time it opens, out of the 10,000 a month that Vercel Blob's free
 // plan allows before it stops serving files.
 const privateRevalidate = { "cache-control": "private, no-cache" };
 
-// The picture of a document's first page that the dashboard shows. The
-// account that owns the envelope can read and write it, and so can an
-// administrator, who sees every envelope.
+// The picture of a document's first page that the dashboard shows.
 export async function GET(
   request: Request,
   context: EnvelopeThumbnailRouteContext,
@@ -55,14 +53,17 @@ export async function GET(
   const { id } = await context.params;
 
   try {
-    // Its sender's, or, once sent, a teammate's or any administrator's.
     const access = await resolveEnvelopeViewerAccess(
       session.user.id,
       id,
       getDb(),
     );
+    if (!access) {
+      throw new EnvelopeDocumentAccessError("Envelope not found.", 404);
+    }
+
     const thumbnail = await getEnvelopeThumbnailForUser(
-      access?.ownerUserId ?? session.user.id,
+      access.ownerUserId,
       id,
       {
         database: getDb(),
@@ -165,10 +166,10 @@ export async function PUT(
     }
 
     // An administrator's browser draws a missing picture too, and keeps it
-    // for everyone, so it is not drawn again on every visit. A teammate's
+    // for everyone, so it is not drawn again on every visit. A folder member's
     // browser draws one for itself but cannot keep it: the picture is
     // checked to be a JPEG, not to be this document, and whoever stores it
-    // first decides what everyone sees, which a teammate with read-only
+    // first decides what everyone sees, which a member with read-only
     // access should not.
     const access = await resolveEnvelopeViewerAccess(
       session.user.id,
@@ -176,19 +177,20 @@ export async function PUT(
       getDb(),
     );
 
-    if (access && !access.viewerIsOwner && !access.viewerIsAdmin) {
+    if (!access) {
+      throw new EnvelopeDocumentAccessError("Envelope not found.", 404);
+    }
+
+    if (!access.viewerIsOwner && !access.viewerIsAdmin) {
       return NextResponse.json(
         { error: "Only the sender can save this thumbnail." },
         { headers: privateNoStore, status: 403 },
       );
     }
 
-    await saveEnvelopeThumbnailForUser(
-      access?.ownerUserId ?? session.user.id,
-      id,
-      body,
-      { database: getDb() },
-    );
+    await saveEnvelopeThumbnailForUser(access.ownerUserId, id, body, {
+      database: getDb(),
+    });
 
     return new Response(null, { headers: privateNoStore, status: 204 });
   } catch (error) {

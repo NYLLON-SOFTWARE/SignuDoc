@@ -14,6 +14,7 @@ import {
 } from "react";
 
 import { FieldShell, ShellButton } from "@/components/shared/form-shell";
+import { FolderSelect, type FolderOption } from "./folder-select";
 import { PageHeader } from "@/components/shared/page-header";
 import { StepIndicator } from "@/components/shared/step-indicator";
 import { Button } from "@/components/ui/button";
@@ -75,7 +76,11 @@ function isClientVisiblePdf(file: File): boolean {
 }
 
 function UploadShellLayout({
+  allowUnfiled,
   canContinue,
+  folders,
+  folderId,
+  onFolderChange,
   errorMessage,
   isBusy,
   isDragActive,
@@ -91,7 +96,11 @@ function UploadShellLayout({
   titleError,
   titleHelper,
 }: {
+  allowUnfiled: boolean;
   canContinue: boolean;
+  folders: readonly FolderOption[];
+  folderId: string;
+  onFolderChange: (id: string) => void;
   errorMessage: string | null;
   isBusy: boolean;
   isDragActive: boolean;
@@ -119,7 +128,14 @@ function UploadShellLayout({
     <div className="space-y-5">
       <PageHeader
         action={
-          <Link className="btn-quiet min-h-11 px-4" href="/templates">
+          <Link
+            className="btn-quiet min-h-11 px-4"
+            href={
+              folderId
+                ? `/templates?folder=${encodeURIComponent(folderId)}`
+                : "/templates"
+            }
+          >
             Start from a template
           </Link>
         }
@@ -135,6 +151,15 @@ function UploadShellLayout({
         data-animate-delay="2"
       >
         <div className="space-y-6">
+          {folders.length > 0 ? (
+            <FolderSelect
+              allowUnfiled={allowUnfiled}
+              disabled={isBusy}
+              folders={folders}
+              onChange={onFolderChange}
+              value={folderId}
+            />
+          ) : null}
           <FieldShell
             disabled={isBusy}
             error={titleError ?? undefined}
@@ -276,6 +301,7 @@ function UploadShellLayout({
 // then tells the app where it is. The Blob SDK is loaded only when used.
 async function createDraftFromDirectUpload(input: {
   file: File;
+  folderId?: string;
   title: string;
   uploadPrefix: string;
 }) {
@@ -291,6 +317,7 @@ async function createDraftFromDirectUpload(input: {
   return fetch("/api/envelopes", {
     body: JSON.stringify({
       filename: input.file.name,
+      folderId: input.folderId,
       title: input.title,
       uploadKey,
     }),
@@ -299,11 +326,16 @@ async function createDraftFromDirectUpload(input: {
   });
 }
 
-async function createDraftFromForm(input: { file: File; title: string }) {
+async function createDraftFromForm(input: {
+  file: File;
+  folderId?: string;
+  title: string;
+}) {
   const formData = new FormData();
 
   formData.append("file", input.file);
   formData.append("title", input.title);
+  if (input.folderId) formData.append("folderId", input.folderId);
 
   return fetch("/api/envelopes", {
     body: formData,
@@ -317,11 +349,18 @@ type UploadShellProps = {
    * null when uploads go through the app.
    */
   directUploadPrefix?: string | null;
+  folders?: readonly FolderOption[];
+  initialFolderId?: string;
 };
 
-export function UploadShell({ directUploadPrefix = null }: UploadShellProps) {
+export function UploadShell({
+  directUploadPrefix = null,
+  folders = [],
+  initialFolderId = "",
+}: UploadShellProps) {
   const router = useRouter();
   const [title, setTitle] = useState("");
+  const [folderId, setFolderId] = useState(initialFolderId);
   const [summary, setSummary] = useState<UploadSummary | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [serverTitleError, setServerTitleError] = useState<string | null>(null);
@@ -513,7 +552,11 @@ export function UploadShell({ directUploadPrefix = null }: UploadShellProps) {
         return;
       }
 
-      const draftInput = { file: summary.file, title: title.trim() };
+      const draftInput = {
+        file: summary.file,
+        folderId: folderId || undefined,
+        title: title.trim(),
+      };
       const response = directUploadPrefix
         ? await createDraftFromDirectUpload({
             ...draftInput,
@@ -610,8 +653,12 @@ export function UploadShell({ directUploadPrefix = null }: UploadShellProps) {
         type="file"
       />
       <UploadShellLayout
+        allowUnfiled={!initialFolderId}
         canContinue={canContinue}
         errorMessage={errorMessage}
+        folderId={folderId}
+        folders={folders}
+        onFolderChange={setFolderId}
         isBusy={isCreatingDraft}
         isDragActive={isDragActive}
         isSubmitting={isCreatingDraft}

@@ -26,6 +26,7 @@ import {
   getReviewEnvelopeDataForUser,
   listAllEnvelopesForAdmin,
   listEnvelopesForUser,
+  listFolderEnvelopesForUser,
   listTeamEnvelopesForUser,
   replaceDraftEnvelopeSigners,
   sendDraftEnvelope,
@@ -41,6 +42,7 @@ import {
   createTeam,
   deleteTeam,
   listTeamsForUser,
+  moveEnvelopeToFolder,
   removeTeamMember,
   TeamError,
   updateTeam,
@@ -215,10 +217,10 @@ before(async () => {
 });
 
 after(async () => {
-  await database.query(`delete from teams where id = any($1)`, [createdTeams]);
   await database.query(`delete from public."user" where id = any($1)`, [
     createdUsers,
   ]);
+  await database.query(`delete from teams where id = any($1)`, [createdTeams]);
   await database.end();
   await rm(workDir, { force: true, recursive: true });
 });
@@ -578,4 +580,81 @@ test("taking someone off the team takes away what they could see", async () => {
   } finally {
     await addTeamMember(actor, teamId, { email: teammate.email }, database);
   }
+});
+
+test("filing an envelope changes its access from team sharing to folder membership", async () => {
+  const actor = { email: admin.email, userId: admin.id };
+  const first = await createTeam(
+    actor,
+    { name: `Proposals ${marker}` },
+    database,
+    true,
+  );
+  const second = await createTeam(
+    actor,
+    { name: `Policies ${marker}` },
+    database,
+    true,
+  );
+  createdTeams.push(first.id, second.id);
+
+  await addTeamMember(actor, first.id, { email: owner.email }, database);
+  await addTeamMember(actor, first.id, { email: outsider.email }, database);
+  await addTeamMember(actor, second.id, { email: owner.email }, database);
+  await addTeamMember(actor, second.id, { email: otherTeam.email }, database);
+
+  const shared = (await createEnvelope(owner.id, "sent")).envelopeId;
+  const separate = (await createEnvelope(owner.id, "sent")).envelopeId;
+  assert.ok(await resolveEnvelopeViewerAccess(teammate.id, shared, database));
+
+  await moveEnvelopeToFolder(actor, shared, first.id, database);
+  await moveEnvelopeToFolder(actor, separate, second.id, database);
+  assert.equal(
+    await resolveEnvelopeViewerAccess(teammate.id, shared, database),
+    null,
+  );
+  assert.equal(
+    await resolveEnvelopeViewerAccess(outsider.id, separate, database),
+    null,
+  );
+  assert.equal(
+    await resolveEnvelopeViewerAccess(outsider.id, envelopes.sent, database),
+    null,
+  );
+  assert.equal(
+    (await resolveEnvelopeViewerAccess(outsider.id, shared, database))
+      ?.folderId,
+    first.id,
+  );
+  assert.deepEqual(
+    (
+      await listFolderEnvelopesForUser(outsider.id, first.id, {}, database)
+    ).envelopes.map(({ id }) => id),
+    [shared],
+  );
+  assert.deepEqual(
+    (await listFolderEnvelopesForUser(outsider.id, second.id, {}, database))
+      .envelopes,
+    [],
+  );
+  assert.equal(
+    (await listTeamEnvelopesForUser(teammate.id, {}, database)).envelopes.some(
+      ({ id }) => id === shared,
+    ),
+    false,
+  );
+  await assert.rejects(
+    deleteTeam(actor, first.id, database),
+    (error: unknown) => error instanceof TeamError && error.statusCode === 409,
+  );
+
+  await removeTeamMember(actor, first.id, owner.id, database);
+  assert.equal(
+    await resolveEnvelopeViewerAccess(owner.id, shared, database),
+    null,
+  );
+  await assert.rejects(
+    changeEnvelopeReminders(owner.id, shared, null, { database }),
+    refusedAsNotFound,
+  );
 });

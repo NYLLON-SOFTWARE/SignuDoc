@@ -1,4 +1,4 @@
-import { PlusIcon, SearchIcon } from "lucide-react";
+import { FolderIcon, PlusIcon, SearchIcon } from "lucide-react";
 import Link from "next/link";
 import type { ChangeEventHandler, ReactNode } from "react";
 
@@ -13,29 +13,11 @@ import { PageHeader } from "@/components/shared/page-header";
 
 export type DashboardShellState = "default" | "empty" | "error";
 
-/**
- * Whose envelopes the dashboard lists: one's own, one's teams' too, or, for
- * an administrator, everyone's.
- */
-export type DashboardView = "all" | "mine" | "team";
-
-const dashboardViews: readonly DashboardView[] = ["mine", "team", "all"];
-
-const viewLabels: Record<DashboardView, string> = {
-  all: "Everyone's",
-  mine: "Mine",
-  team: "My team",
+export type DashboardFolderLink = {
+  current: boolean;
+  href: string;
+  name: string;
 };
-
-/** The view named in the address, or one's own envelopes. */
-export function parseDashboardView(value: string): DashboardView {
-  return dashboardViews.find((view) => view === value) ?? "mine";
-}
-
-/** The dashboard's address for one view. */
-export function dashboardViewHref(view: DashboardView): string {
-  return view === "mine" ? "/dashboard" : `/dashboard?view=${view}`;
-}
 
 /** Links to the pages before and after this one, when there are any. */
 export type DashboardPagination = {
@@ -89,10 +71,10 @@ const statusPillClasses: Record<EnvelopeStatus, string> = {
 
 type DashboardDocumentsHeaderProps = {
   interactive?: boolean;
-  /** Shown when there is more than one view to choose from. */
-  view?: DashboardView;
-  /** The views this person can choose from. */
-  views?: readonly DashboardView[];
+  view?: "all" | "mine" | "team";
+  folderName?: string;
+  folders?: readonly DashboardFolderLink[];
+  newEnvelopeHref?: string;
 };
 
 type DashboardDocumentsPanelProps = {
@@ -107,12 +89,15 @@ type DashboardDocumentsPanelProps = {
   pagination?: DashboardPagination;
   searchValue: string;
   selectedFilter: DashboardFilter;
-  view?: DashboardView;
+  view?: "all" | "mine" | "team";
+  folderId?: string;
+  newEnvelopeHref?: string;
 };
 
 type EnvelopeGridProps = {
   envelopes: readonly DashboardEnvelopeListItem[];
   interactive: boolean;
+  newEnvelopeHref: string;
 };
 
 type NoResultsStateProps = {
@@ -128,7 +113,9 @@ type ErrorBannerProps = {
 export function DashboardDocumentsHeader({
   interactive = true,
   view,
-  views = [],
+  folderName,
+  folders,
+  newEnvelopeHref = "/envelopes/new",
 }: DashboardDocumentsHeaderProps) {
   const label = (
     <>
@@ -146,37 +133,38 @@ export function DashboardDocumentsHeader({
       <PageHeader
         action={
           interactive ? (
-            <ShellButton href="/envelopes/new">{label}</ShellButton>
+            <ShellButton href={newEnvelopeHref}>{label}</ShellButton>
           ) : (
             <StaticShellButton>{label}</StaticShellButton>
           )
         }
-        description={
-          view === "all"
-            ? "Every envelope in your organization, whoever sent it."
-            : view === "team"
-              ? "Your envelopes, and the ones your teammates have sent."
-              : documentsDescription
-        }
+        description={folderName ? undefined : documentsDescription}
         title={
-          view === "all"
+          folderName ??
+          (view === "all"
             ? "All envelopes"
             : view === "team"
               ? "Team envelopes"
-              : "Documents"
+              : "Documents")
         }
       />
-      {view && interactive && views.length > 1 ? (
-        <nav aria-label="Whose envelopes" className="segmented self-start">
-          {views.map((option) => (
+      {interactive && folders?.length ? (
+        <nav
+          aria-label="Document views and folders"
+          className="flex flex-wrap gap-2"
+        >
+          {folders.map(({ current, href, name }) => (
             <Link
-              aria-current={view === option ? "page" : undefined}
-              className="segmented-item"
-              data-active={view === option}
-              href={dashboardViewHref(option)}
-              key={option}
+              aria-current={current ? "page" : undefined}
+              className={cn(
+                "btn-quiet max-w-full text-start whitespace-normal wrap-anywhere",
+                current && "bg-(--accent-soft) text-(--accent-ink)",
+              )}
+              href={href}
+              key={href}
             >
-              {viewLabels[option]}
+              <FolderIcon aria-hidden="true" className="size-4 shrink-0" />
+              {name}
             </Link>
           ))}
         </nav>
@@ -198,6 +186,8 @@ export function DashboardDocumentsPanel({
   searchValue,
   selectedFilter,
   view,
+  folderId,
+  newEnvelopeHref = "/envelopes/new",
 }: DashboardDocumentsPanelProps) {
   const hasSeededEnvelopes = envelopes.length > 0;
 
@@ -241,7 +231,9 @@ export function DashboardDocumentsPanel({
         {/* Typing narrows what is shown; Enter searches every envelope,
             not only this page. */}
         <SearchForm interactive={interactive}>
-          {view && view !== "mine" ? (
+          {folderId ? (
+            <input name="folder" type="hidden" value={folderId} />
+          ) : view && view !== "mine" ? (
             <input name="view" type="hidden" value={view} />
           ) : null}
           <label className="flex min-h-[2.625rem] w-full items-center gap-2.5 rounded-xl bg-white px-3.5 text-(--tertiary) transition focus-within:ring-3 focus-within:ring-ring/50">
@@ -266,7 +258,11 @@ export function DashboardDocumentsPanel({
       ) : null}
 
       {filteredEnvelopes.length > 0 ? (
-        <EnvelopeGrid envelopes={filteredEnvelopes} interactive={interactive} />
+        <EnvelopeGrid
+          envelopes={filteredEnvelopes}
+          interactive={interactive}
+          newEnvelopeHref={newEnvelopeHref}
+        />
       ) : hasSeededEnvelopes || searchValue || pagination?.newerHref ? (
         <NoResultsState interactive={interactive} onReset={onReset} />
       ) : null}
@@ -340,7 +336,11 @@ function ErrorBanner({ interactive, onRetry }: ErrorBannerProps) {
   );
 }
 
-function EnvelopeGrid({ envelopes, interactive }: EnvelopeGridProps) {
+function EnvelopeGrid({
+  envelopes,
+  interactive,
+  newEnvelopeHref,
+}: EnvelopeGridProps) {
   return (
     <ul className="grid grid-cols-[repeat(auto-fill,minmax(15rem,1fr))] gap-4">
       {envelopes.map((envelope) => (
@@ -349,7 +349,7 @@ function EnvelopeGrid({ envelopes, interactive }: EnvelopeGridProps) {
         </li>
       ))}
       <li className="min-w-0">
-        <UploadCard interactive={interactive} />
+        <UploadCard interactive={interactive} href={newEnvelopeHref} />
       </li>
     </ul>
   );
@@ -436,7 +436,13 @@ function EnvelopeCard({
 }
 
 /** The last tile in the grid: the way to add the next document. */
-function UploadCard({ interactive }: { interactive: boolean }) {
+function UploadCard({
+  interactive,
+  href,
+}: {
+  interactive: boolean;
+  href: string;
+}) {
   const content = (
     <>
       <span className="inline-flex size-11 items-center justify-center rounded-[0.875rem] bg-(--accent-soft) text-(--accent)">
@@ -458,7 +464,7 @@ function UploadCard({ interactive }: { interactive: boolean }) {
         className,
         "transition hover:border-(--accent) hover:bg-(--accent-softer) hover:text-(--accent-ink)",
       )}
-      href="/envelopes/new"
+      href={href}
     >
       {content}
     </Link>

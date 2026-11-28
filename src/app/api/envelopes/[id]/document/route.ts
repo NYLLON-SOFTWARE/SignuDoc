@@ -32,20 +32,23 @@ export async function GET(
   const { id } = await context.params;
 
   try {
-    // Its sender's, or, once sent, a teammate's or any administrator's.
     const access = await resolveEnvelopeViewerAccess(
       session.user.id,
       id,
       getDb(),
     );
+    if (!access) {
+      throw new EnvelopeDocumentAccessError("Envelope not found.", 404);
+    }
+
     const document = await getDraftEnvelopeDocumentForUser(
-      access?.ownerUserId ?? session.user.id,
+      access.ownerUserId,
       id,
       { database: getDb() },
     );
 
-    if (access && !access.viewerIsOwner) {
-      // An administrator or a teammate opening someone else's document is
+    if (!access.viewerIsOwner) {
+      // An administrator or folder member opening someone else's document is
       // on record in the install's audit trail, as a download of its files
       // is. No record, no file.
       await recordSystemAuditEvent({

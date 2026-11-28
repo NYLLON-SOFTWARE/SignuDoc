@@ -13,7 +13,11 @@ const GENERIC_ERROR_MESSAGE = "Something went wrong. Please try again.";
 
 type TeamsResponse = { error?: string; teams?: Team[] } | null;
 
-export function TeamsPanel() {
+export function TeamsPanel({ kind = "team" }: { kind?: "team" | "folder" }) {
+  const isFolder = kind === "folder";
+  const groupName = isFolder ? "Folder" : "Team";
+  const groupPlural = isFolder ? "Folders" : "Teams";
+  const query = isFolder ? "?kind=folder" : "";
   const [teams, setTeams] = useState<Team[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
@@ -26,7 +30,7 @@ export function TeamsPanel() {
   useEffect(() => {
     const controller = new AbortController();
 
-    fetch("/api/admin/teams", { signal: controller.signal })
+    fetch(`/api/admin/teams${query}`, { signal: controller.signal })
       .then(async (response) => {
         const payload = (await response
           .json()
@@ -48,7 +52,7 @@ export function TeamsPanel() {
       });
 
     return () => controller.abort();
-  }, []);
+  }, [query]);
 
   /** Sends one change, and shows the list as it stands after it. */
   async function change(
@@ -64,7 +68,7 @@ export function TeamsPanel() {
     setError(null);
 
     try {
-      const response = await fetch(path, {
+      const response = await fetch(`${path}${query}`, {
         ...(body === undefined
           ? {}
           : {
@@ -122,7 +126,7 @@ export function TeamsPanel() {
   }
 
   async function handleRename(team: Team) {
-    const name = window.prompt("New name for the team", team.name);
+    const name = window.prompt(`New name for the ${kind}`, team.name);
 
     if (name === null || name.trim() === team.name) {
       return;
@@ -136,7 +140,9 @@ export function TeamsPanel() {
   async function handleDelete(team: Team) {
     if (
       !window.confirm(
-        `Delete the team "${team.name}"? Its members keep their envelopes, but stop seeing each other's.`,
+        isFolder
+          ? `Delete the folder "${team.name}"? Only empty folders can be deleted.`
+          : `Delete the team "${team.name}"? Its members keep their envelopes, but stop seeing each other's.`,
       )
     ) {
       return;
@@ -149,13 +155,12 @@ export function TeamsPanel() {
     <div className="space-y-5 border-t border-(--border) pt-8">
       <div className="space-y-2">
         <h3 className="text-lg font-extrabold tracking-[-0.02em] text-(--fg)">
-          Teams
+          {groupPlural}
         </h3>
         <p className="max-w-2xl text-sm leading-6 text-(--secondary)">
-          People on a team see the envelopes their teammates send: who has
-          signed, the audit trail, and the signed PDF and certificate once it is
-          finished. Only the sender can change, remind or void an envelope, and
-          drafts stay private. Administrators see every sent envelope.
+          {isFolder
+            ? "People with access to a folder can see its sent envelopes. Drafts stay private to their sender. Administrators can see every sent envelope."
+            : "People on a team can see the unfiled envelopes their teammates send. Only the sender can change, remind or void an envelope, and drafts stay private."}
         </p>
       </div>
 
@@ -171,14 +176,14 @@ export function TeamsPanel() {
       >
         <label className="grid gap-1.5">
           <span className="text-[0.8125rem] font-semibold text-(--secondary)">
-            Team name
+            {groupName} name
           </span>
           <input
             className="field-input"
             disabled={pending || loading}
             maxLength={80}
             onChange={(event) => setNewName(event.target.value)}
-            placeholder="Sales"
+            placeholder={isFolder ? "Vendor agreements" : "Sales"}
             type="text"
             value={newName}
           />
@@ -187,22 +192,24 @@ export function TeamsPanel() {
           disabled={pending || loading || newName.trim().length === 0}
           type="submit"
         >
-          Add team
+          Add {kind}
         </ShellButton>
       </form>
 
       {teams === null && !error ? (
-        <p className="text-sm text-(--secondary)">Loading teams...</p>
+        <p className="text-sm text-(--secondary)">
+          Loading {groupPlural.toLowerCase()}...
+        </p>
       ) : null}
 
       {teams && teams.length === 0 ? (
         <p className="text-sm text-(--secondary)">
-          No teams yet. Without one, each person sees only their own envelopes.
+          No {groupPlural.toLowerCase()} yet.
         </p>
       ) : null}
 
       {teams && teams.length > 0 ? (
-        <ul aria-label="Teams" className="space-y-3">
+        <ul aria-label={groupPlural} className="space-y-3">
           {teams.map((team) => (
             <li className="well space-y-3 p-4" key={team.id}>
               <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">

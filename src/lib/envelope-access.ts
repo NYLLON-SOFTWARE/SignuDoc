@@ -1,27 +1,21 @@
 import { type DbExecutor, getDb, queryOne } from "./db/connection.ts";
 
-// Whose envelope a signed-in account is looking at. Its sender sees it, as
-// before. Someone on a team with the sender sees it once it has been sent,
-// to read and download. An administrator sees every envelope in the
-// install that has been sent, to read, download and, once it is finished,
-// delete. A draft stays its sender's own until it is sent. Everything else
-// that changes an envelope (sending, voiding, reminders, editing) stays
-// with its sender.
-
 export type EnvelopeViewerAccess = {
+  folderId: string | null;
   ownerEmail: string;
   ownerName: string | null;
   ownerUserId: string;
   /** Whether the viewer is an administrator of the install. */
   viewerIsAdmin: boolean;
   /**
-   * False when an administrator, or someone on a team with the sender, is
-   * looking at someone else's envelope.
+   * False when an administrator or folder member views someone else's envelope.
    */
   viewerIsOwner: boolean;
 };
 
 type AccessRow = {
+  canAccessFolder: boolean;
+  folderId: string | null;
   ownerEmail: string;
   ownerName: string | null;
   ownerUserId: string;
@@ -31,10 +25,29 @@ type AccessRow = {
 };
 
 /**
- * SQL that is true when the account whose id is the parameter `viewer`
- * (for example "$1") is on a team with the sender of the envelope row
- * named by `alias`.
+ * SQL for the folder boundary. Callers also enforce envelope ownership,
+ * status, and action-specific permissions.
  */
+export function canAccessEnvelopeFolderCondition(
+  viewer: string,
+  alias = "envelopes",
+): string {
+  return `(
+    ${alias}.folder_id IS NULL
+    OR EXISTS (
+      SELECT 1 FROM public."user"
+      WHERE id = ${viewer} AND role = 'admin'
+    )
+    OR EXISTS (
+      SELECT 1
+      FROM team_members membership
+      JOIN teams folder ON folder.id = membership.team_id AND folder.is_folder
+      WHERE membership.user_id = ${viewer}
+        AND membership.team_id = ${alias}.folder_id
+    )
+  )`;
+}
+
 export function sharesTeamCondition(
   viewer: string,
   alias = "envelopes",
@@ -42,19 +55,14 @@ export function sharesTeamCondition(
   return `EXISTS (
     SELECT 1
     FROM team_members viewer_membership
-    JOIN team_members owner_membership
-      ON owner_membership.team_id = viewer_membership.team_id
+    JOIN team_members owner_membership ON owner_membership.team_id = viewer_membership.team_id
+    JOIN teams team ON team.id = viewer_membership.team_id AND NOT team.is_folder
     WHERE viewer_membership.user_id = ${viewer}
       AND owner_membership.user_id = ${alias}.user_id
   )`;
 }
 
-/**
- * The envelope's sender, when `viewerUserId` may see it: as its sender, as
- * someone on a team with them, or as an administrator. Null when the
- * envelope does not exist or is not theirs to see, which callers report as
- * "not found".
- */
+/** The sender and access level for a visible envelope. */
 export async function resolveEnvelopeViewerAccess(
   viewerUserId: string,
   envelopeId: string,
@@ -65,11 +73,13 @@ export async function resolveEnvelopeViewerAccess(
     `
       SELECT
         e.user_id AS "ownerUserId",
+        e.folder_id AS "folderId",
         owner.email AS "ownerEmail",
         owner.name AS "ownerName",
         e.status,
         (SELECT role FROM public."user" WHERE id = $2) AS "viewerRole",
-        ${sharesTeamCondition("$2", "e")} AS "sharesTeam"
+        ${canAccessEnvelopeFolderCondition("$2", "e")} AS "canAccessFolder",
+        (e.folder_id IS NULL AND ${sharesTeamCondition("$2", "e")}) AS "sharesTeam"
       FROM envelopes e
       JOIN public."user" owner ON owner.id = e.user_id
       WHERE e.id = $1
@@ -83,16 +93,19 @@ export async function resolveEnvelopeViewerAccess(
 
   const viewerIsOwner = row.ownerUserId === viewerUserId;
 
-  // Someone else's envelope only for an administrator or a teammate, and
-  // never their draft.
   if (
-    !viewerIsOwner &&
-    ((row.viewerRole !== "admin" && !row.sharesTeam) || row.status === "draft")
+    !row.canAccessFolder ||
+    (!viewerIsOwner &&
+      (row.status === "draft" ||
+        (row.folderId === null &&
+          row.viewerRole !== "admin" &&
+          !row.sharesTeam)))
   ) {
     return null;
   }
 
   return {
+    folderId: row.folderId,
     ownerEmail: row.ownerEmail,
     ownerName: row.ownerName,
     ownerUserId: row.ownerUserId,

@@ -17,6 +17,7 @@ import {
 import type { TemplateListItem } from "@/lib/templates";
 
 type TemplatesShellProps = {
+  folder?: { id: string; name: string };
   initialState?: "error";
   templates?: readonly TemplateListItem[];
 };
@@ -25,10 +26,12 @@ const pageDescription =
   "Documents you send often, with their fields and signing order already in place.";
 
 export function TemplatesShell({
+  folder,
   initialState,
   templates = [],
 }: TemplatesShellProps) {
   const router = useRouter();
+  const folderQuery = folder ? `?folder=${encodeURIComponent(folder.id)}` : "";
   const [pendingDelete, setPendingDelete] = useState<TemplateListItem | null>(
     null,
   );
@@ -70,9 +73,14 @@ export function TemplatesShell({
   if (initialState === "error") {
     return (
       <div className="space-y-5">
-        <PageHeader description={pageDescription} title="Templates" />
+        <PageHeader
+          description={
+            folder ? `Start an agreement in ${folder.name}.` : pageDescription
+          }
+          title="Templates"
+        />
         <StatusPanel
-          action={{ href: "/templates", label: "Retry" }}
+          action={{ href: `/templates${folderQuery}`, label: "Retry" }}
           description="We couldn't load your templates. Try again in a moment."
           title="Couldn't load templates"
           tone="error"
@@ -83,7 +91,12 @@ export function TemplatesShell({
 
   return (
     <div className="space-y-5">
-      <PageHeader description={pageDescription} title="Templates" />
+      <PageHeader
+        description={
+          folder ? `Start an agreement in ${folder.name}.` : pageDescription
+        }
+        title="Templates"
+      />
 
       {templates.length === 0 ? (
         <section
@@ -104,7 +117,9 @@ export function TemplatesShell({
                 template. Next time, you only name the people who sign.
               </p>
             </div>
-            <ShellButton href="/dashboard">Go to documents</ShellButton>
+            <ShellButton href={`/dashboard${folderQuery}`}>
+              Go to documents
+            </ShellButton>
           </div>
         </section>
       ) : (
@@ -153,16 +168,18 @@ export function TemplatesShell({
                   >
                     Delete
                   </button>
+                  {!folder ? (
+                    <ShellButton
+                      className="min-h-11"
+                      href={`/templates/${template.id}/send-many`}
+                      variant="secondary"
+                    >
+                      Send to many
+                    </ShellButton>
+                  ) : null}
                   <ShellButton
                     className="min-h-11"
-                    href={`/templates/${template.id}/send-many`}
-                    variant="secondary"
-                  >
-                    Send to many
-                  </ShellButton>
-                  <ShellButton
-                    className="min-h-11"
-                    href={`/templates/${template.id}/use`}
+                    href={`/templates/${template.id}/use${folderQuery}`}
                   >
                     Use template
                   </ShellButton>

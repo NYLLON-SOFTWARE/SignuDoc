@@ -347,6 +347,54 @@ test("the daily job tells the sender once that a deadline passed", async () => {
   assert.equal((await verifyAuditChain(expired.envelopeId, database)).ok, true);
 });
 
+test("a passed deadline is noted even after the sender loses its folder", async () => {
+  const now = unixNow();
+  const expired = await createSentEnvelope({ expiresAt: now - 60 });
+  const folderId = randomUUID();
+  await database.query(
+    `insert into teams (id, name, is_folder, created_at, updated_at) values ($1, $2, true, $3, $3)`,
+    [folderId, `Folder ${folderId}`, now],
+  );
+  try {
+    // Filed in a folder its sender is not, or is no longer, a member of.
+    await database.query(`update envelopes set folder_id = $1 where id = $2`, [
+      folderId,
+      expired.envelopeId,
+    ]);
+    const { sent, service } = recordingEmailService();
+
+    const summary = await runEnvelopeSchedule({
+      database,
+      emailService: service,
+      now,
+    });
+
+    assert.equal(
+      summary.expiryNoticeFailures.includes(expired.envelopeId),
+      false,
+    );
+    assert.equal(
+      sent.some((message) => message.to.startsWith(expired.userId)),
+      false,
+    );
+    assert.equal(
+      (await readEnvelope(expired.envelopeId)).expiry_notified_at,
+      now,
+    );
+    assert.deepEqual(await auditEvents(expired.envelopeId), ["expired"]);
+    assert.equal(
+      (await verifyAuditChain(expired.envelopeId, database)).ok,
+      true,
+    );
+  } finally {
+    await database.query(
+      `update envelopes set folder_id = null where id = $1`,
+      [expired.envelopeId],
+    );
+    await database.query(`delete from teams where id = $1`, [folderId]);
+  }
+});
+
 test("a notice whose email fails is tried again on the next run", async () => {
   const now = unixNow();
   const { envelopeId, userId } = await createSentEnvelope({

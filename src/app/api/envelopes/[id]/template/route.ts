@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { ZodError } from "zod";
 
-import { requireVerifiedSenderSession } from "@/lib/auth/route-session";
+import { requireEnvelopeOwnerSession } from "@/lib/auth/route-session";
 import { getDb } from "@/lib/db/connection";
 import { logRouteError } from "@/lib/security/logging";
 import {
@@ -23,7 +23,8 @@ export async function POST(
   request: Request,
   context: EnvelopeTemplateRouteContext,
 ) {
-  const sessionResult = await requireVerifiedSenderSession(request);
+  const { id } = await context.params;
+  const sessionResult = await requireEnvelopeOwnerSession(request, id);
 
   if (sessionResult instanceof Response) {
     return sessionResult;
@@ -43,7 +44,6 @@ export async function POST(
     return rateLimitResponse;
   }
 
-  const { id } = await context.params;
   const body = (await request.json().catch(() => null)) as unknown;
 
   try {

@@ -2,7 +2,6 @@ import {
   EnvelopeDetailShell,
   type EnvelopeDeletionNotice,
 } from "@/components/envelopes/envelope-detail-shell";
-import { isAdminUser } from "@/lib/auth/admin";
 import { getAuthSession } from "@/lib/auth/server";
 import { getDb } from "@/lib/db/connection";
 import {
@@ -11,6 +10,7 @@ import {
 } from "@/lib/envelope-access";
 import { getScheduledEnvelopeDeletion } from "@/lib/envelope-deletion";
 import { getEnvelopeDetailDataForUser } from "@/lib/envelopes";
+import { listFoldersForUser } from "@/lib/teams";
 
 const deletionDateFormatter = new Intl.DateTimeFormat("en-US", {
   day: "numeric",
@@ -35,12 +35,13 @@ export default async function EnvelopeDetailPage({
   let initialState: "error" | "not-found" | undefined;
   let canDeleteFinished = false;
   let ownerLabel: string | undefined;
-  let ownerListView: "all" | "team" = "all";
+  let folder: { id: string; name: string } | undefined;
+  let destinationFolders: { id: string; name: string }[] = [];
   let scheduledDeletion: EnvelopeDeletionNotice | undefined;
 
   try {
     const session = await getAuthSession();
-    // Its sender's, or, once sent, a teammate's or any administrator's.
+    // A sent agreement can also be read by folder members or administrators.
     const access = session
       ? await resolveEnvelopeViewerAccess(session.user.id, id, getDb())
       : null;
@@ -51,14 +52,17 @@ export default async function EnvelopeDetailPage({
     initialState = detailRecord ? undefined : "not-found";
     ownerLabel =
       access && !access.viewerIsOwner ? formatEnvelopeOwner(access) : undefined;
-    // Only an administrator may delete a finished envelope.
-    canDeleteFinished =
-      detailRecord !== null &&
-      session !== null &&
-      (await isAdminUser(session.user.id, getDb()));
-    // Back to everyone's envelopes for an administrator, to the team's
-    // for a teammate.
-    ownerListView = canDeleteFinished ? "all" : "team";
+    canDeleteFinished = detailRecord !== null && access?.viewerIsAdmin === true;
+
+    if (session && access && (access.folderId || access.viewerIsAdmin)) {
+      const folders = await listFoldersForUser(session.user.id, getDb());
+      folder = folders.find(({ id: folderId }) => folderId === access.folderId);
+      if (access.viewerIsAdmin) {
+        destinationFolders = folders.filter(
+          ({ id: folderId }) => folderId !== access.folderId,
+        );
+      }
+    }
 
     const scheduled = detailRecord
       ? await getScheduledEnvelopeDeletion(id, getDb())
@@ -81,11 +85,13 @@ export default async function EnvelopeDetailPage({
   return (
     <EnvelopeDetailShell
       canDeleteFinished={canDeleteFinished}
+      destinationFolders={destinationFolders}
       envelopeId={id}
+      folder={folder}
       initialState={initialState}
       key={id}
       ownerLabel={ownerLabel}
-      ownerListView={ownerListView}
+      ownerListView={canDeleteFinished ? "all" : "team"}
       record={detailRecord ?? undefined}
       scheduledDeletion={scheduledDeletion}
     />

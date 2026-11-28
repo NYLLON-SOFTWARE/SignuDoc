@@ -73,6 +73,7 @@ test("the sender sees their own envelope", async () => {
   assert.deepEqual(
     await resolveEnvelopeViewerAccess(sender.userId, envelopeId, database),
     {
+      folderId: null,
       ownerEmail: sender.email,
       ownerName: "Sam Sender",
       ownerUserId: sender.userId,
@@ -90,6 +91,7 @@ test("an administrator sees another member's envelope, and whose it is", async (
   assert.deepEqual(
     await resolveEnvelopeViewerAccess(admin.userId, envelopeId, database),
     {
+      folderId: null,
       ownerEmail: sender.email,
       ownerName: "Sam Sender",
       ownerUserId: sender.userId,
@@ -180,11 +182,12 @@ test("every envelope can be reached, a page at a time", async () => {
 
 test("searching every envelope finds a sender by name or address", async () => {
   const sender = await createUser("user", "Quentin Quarry");
+  const admin = await createUser("admin", "Avery Admin");
   const envelopeId = await createEnvelope(sender.userId, "Unrelated title");
 
   for (const search of ["quentin quarry", sender.email.slice(0, 12)]) {
     const result = await listAllEnvelopesForAdmin(
-      sender.userId,
+      admin.userId,
       { limit: 100, search },
       database,
     );

@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { ZodError } from "zod";
 
-import { requireVerifiedSenderSession } from "@/lib/auth/route-session";
+import { requireEnvelopeOwnerSession } from "@/lib/auth/route-session";
 import { getDb } from "@/lib/db/connection";
 import { copyEnvelopeToDraft, EnvelopeMutationError } from "@/lib/envelopes";
 import { logRouteError } from "@/lib/security/logging";
@@ -10,6 +10,7 @@ import {
   buildRateLimitKey,
 } from "@/lib/security/route-controls";
 import { getClientIpAddress, getRequestPathname } from "@/lib/security/request";
+import { TeamError } from "@/lib/teams";
 
 type EnvelopeCopyRouteContext = {
   params: Promise<{
@@ -26,14 +27,14 @@ export async function POST(
   request: Request,
   context: EnvelopeCopyRouteContext,
 ) {
-  const sessionResult = await requireVerifiedSenderSession(request);
+  const { id } = await context.params;
+  const sessionResult = await requireEnvelopeOwnerSession(request, id);
 
   if (sessionResult instanceof Response) {
     return sessionResult;
   }
 
   const session = sessionResult;
-  const { id } = await context.params;
   const ipAddress = getClientIpAddress(request.headers);
   // The same allowance as uploading a document or using a template: each
   // makes a draft and stores a copy of the PDF, so a per-envelope limit
@@ -67,7 +68,7 @@ export async function POST(
       );
     }
 
-    if (error instanceof EnvelopeMutationError) {
+    if (error instanceof EnvelopeMutationError || error instanceof TeamError) {
       return NextResponse.json(
         { error: error.message },
         { headers: noStore, status: error.statusCode },

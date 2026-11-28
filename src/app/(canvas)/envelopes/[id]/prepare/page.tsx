@@ -3,6 +3,7 @@ import { notFound, redirect } from "next/navigation";
 import { PrepareLiveShell } from "@/components/envelopes/prepare-live-shell";
 import { getAuthSession } from "@/lib/auth/server";
 import { getDb } from "@/lib/db/connection";
+import { resolveEnvelopeViewerAccess } from "@/lib/envelope-access";
 import { getPrepareEnvelopeDataForUser } from "@/lib/envelopes";
 
 type PrepareEnvelopePageProps = {
@@ -20,11 +21,15 @@ export default async function PrepareEnvelopePage({
   const session = await getAuthSession();
 
   try {
-    record = session
-      ? await getPrepareEnvelopeDataForUser(session.user.id, id, {
-          database: getDb(),
-        })
-      : null;
+    const database = getDb();
+    record =
+      session &&
+      (await resolveEnvelopeViewerAccess(session.user.id, id, database))
+        ?.viewerIsOwner
+        ? await getPrepareEnvelopeDataForUser(session.user.id, id, {
+            database,
+          })
+        : null;
   } catch {
     initialState = "error";
   }

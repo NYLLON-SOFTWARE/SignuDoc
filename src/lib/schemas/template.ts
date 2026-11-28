@@ -8,6 +8,7 @@ import {
 import {
   emailSchema,
   envelopeTitleSchema,
+  folderIdSchema,
   idSchema,
   nameSchema,
   nonEmptyStringSchema,
@@ -83,6 +84,7 @@ export const saveTemplateSchema = z.object({
 
 /** Starting an envelope from a template: who fills each role, in order. */
 export const useTemplateSchema = z.object({
+  folderId: folderIdSchema.optional(),
   signers: z
     .array(
       z.object({

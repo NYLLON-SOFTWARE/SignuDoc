@@ -48,6 +48,7 @@ const EVENT_LABELS: Record<SystemAuditEvent["event"], string> = {
   signed_out: "Signed out",
   signing_locked: "Signing locked",
   signing_unlocked: "Signing unlocked",
+  envelope_folder_changed: "Agreement moved",
   team_created: "Team made",
   team_deleted: "Team deleted",
   team_member_added: "Added to a team",
@@ -145,6 +146,10 @@ function describeEvent(event: SystemAuditEvent): string {
     case "team_deleted":
     case "team_updated":
       return typeof metadata.teamName === "string" ? metadata.teamName : "";
+    case "envelope_folder_changed":
+      return typeof metadata.toFolderName === "string"
+        ? metadata.toFolderName
+        : "";
     case "team_member_added":
     case "team_member_removed":
       return [

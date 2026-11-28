@@ -1,3 +1,4 @@
+import { resolveEnvelopeViewerAccess } from "./envelope-access.ts";
 import { Buffer } from "node:buffer";
 import { randomUUID } from "node:crypto";
 
@@ -1214,6 +1215,7 @@ async function sendCompletionEmails(input: {
   envelopeId: string;
   envelopeTitle: string;
   sender: SenderRow;
+  senderId: string;
   signers: Array<ReturnType<typeof signerRecordSchema.parse>>;
 }) {
   const fileNameStem =
@@ -1320,6 +1322,19 @@ async function sendCompletionEmails(input: {
 
   for (const [index, { message, signerId }] of messages.entries()) {
     try {
+      if (
+        index === 0 &&
+        !(
+          await resolveEnvelopeViewerAccess(
+            input.senderId,
+            input.envelopeId,
+            input.database,
+          )
+        )?.viewerIsOwner
+      ) {
+        continue;
+      }
+
       const delivery = await input.emailService.send(message, {
         idempotencyKey: `completion/${input.envelopeId}/${String(index)}`,
       });
@@ -3424,6 +3439,7 @@ async function submitSigningOnce(
         envelopeId: context.envelope.id,
         envelopeTitle: context.envelope.title,
         sender: context.sender,
+        senderId: context.envelope.userId,
         signers: completedSigners,
       });
     } catch (error) {
@@ -3830,29 +3846,39 @@ async function declineSigningOnce(
   });
 
   try {
-    const delivery = await emailService.send(
-      buildDeclineNotificationEmail({
-        branding: await getBranding(),
-        declineReason,
-        envelopeId: context.envelope.id,
-        envelopeTitle: context.envelope.title,
-        rejected: isApprover(context.signer),
-        senderEmail: context.sender.email,
-        senderName: normalizeSenderName(context.sender),
-        signerEmail: context.signer.email,
-        signerName: context.signer.name,
-      }),
-    );
+    if (
+      (
+        await resolveEnvelopeViewerAccess(
+          context.envelope.userId,
+          context.envelope.id,
+          database,
+        )
+      )?.viewerIsOwner
+    ) {
+      const delivery = await emailService.send(
+        buildDeclineNotificationEmail({
+          branding: await getBranding(),
+          declineReason,
+          envelopeId: context.envelope.id,
+          envelopeTitle: context.envelope.title,
+          rejected: isApprover(context.signer),
+          senderEmail: context.sender.email,
+          senderName: normalizeSenderName(context.sender),
+          signerEmail: context.signer.email,
+          signerName: context.signer.name,
+        }),
+      );
 
-    await recordEmailSent(
-      {
-        envelopeId: context.envelope.id,
-        messageId: delivery.messageId,
-        recipient: context.sender.email,
-        template: "decline_notification",
-      },
-      database,
-    );
+      await recordEmailSent(
+        {
+          envelopeId: context.envelope.id,
+          messageId: delivery.messageId,
+          recipient: context.sender.email,
+          template: "decline_notification",
+        },
+        database,
+      );
+    }
   } catch (error) {
     console.error(
       `Failed to send decline notification for envelope ${context.envelope.id}:`,

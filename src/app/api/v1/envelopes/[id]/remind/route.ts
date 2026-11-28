@@ -1,6 +1,6 @@
 import { apiError, apiJson } from "@/lib/api/http";
 import { getApiEnvelope } from "@/lib/api/envelopes";
-import { handleApi } from "@/lib/api/route";
+import { handleApiEnvelope } from "@/lib/api/route";
 import { sendManualEnvelopeNudge } from "@/lib/reminders";
 
 type Context = { params: Promise<{ id: string }> };
@@ -10,10 +10,11 @@ type Context = { params: Promise<{ id: string }> };
 export async function POST(request: Request, context: Context) {
   const { id } = await context.params;
 
-  return handleApi(
+  return handleApiEnvelope(
     request,
     "write",
     "api_envelope_remind_failure",
+    id,
     async ({ actor }) => {
       await sendManualEnvelopeNudge(actor.userId, id, {
         ipAddress: actor.ipAddress,

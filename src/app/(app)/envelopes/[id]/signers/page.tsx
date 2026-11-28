@@ -3,6 +3,7 @@ import { notFound, redirect } from "next/navigation";
 import { SignersShell } from "@/components/envelopes/signers-shell";
 import { getAuthSession } from "@/lib/auth/server";
 import { getDb } from "@/lib/db/connection";
+import { resolveEnvelopeViewerAccess } from "@/lib/envelope-access";
 import { getDraftSignerStepDataForUser } from "@/lib/envelopes";
 
 type SignersPageProps = {
@@ -18,9 +19,13 @@ export default async function SignersPage({ params }: SignersPageProps) {
 
   try {
     const session = await getAuthSession();
-    record = session
-      ? await getDraftSignerStepDataForUser(session.user.id, id, getDb())
-      : null;
+    const database = getDb();
+    record =
+      session &&
+      (await resolveEnvelopeViewerAccess(session.user.id, id, database))
+        ?.viewerIsOwner
+        ? await getDraftSignerStepDataForUser(session.user.id, id, database)
+        : null;
   } catch {
     initialState = "error";
   }

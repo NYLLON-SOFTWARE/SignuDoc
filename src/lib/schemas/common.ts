@@ -1,6 +1,7 @@
 import { z } from "zod";
 
 export const idSchema = z.string().trim().min(1);
+export const folderIdSchema = idSchema.max(80);
 export const nonEmptyStringSchema = z.string().trim().min(1);
 export const emailSchema = z.string().trim().email().max(320);
 export const nameSchema = nonEmptyStringSchema.max(120);

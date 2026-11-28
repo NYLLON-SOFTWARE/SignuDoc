@@ -7,7 +7,7 @@ import {
   createDraftEnvelope,
 } from "@/lib/envelopes";
 import { getDb } from "@/lib/db/connection";
-import { envelopeTitleSchema } from "@/lib/schemas/common";
+import { envelopeTitleSchema, folderIdSchema } from "@/lib/schemas/common";
 import { logRouteError } from "@/lib/security/logging";
 import {
   applyRateLimit,
@@ -26,6 +26,7 @@ import {
   type StorageService,
 } from "@/lib/services/storage";
 import { isPendingUploadKey } from "@/lib/services/storage-keys";
+import { TeamError } from "@/lib/teams";
 import { MAX_REQUEST_BODY_BYTES } from "@/lib/types/domain";
 
 export async function POST(request: Request) {
@@ -64,6 +65,7 @@ export async function POST(request: Request) {
     const result = await createDraftEnvelope(
       session.user.id,
       {
+        folderId: draftRequest.folderId,
         sourcePdf: await draftRequest.readSourcePdf(),
         title: draftRequest.title,
       },
@@ -76,6 +78,12 @@ export async function POST(request: Request) {
       status: 201,
     });
   } catch (error) {
+    if (error instanceof TeamError) {
+      return NextResponse.json(
+        { error: error.message },
+        { status: error.statusCode },
+      );
+    }
     if (
       error instanceof DocumentImportError ||
       error instanceof PendingUploadError
@@ -108,6 +116,7 @@ type SourcePdf = {
 
 type DraftRequest = {
   cleanUp: () => Promise<void>;
+  folderId?: string;
   readSourcePdf: () => Promise<SourcePdf>;
   title: string;
 };
@@ -141,10 +150,16 @@ async function readFormRequest(
   }
 
   const parsedTitle = envelopeTitleSchema.safeParse(formData.get("title"));
+  const parsedFolder = folderIdSchema
+    .optional()
+    .safeParse(formData.get("folderId") ?? undefined);
   const uploadedFile = formData.get("file");
 
   if (!parsedTitle.success) {
     return invalidRequest(parsedTitle.error.issues[0]?.message);
+  }
+  if (!parsedFolder.success) {
+    return invalidRequest("Invalid folder.");
   }
 
   if (!(uploadedFile instanceof File)) {
@@ -153,6 +168,7 @@ async function readFormRequest(
 
   return {
     cleanUp: async () => undefined,
+    folderId: parsedFolder.data,
     readSourcePdf: async () => ({
       body: new Uint8Array(await uploadedFile.arrayBuffer()),
       contentType: uploadedFile.type,
@@ -164,6 +180,7 @@ async function readFormRequest(
 
 const directUploadRequestSchema = z.object({
   filename: z.string().trim().min(1).max(255),
+  folderId: folderIdSchema.optional(),
   title: envelopeTitleSchema,
   uploadKey: z.string().min(1).max(512),
 });
@@ -191,7 +208,7 @@ async function readDirectUploadRequest(
     );
   }
 
-  const { filename, title, uploadKey } = parsedRequest.data;
+  const { filename, folderId, title, uploadKey } = parsedRequest.data;
 
   // Checked here as well as on read, so that nothing outside the user's
   // own pending folder can ever be handed to cleanUp.
@@ -208,6 +225,7 @@ async function readDirectUploadRequest(
         await discardPendingUpload({ key: uploadKey, storageService });
       }
     },
+    folderId,
     readSourcePdf: async () => {
       storageService = createStorageService();
 

@@ -763,9 +763,9 @@ test("a template saved while its account is being deleted leaves no document beh
   ).filter((entry) => entry.endsWith("original.pdf"));
 
   assert.deepEqual(keptDocuments, []);
-  // The deletion went first, so the save found no account to keep a
-  // template for, and took its copy of the document back.
-  assert.match(String(refusal), /foreign key/);
+  // Deletion removed the source before it could be locked, so the save
+  // took its copy of the document back.
+  assert.ok(refusal instanceof TemplateError && refusal.statusCode === 404);
   assert.equal(
     (await database.query(`select 1 from "user" where id = $1`, [userId]))
       .rowCount,

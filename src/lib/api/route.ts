@@ -8,6 +8,7 @@ import {
 } from "../auth/api-key.ts";
 import { DownloadAccessError } from "../downloads.ts";
 import { EmbeddingError } from "../embedding.ts";
+import { resolveEnvelopeViewerAccess } from "../envelope-access.ts";
 import {
   EnvelopeDocumentAccessError,
   EnvelopeMutationError,
@@ -175,6 +176,25 @@ export async function handleApi(
 
     return withRateLimitHeaders(internalError(), principal.rateLimit);
   }
+}
+
+export function handleApiEnvelope(
+  request: Request,
+  scope: ApiKeyScope,
+  category: string,
+  envelopeId: string,
+  handler: (context: ApiContext) => Promise<Response>,
+): Promise<Response> {
+  return handleApi(request, scope, category, async (context) => {
+    const access = await resolveEnvelopeViewerAccess(
+      context.actor.userId,
+      envelopeId,
+    );
+
+    return access?.viewerIsOwner
+      ? handler(context)
+      : apiError(404, "not_found", "Envelope not found.");
+  });
 }
 
 type ApiResult = { body: unknown; status: number };

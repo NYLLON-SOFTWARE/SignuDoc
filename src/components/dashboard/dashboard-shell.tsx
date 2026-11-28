@@ -8,11 +8,10 @@ import {
   DashboardDocumentsHeader,
   DashboardDocumentsPanel,
   dashboardStatusFilterMap,
-  dashboardViewHref,
   type DashboardFilter,
   type DashboardPagination,
   type DashboardShellState,
-  type DashboardView,
+  type DashboardFolderLink,
 } from "@/components/dashboard/dashboard-documents-surface";
 import { DocumentThumbnail } from "@/components/shared/document-thumbnail";
 import { ShellButton } from "@/components/shared/form-shell";
@@ -23,10 +22,10 @@ type DashboardShellProps = {
   initialSearch?: string;
   initialState?: DashboardShellState;
   pagination?: DashboardPagination;
-  /** Whose envelopes are listed, when there is a choice. */
-  view?: DashboardView;
-  /** The views this person can choose from. */
-  views?: readonly DashboardView[];
+  view?: "all" | "mine" | "team";
+  folder?: { id: string; name: string };
+  folders?: readonly DashboardFolderLink[];
+  resetHref?: string;
 };
 
 export function DashboardShell({
@@ -35,7 +34,9 @@ export function DashboardShell({
   initialState = "default",
   pagination,
   view,
-  views,
+  folder,
+  folders,
+  resetHref = "/dashboard",
 }: DashboardShellProps) {
   const [searchValue, setSearchValue] = useState(initialSearch);
   const [selectedFilter, setSelectedFilter] = useState<DashboardFilter>("All");
@@ -62,6 +63,9 @@ export function DashboardShell({
     return matchesFilter && matchesSearch;
   });
   const isError = initialState === "error";
+  const newEnvelopeHref = folder
+    ? `/envelopes/new?folder=${encodeURIComponent(folder.id)}`
+    : "/envelopes/new";
 
   function handleSearchChange(event: ChangeEvent<HTMLInputElement>) {
     setSearchValue(event.target.value);
@@ -74,7 +78,7 @@ export function DashboardShell({
   function handleResetFilters() {
     if (initialSearch || pagination?.newerHref) {
       // The list itself was searched, or is a later page: load the start.
-      window.location.assign(dashboardViewHref(view ?? "mine"));
+      window.location.assign(resetHref);
       return;
     }
 
@@ -88,13 +92,21 @@ export function DashboardShell({
 
   return (
     <div className="space-y-5">
-      <DashboardDocumentsHeader view={view} views={views} />
+      <DashboardDocumentsHeader
+        view={view}
+        folderName={folder?.name}
+        folders={folders}
+        newEnvelopeHref={newEnvelopeHref}
+      />
 
       {initialState === "empty" ? (
         view === "all" ? (
           <EmptyInstallState />
         ) : (
-          <EmptyDashboardState />
+          <EmptyDashboardState
+            folderName={folder?.name}
+            newEnvelopeHref={newEnvelopeHref}
+          />
         )
       ) : (
         <DashboardDocumentsPanel
@@ -108,6 +120,8 @@ export function DashboardShell({
           pagination={pagination}
           searchValue={searchValue}
           view={view}
+          folderId={folder?.id}
+          newEnvelopeHref={newEnvelopeHref}
           selectedFilter={selectedFilter}
         />
       )}
@@ -132,7 +146,13 @@ function EmptyInstallState() {
   );
 }
 
-function EmptyDashboardState() {
+function EmptyDashboardState({
+  folderName,
+  newEnvelopeHref,
+}: {
+  folderName?: string;
+  newEnvelopeHref: string;
+}) {
   return (
     <section
       className="panel px-6 py-14 sm:py-20"
@@ -145,13 +165,13 @@ function EmptyDashboardState() {
         </span>
         <div className="space-y-2">
           <h2 className="text-2xl font-extrabold tracking-[-0.03em] text-(--fg)">
-            No documents yet
+            {folderName ? "This folder is empty" : "No unfiled documents"}
           </h2>
           <p className="text-[0.9375rem] leading-6 text-(--secondary)">
             Upload a PDF and send it for signatures in minutes.
           </p>
         </div>
-        <ShellButton href="/envelopes/new">
+        <ShellButton href={newEnvelopeHref}>
           <PlusIcon
             aria-hidden="true"
             className="size-[1.125rem]"

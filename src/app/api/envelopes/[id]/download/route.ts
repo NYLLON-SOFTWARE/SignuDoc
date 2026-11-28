@@ -43,14 +43,17 @@ export async function GET(
     const { type } = downloadRequestSchema.parse({
       type: getDownloadType(request),
     });
-    // Its sender's, or, once sent, a teammate's or any administrator's.
     const access = await resolveEnvelopeViewerAccess(
       session.user.id,
       id,
       getDb(),
     );
+    if (!access) {
+      throw new DownloadAccessError("Envelope not found.", 404);
+    }
+
     const download = await getSenderEnvelopeDownload(
-      access?.ownerUserId ?? session.user.id,
+      access.ownerUserId,
       id,
       type,
       {
@@ -58,8 +61,8 @@ export async function GET(
       },
     );
 
-    if (access && !access.viewerIsOwner) {
-      // An administrator or a teammate taking a copy of someone else's
+    if (!access.viewerIsOwner) {
+      // An administrator or folder member taking a copy of someone else's
       // document is on record in the install's audit trail. No record, no
       // file.
       await recordSystemAuditEvent({

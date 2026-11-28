@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname, useRouter } from "next/navigation";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useState, type ComponentProps, type ReactNode } from "react";
 
 import { Brand } from "@/components/layout/brand";
@@ -41,6 +41,12 @@ export function AppShell({
 }: AppShellProps) {
   const pathname = usePathname() ?? "/dashboard";
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const folderId =
+    pathname === "/dashboard" ? searchParams.get("folder") : null;
+  const newEnvelopeHref = folderId
+    ? `/envelopes/new?folder=${encodeURIComponent(folderId)}`
+    : "/envelopes/new";
   const [isSigningOut, setIsSigningOut] = useState(false);
   const currentSection = resolveSection(pathname);
   const initials = getInitials(user.name, { max: 2 }) || "SU";
@@ -80,6 +86,7 @@ export function AppShell({
                   currentSection={currentSection}
                   item={item}
                   key={item.href}
+                  newEnvelopeHref={newEnvelopeHref}
                 />
               ))}
             </nav>
@@ -136,6 +143,7 @@ export function AppShell({
                 currentSection={currentSection}
                 item={item}
                 key={item.href}
+                newEnvelopeHref={newEnvelopeHref}
               />
             ))}
           </nav>
@@ -172,9 +180,11 @@ export function AppShell({
 function AppNavLink({
   currentSection,
   item,
+  newEnvelopeHref,
 }: {
   currentSection: ShellSection;
   item: ShellNavItem;
+  newEnvelopeHref: string;
 }) {
   const isActive = currentSection === resolveSection(item.href);
 
@@ -187,7 +197,7 @@ function AppNavLink({
           ? "bg-white font-bold text-(--fg) shadow-(--shadow-xs)"
           : "font-semibold text-(--secondary) hover:bg-[rgba(255,255,255,0.6)] hover:text-(--fg)",
       )}
-      href={item.href}
+      href={item.href === "/envelopes/new" ? newEnvelopeHref : item.href}
     >
       {item.label}
     </Link>

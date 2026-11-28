@@ -1,7 +1,7 @@
 import { MAX_JSON_BODY_BYTES, readBodyWithin } from "@/lib/api/body";
 import { apiError, apiJson, bodyTooLarge } from "@/lib/api/http";
 import { getApiEnvelope } from "@/lib/api/envelopes";
-import { handleApi } from "@/lib/api/route";
+import { handleApiEnvelope } from "@/lib/api/route";
 import { voidSentEnvelope } from "@/lib/envelopes";
 
 type Context = { params: Promise<{ id: string }> };
@@ -15,10 +15,11 @@ const MAX_REASON_LENGTH = 1000;
 export async function POST(request: Request, context: Context) {
   const { id } = await context.params;
 
-  return handleApi(
+  return handleApiEnvelope(
     request,
     "write",
     "api_envelope_void_failure",
+    id,
     async ({ actor }) => {
       // No body is fine; a body that is not a JSON object is refused, so a
       // cut-off request never voids without the reason it meant to give.

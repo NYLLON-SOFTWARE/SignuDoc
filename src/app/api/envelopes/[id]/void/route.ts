@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 
-import { requireVerifiedSenderSession } from "@/lib/auth/route-session";
+import { requireEnvelopeOwnerSession } from "@/lib/auth/route-session";
 import { getDb } from "@/lib/db/connection";
 import { EnvelopeMutationError, voidSentEnvelope } from "@/lib/envelopes";
 import { logRouteError } from "@/lib/security/logging";
@@ -24,14 +24,14 @@ export async function POST(
   request: Request,
   context: EnvelopeVoidRouteContext,
 ) {
-  const sessionResult = await requireVerifiedSenderSession(request);
+  const { id } = await context.params;
+  const sessionResult = await requireEnvelopeOwnerSession(request, id);
 
   if (sessionResult instanceof Response) {
     return sessionResult;
   }
 
   const session = sessionResult;
-  const { id } = await context.params;
   const ipAddress = getClientIpAddress(request.headers);
   const rateLimitResponse = await applyRateLimit({
     category: "sent_envelope_void",

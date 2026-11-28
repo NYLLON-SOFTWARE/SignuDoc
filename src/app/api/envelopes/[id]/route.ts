@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 
-import { requireVerifiedSenderSession } from "@/lib/auth/route-session";
+import { requireEnvelopeOwnerSession } from "@/lib/auth/route-session";
 import { getDb } from "@/lib/db/connection";
 import { deleteDraftEnvelope, EnvelopeMutationError } from "@/lib/envelopes";
 import { logRouteError } from "@/lib/security/logging";
@@ -13,15 +13,14 @@ type EnvelopeRouteContext = {
 };
 
 export async function DELETE(request: Request, context: EnvelopeRouteContext) {
-  const sessionResult = await requireVerifiedSenderSession(request);
+  const { id } = await context.params;
+  const sessionResult = await requireEnvelopeOwnerSession(request, id);
 
   if (sessionResult instanceof Response) {
     return sessionResult;
   }
 
   const session = sessionResult;
-  const { id } = await context.params;
-
   try {
     const envelope = await deleteDraftEnvelope(session.user.id, id, {
       database: getDb(),

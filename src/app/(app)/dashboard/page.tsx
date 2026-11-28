@@ -1,20 +1,18 @@
+import { notFound } from "next/navigation";
+
 import { DashboardShell } from "@/components/dashboard/dashboard-shell";
-import {
-  parseDashboardView,
-  type DashboardView,
-} from "@/components/dashboard/dashboard-documents-surface";
 import { isAdminUser } from "@/lib/auth/admin";
 import { getAuthSession } from "@/lib/auth/server";
 import { getDb } from "@/lib/db/connection";
 import {
   listAllEnvelopesForAdmin,
   listEnvelopesForUser,
+  listFolderEnvelopesForUser,
   listTeamEnvelopesForUser,
   type DashboardEnvelopePage,
 } from "@/lib/envelopes";
-import { listTeamsForUser } from "@/lib/teams";
+import { listFoldersForUser, listTeamsForUser } from "@/lib/teams";
 
-/** Envelopes on one page of the dashboard. */
 const DASHBOARD_PAGE_SIZE = 48;
 
 type DashboardPageProps = {
@@ -25,31 +23,21 @@ function firstValue(value: string | string[] | undefined): string {
   return (Array.isArray(value) ? value[0] : value) ?? "";
 }
 
-function buildDashboardHref({
-  page,
-  search,
-  view,
-}: {
-  page: number;
-  search: string;
-  view: DashboardView;
-}): string {
+function dashboardHref(
+  folderId: string,
+  view: "all" | "mine" | "team",
+  search = "",
+  page = 1,
+) {
   const params = new URLSearchParams();
 
-  if (view !== "mine") {
-    params.set("view", view);
-  }
+  if (folderId) params.set("folder", folderId);
+  else if (view !== "mine") params.set("view", view);
 
-  if (search) {
-    params.set("q", search);
-  }
-
-  if (page > 1) {
-    params.set("page", String(page));
-  }
+  if (search) params.set("q", search);
+  if (page > 1) params.set("page", String(page));
 
   const query = params.toString();
-
   return query ? `/dashboard?${query}` : "/dashboard";
 }
 
@@ -59,7 +47,8 @@ export default async function DashboardPage({
   const session = await getAuthSession();
   const database = getDb();
   const params = await searchParams;
-  const requestedView = parseDashboardView(firstValue(params.view));
+  const folderId = firstValue(params.folder);
+  const requestedView = firstValue(params.view);
   const search = firstValue(params.q).trim().slice(0, 160);
   const requestedPage = Number.parseInt(firstValue(params.page), 10);
   const page =
@@ -68,41 +57,54 @@ export default async function DashboardPage({
       : 1;
   let result: DashboardEnvelopePage | undefined;
   let initialState: "default" | "empty" | "error" = "error";
-  // Whose envelopes can be shown: one's own, one's teams' too when one is
-  // on a team, and every sent one for an administrator.
-  let views: DashboardView[] = ["mine"];
-  let view: DashboardView = "mine";
+  let folders: Awaited<ReturnType<typeof listFoldersForUser>> = [];
+  let isAdmin = false;
+  let hasTeam = false;
 
   try {
     if (session) {
-      const [isAdmin, teams] = await Promise.all([
+      const [admin, accessibleFolders, teams] = await Promise.all([
         isAdminUser(session.user.id, database),
+        listFoldersForUser(session.user.id, database),
         listTeamsForUser(session.user.id, database),
       ]);
-
-      views = [
-        "mine",
-        ...(teams.length > 0 ? (["team"] as const) : []),
-        ...(isAdmin ? (["all"] as const) : []),
-      ];
-      view = views.includes(requestedView) ? requestedView : "mine";
+      isAdmin = admin;
+      folders = accessibleFolders;
+      hasTeam = teams.length > 0;
     }
+  } catch {
+    return <DashboardShell initialState="error" />;
+  }
 
+  const folder = folders.find(({ id }) => id === folderId);
+  if (folderId && !folder) notFound();
+  const view = folder
+    ? "mine"
+    : isAdmin && requestedView === "all"
+      ? "all"
+      : hasTeam && requestedView === "team"
+        ? "team"
+        : "mine";
+  try {
     const filters = {
       limit: DASHBOARD_PAGE_SIZE,
       page,
       ...(search ? { search } : {}),
     };
-
     result = !session
       ? { envelopes: [], hasMore: false }
-      : view === "all"
-        ? await listAllEnvelopesForAdmin(session.user.id, filters, database)
-        : view === "team"
-          ? await listTeamEnvelopesForUser(session.user.id, filters, database)
-          : await listEnvelopesForUser(session.user.id, filters, database);
-    // Nothing at all yet, as opposed to nothing that matches or nothing
-    // on this page.
+      : folder
+        ? await listFolderEnvelopesForUser(
+            session.user.id,
+            folder.id,
+            filters,
+            database,
+          )
+        : view === "all"
+          ? await listAllEnvelopesForAdmin(session.user.id, filters, database)
+          : view === "team"
+            ? await listTeamEnvelopesForUser(session.user.id, filters, database)
+            : await listEnvelopesForUser(session.user.id, filters, database);
     initialState =
       result.envelopes.length === 0 && !search && page === 1
         ? "empty"
@@ -111,24 +113,52 @@ export default async function DashboardPage({
     initialState = "error";
   }
 
+  const nav = [
+    { current: !folder && view === "mine", href: "/dashboard", name: "Mine" },
+    ...(hasTeam
+      ? [
+          {
+            current: view === "team",
+            href: "/dashboard?view=team",
+            name: "My team",
+          },
+        ]
+      : []),
+    ...(isAdmin
+      ? [
+          {
+            current: view === "all",
+            href: "/dashboard?view=all",
+            name: "Everyone's",
+          },
+        ]
+      : []),
+    ...folders.map(({ id, name }) => ({
+      current: folder?.id === id,
+      href: dashboardHref(id, "mine"),
+      name,
+    })),
+  ];
+
   return (
     <DashboardShell
-      // A new search or view starts the shell afresh, with its own search box.
-      key={`${view}:${search}`}
+      key={`${folderId}:${view}:${search}:${page}`}
+      view={view}
       envelopes={result?.envelopes}
+      folder={folder}
+      folders={nav.length > 1 ? nav : undefined}
       initialSearch={search}
       initialState={initialState}
       pagination={{
         newerHref:
           page > 1
-            ? buildDashboardHref({ page: page - 1, search, view })
+            ? dashboardHref(folderId, view, search, page - 1)
             : undefined,
         olderHref: result?.hasMore
-          ? buildDashboardHref({ page: page + 1, search, view })
+          ? dashboardHref(folderId, view, search, page + 1)
           : undefined,
       }}
-      view={views.length > 1 ? view : undefined}
-      views={views}
+      resetHref={dashboardHref(folderId, view)}
     />
   );
 }

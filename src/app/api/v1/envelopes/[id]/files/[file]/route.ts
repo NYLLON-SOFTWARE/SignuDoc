@@ -1,5 +1,5 @@
 import { apiError } from "@/lib/api/http";
-import { handleApi } from "@/lib/api/route";
+import { handleApiEnvelope } from "@/lib/api/route";
 import { createDownloadResponse } from "@/lib/download-response";
 import { getSenderEnvelopeDownload } from "@/lib/downloads";
 
@@ -12,10 +12,11 @@ const FILE_TYPES = { certificate: "evidence", signed: "signed" } as const;
 export async function GET(request: Request, context: Context) {
   const { file, id } = await context.params;
 
-  return handleApi(
+  return handleApiEnvelope(
     request,
     "read",
     "api_envelope_file_failure",
+    id,
     async ({ actor }) => {
       // Own keys only, so a name like "constructor" is a 404 too.
       const type = Object.hasOwn(FILE_TYPES, file)

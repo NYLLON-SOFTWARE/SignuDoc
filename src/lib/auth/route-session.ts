@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 
 import { getAuthSessionFromHeaders } from "./server.ts";
+import { resolveEnvelopeViewerAccess } from "../envelope-access.ts";
 import { logSecurityEvent } from "../security/logging.ts";
 import { getSettings } from "../settings.ts";
 import { needsTwoFactorSetup } from "../sign-in-security.ts";
@@ -38,4 +39,21 @@ export async function requireVerifiedSenderSession(request: Request) {
     },
     { status: 403 },
   );
+}
+
+export async function requireEnvelopeOwnerSession(
+  request: Request,
+  envelopeId: string,
+) {
+  const session = await requireVerifiedSenderSession(request);
+
+  if (session instanceof Response) {
+    return session;
+  }
+
+  const access = await resolveEnvelopeViewerAccess(session.user.id, envelopeId);
+
+  return access?.viewerIsOwner
+    ? session
+    : NextResponse.json({ error: "Envelope not found." }, { status: 404 });
 }

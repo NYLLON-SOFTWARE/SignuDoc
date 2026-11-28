@@ -131,10 +131,12 @@ function auditContext(actor: TeamActor) {
 /** Every team and who is on it, by name. */
 export async function listTeams(
   database: DbExecutor = getDb(),
+  isFolder = false,
 ): Promise<Team[]> {
   const teams = await queryMany<{ id: string; name: string }>(
     database,
-    `SELECT id, name FROM teams ORDER BY lower(name), id`,
+    `SELECT id, name FROM teams WHERE is_folder = $1 ORDER BY lower(name), id`,
+    [isFolder],
   );
   const members = await queryMany<TeamMember & { teamId: string }>(
     database,
@@ -165,17 +167,77 @@ export async function listTeamsForUser(
       SELECT t.id, t.name
       FROM team_members m
       JOIN teams t ON t.id = m.team_id
-      WHERE m.user_id = $1
+      WHERE m.user_id = $1 AND NOT t.is_folder
       ORDER BY lower(t.name), t.id
     `,
     [userId],
   );
 }
 
+/** The folders a person can open, by name. */
+export async function listFoldersForUser(
+  userId: string,
+  database: DbExecutor = getDb(),
+): Promise<{ id: string; name: string }[]> {
+  return queryMany<{ id: string; name: string }>(
+    database,
+    `
+      SELECT folder.id, folder.name
+      FROM teams folder
+      JOIN public."user" actor ON actor.id = $1
+      WHERE folder.is_folder
+        AND (actor.role = 'admin' OR EXISTS (
+          SELECT 1 FROM team_members
+          WHERE team_id = folder.id AND user_id = actor.id
+        ))
+      ORDER BY lower(folder.name), folder.id
+    `,
+    [userId],
+  );
+}
+
+/** Hold the folder while filing an agreement, serializing with membership edits. */
+export async function requireWritableFolder(
+  userId: string,
+  folderId: string,
+  tx: DbExecutor,
+): Promise<{ id: string; name: string }> {
+  const folder = await queryOne<{ id: string; name: string }>(
+    tx,
+    `
+      SELECT folder.id, folder.name
+      FROM teams folder, public."user" actor
+      WHERE actor.id = $1 AND folder.id = $2 AND folder.is_folder
+      FOR SHARE OF folder, actor
+    `,
+    [userId, folderId],
+  );
+  const access =
+    folder &&
+    (await queryOne(
+      tx,
+      `
+      SELECT 1 FROM public."user" actor
+      WHERE actor.id = $1 AND (
+        actor.role = 'admin' OR EXISTS (
+          SELECT 1 FROM team_members
+          WHERE team_id = $2 AND user_id = actor.id
+        )
+      )
+    `,
+      [userId, folderId],
+    ));
+  if (!folder || !access) {
+    throw new TeamError("Folder not found.", 404);
+  }
+  return folder;
+}
+
 export async function createTeam(
   actor: TeamActor,
   input: unknown,
   database: DbPool = getDb(),
+  isFolder = false,
 ): Promise<{ id: string }> {
   const parsed = parseInput(createTeamSchema, input);
   const now = Math.floor(Date.now() / 1000);
@@ -186,17 +248,17 @@ export async function createTeam(
       await assertAdministrator(actor, tx);
       await tx.query(
         `
-          INSERT INTO teams (id, name, created_at, updated_at)
-          VALUES ($1, $2, $3, $3)
+          INSERT INTO teams (id, name, created_at, updated_at, is_folder)
+          VALUES ($1, $2, $3, $3, $4)
         `,
-        [id, parsed.name, now],
+        [id, parsed.name, now, isFolder],
       );
       await recordSystemAuditEvent(
         {
           ...auditContext(actor),
           createdAt: now,
           event: "team_created",
-          metadata: { teamId: id, teamName: parsed.name },
+          metadata: { teamId: id, teamName: parsed.name, isFolder },
         },
         tx,
       );
@@ -272,6 +334,17 @@ export async function deleteTeam(
     await assertAdministrator(actor, tx);
 
     const team = await lockTeam(teamId, tx);
+    const containsEnvelopes = await queryOne(
+      tx,
+      "SELECT 1 FROM envelopes WHERE folder_id = $1 LIMIT 1",
+      [teamId],
+    );
+    if (containsEnvelopes) {
+      throw new TeamError(
+        "Move the envelopes before deleting this folder.",
+        409,
+      );
+    }
     const members = await queryMany<{ id: string }>(
       tx,
       `SELECT user_id AS id FROM team_members WHERE team_id = $1`,
@@ -288,6 +361,51 @@ export async function deleteTeam(
           memberIds: members.map((member) => member.id),
           teamId,
           teamName: team.name,
+        },
+      },
+      tx,
+    );
+  }, database);
+}
+
+export async function moveEnvelopeToFolder(
+  actor: TeamActor,
+  envelopeId: string,
+  folderId: string,
+  database: DbPool = getDb(),
+): Promise<void> {
+  await withTransaction(async (tx) => {
+    await assertAdministrator(actor, tx);
+    const envelope = await queryOne<{ folderId: string | null }>(
+      tx,
+      `
+        SELECT folder_id AS "folderId"
+        FROM envelopes
+        WHERE id = $1 AND (status <> 'draft' OR user_id = $2)
+        FOR NO KEY UPDATE
+      `,
+      [envelopeId, actor.userId],
+    );
+    if (!envelope) {
+      throw new TeamError("Agreement not found.", 404);
+    }
+    const folder = await requireWritableFolder(actor.userId, folderId, tx);
+    if (envelope.folderId === folder.id) {
+      return;
+    }
+    await tx.query("UPDATE envelopes SET folder_id = $2 WHERE id = $1", [
+      envelopeId,
+      folder.id,
+    ]);
+    await recordSystemAuditEvent(
+      {
+        ...auditContext(actor),
+        event: "envelope_folder_changed",
+        metadata: {
+          envelopeId,
+          fromFolderId: envelope.folderId,
+          toFolderId: folder.id,
+          toFolderName: folder.name,
         },
       },
       tx,

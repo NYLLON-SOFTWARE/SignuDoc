@@ -7,6 +7,7 @@ import {
   type DbExecutor,
   type DbPool,
 } from "../db/connection.ts";
+import { canAccessEnvelopeFolderCondition } from "../envelope-access.ts";
 import { signingStepOf } from "../signing-steps.ts";
 import type {
   EnvelopeStatus,
@@ -240,7 +241,11 @@ export async function getApiEnvelope(
 ): Promise<ApiEnvelope | null> {
   const row = await queryOne<EnvelopeRow>(
     database,
-    `SELECT ${ENVELOPE_COLUMNS} FROM envelopes e WHERE e.id = $1 AND e.user_id = $2`,
+    `
+      SELECT ${ENVELOPE_COLUMNS} FROM envelopes e
+      WHERE e.id = $1 AND e.user_id = $2
+        AND ${canAccessEnvelopeFolderCondition("$2", "e")}
+    `,
     [envelopeId, userId],
   );
 
@@ -384,7 +389,10 @@ export async function listApiEnvelopes(
   database: DbExecutor = getDb(),
 ): Promise<{ data: ApiEnvelope[]; nextCursor: string | null } | null> {
   const values: unknown[] = [userId];
-  const clauses = ["e.user_id = $1"];
+  const clauses = [
+    "e.user_id = $1",
+    canAccessEnvelopeFolderCondition("$1", "e"),
+  ];
 
   if (query.status) {
     values.push(query.status);
@@ -451,7 +459,11 @@ export async function listApiEnvelopeEvents(
 ) {
   const owner = await queryOne<{ id: string }>(
     database,
-    `SELECT id FROM envelopes WHERE id = $1 AND user_id = $2`,
+    `
+      SELECT id FROM envelopes
+      WHERE id = $1 AND user_id = $2
+        AND ${canAccessEnvelopeFolderCondition("$2")}
+    `,
     [envelopeId, userId],
   );
 

@@ -14,8 +14,7 @@ type EnvelopeAuditRouteContext = {
   }>;
 };
 
-// The envelope's audit trail as a CSV file, for its sender, or for an
-// administrator, who sees every envelope.
+// The envelope's audit trail as a CSV file for an authorized viewer.
 export async function GET(
   request: Request,
   context: EnvelopeAuditRouteContext,
@@ -29,15 +28,15 @@ export async function GET(
   const { id } = await context.params;
 
   try {
-    // Its sender's, or, once sent, a teammate's or any administrator's.
     const access = await resolveEnvelopeViewerAccess(sessionResult.user.id, id);
-    const file = await exportEnvelopeAuditCsv(
-      access?.ownerUserId ?? sessionResult.user.id,
-      id,
-    );
+    if (!access) {
+      throw new AuditExportError("Envelope not found.", 404);
+    }
 
-    if (access && !access.viewerIsOwner) {
-      // An administrator or a teammate taking a copy of someone else's
+    const file = await exportEnvelopeAuditCsv(access.ownerUserId, id);
+
+    if (!access.viewerIsOwner) {
+      // An administrator or folder member taking a copy of someone else's
       // records is on record in the install's audit trail. No record, no
       // file.
       await recordSystemAuditEvent({

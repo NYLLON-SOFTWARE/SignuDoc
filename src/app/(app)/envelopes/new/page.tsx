@@ -1,18 +1,37 @@
+import { notFound } from "next/navigation";
+
 import { UploadShell } from "@/components/envelopes/upload-shell";
 import { getAuthSession } from "@/lib/auth/server";
 import { supportsDirectUploads } from "@/lib/services/storage";
 import { buildPendingUploadPrefix } from "@/lib/services/storage-keys";
+import { listFoldersForUser } from "@/lib/teams";
 
-export default async function NewEnvelopePage() {
-  // On Vercel Blob the browser sends the PDF straight to storage, into this
-  // user's pending folder. With local storage it goes through the app.
-  const session = supportsDirectUploads() ? await getAuthSession() : null;
+type NewEnvelopePageProps = {
+  searchParams: Promise<{ folder?: string | string[] }>;
+};
+
+export default async function NewEnvelopePage({
+  searchParams,
+}: NewEnvelopePageProps) {
+  const [session, { folder }] = await Promise.all([
+    getAuthSession(),
+    searchParams,
+  ]);
+  const folders = session ? await listFoldersForUser(session.user.id) : [];
+  const folderId = Array.isArray(folder) ? folder[0] : folder;
+
+  if (folderId && !folders.some(({ id }) => id === folderId)) notFound();
 
   return (
     <UploadShell
       directUploadPrefix={
-        session ? buildPendingUploadPrefix(session.user.id) : null
+        session && supportsDirectUploads()
+          ? buildPendingUploadPrefix(session.user.id)
+          : null
       }
+      folders={folders}
+      initialFolderId={folderId}
+      key={folderId ?? "unfiled"}
     />
   );
 }

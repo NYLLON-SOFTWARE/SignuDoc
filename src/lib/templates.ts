@@ -440,9 +440,7 @@ export async function getUseTemplateDataForUser(
 
 /**
  * Keeps an envelope's document, fields and signing order as a template.
- * Any envelope of the user's will do, sent or not: only where the fields
- * are is copied, never what was entered in them, and the signers' names
- * and addresses are left behind.
+ * A personal template can only be saved from an unfiled envelope.
  */
 export async function saveEnvelopeAsTemplate(
   userId: string,
@@ -454,6 +452,7 @@ export async function saveEnvelopeAsTemplate(
   }: TemplateOptions = {},
 ): Promise<SavedTemplate> {
   const parsedInput = saveTemplateSchema.parse(input);
+  await assertUnfiledTemplateSource(userId, envelopeId, database);
   const envelope = await getPrepareEnvelopeDataForUser(userId, envelopeId, {
     database,
   });
@@ -565,6 +564,10 @@ export async function saveEnvelopeAsTemplate(
       await tx.query("SELECT pg_advisory_xact_lock(hashtextextended($1, 13))", [
         userId,
       ]);
+      await tx.query('SELECT id FROM public."user" WHERE id = $1 FOR SHARE', [
+        userId,
+      ]);
+      await assertUnfiledTemplateSource(userId, envelopeId, tx, true);
       await assertRoomForTemplate(userId, tx);
       await tx.query(
         `
@@ -603,6 +606,29 @@ export async function saveEnvelopeAsTemplate(
   }
 
   return { id: templateId, name: parsedInput.name };
+}
+
+async function assertUnfiledTemplateSource(
+  userId: string,
+  envelopeId: string,
+  database: DbExecutor,
+  lock = false,
+) {
+  const source = await queryOne<{ folderId: string | null }>(
+    database,
+    `SELECT folder_id AS "folderId" FROM envelopes WHERE id = $1 AND user_id = $2
+     ${lock ? "FOR NO KEY UPDATE" : ""}`,
+    [envelopeId, userId],
+  );
+  if (!source) {
+    throw new TemplateError("Envelope not found.", 404);
+  }
+  if (source.folderId !== null) {
+    throw new TemplateError(
+      "Agreements in folders cannot be saved as personal templates.",
+      409,
+    );
+  }
 }
 
 /**
@@ -661,6 +687,7 @@ export async function createDraftFromTemplate(
   const draft = await createDraftEnvelope(
     userId,
     {
+      folderId: parsedInput.folderId,
       sourcePdf: {
         body: sourcePdf,
         contentType: "application/pdf",

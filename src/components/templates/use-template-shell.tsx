@@ -2,6 +2,10 @@
 
 import { useState, type FormEvent } from "react";
 
+import {
+  FolderSelect,
+  type FolderOption,
+} from "@/components/envelopes/folder-select";
 import { getSignerPalette } from "@/components/envelopes/signer-palette";
 import { ShellButton } from "@/components/shared/form-shell";
 import { PageHeader } from "@/components/shared/page-header";
@@ -12,6 +16,8 @@ import type { UseTemplateData } from "@/lib/templates";
 type UseTemplateShellProps = {
   /** Shown in place of the form when the template cannot be used. */
   errorMessage?: string;
+  folders?: readonly FolderOption[];
+  initialFolderId?: string;
   template?: UseTemplateData;
 };
 
@@ -60,9 +66,12 @@ function findErrors(people: readonly Person[]): PersonErrors[] {
 /** Names a person for each role of a template and starts a draft from it. */
 export function UseTemplateShell({
   errorMessage,
+  folders = [],
+  initialFolderId = "",
   template,
 }: UseTemplateShellProps) {
   const [title, setTitle] = useState(template?.name ?? "");
+  const [folderId, setFolderId] = useState(initialFolderId);
   const [people, setPeople] = useState<Person[]>(() =>
     (template?.roles ?? []).map(() => ({ email: "", name: "" })),
   );
@@ -75,7 +84,12 @@ export function UseTemplateShell({
       <div className="space-y-5">
         <PageHeader title="Use a template" />
         <StatusPanel
-          action={{ href: "/templates", label: "Back to templates" }}
+          action={{
+            href: initialFolderId
+              ? `/templates?folder=${encodeURIComponent(initialFolderId)}`
+              : "/templates",
+            label: "Back to templates",
+          }}
           description={
             errorMessage ??
             "We couldn't load this template. Try again in a moment."
@@ -115,7 +129,11 @@ export function UseTemplateShell({
 
     try {
       const response = await fetch(`/api/templates/${template.id}/use`, {
-        body: JSON.stringify({ signers: people, title }),
+        body: JSON.stringify({
+          folderId: folderId || undefined,
+          signers: people,
+          title,
+        }),
         headers: { "content-type": "application/json" },
         method: "POST",
       });
@@ -152,6 +170,15 @@ export function UseTemplateShell({
         noValidate
         onSubmit={handleSubmit}
       >
+        {folders.length > 0 ? (
+          <FolderSelect
+            allowUnfiled={!initialFolderId}
+            disabled={isSubmitting}
+            folders={folders}
+            onChange={setFolderId}
+            value={folderId}
+          />
+        ) : null}
         <label className="grid max-w-xl gap-1.5">
           <span className="text-[0.8125rem] font-semibold text-(--secondary)">
             Envelope title

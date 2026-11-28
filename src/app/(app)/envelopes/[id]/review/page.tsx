@@ -2,6 +2,7 @@ import { notFound, redirect } from "next/navigation";
 
 import { ReviewShell } from "@/components/envelopes/review-shell";
 import { getAuthSession } from "@/lib/auth/server";
+import { resolveEnvelopeViewerAccess } from "@/lib/envelope-access";
 import { getDb } from "@/lib/db/connection";
 import { getReviewEnvelopeDataForUser } from "@/lib/envelopes";
 
@@ -21,9 +22,13 @@ export default async function ReviewPage({ params }: ReviewPageProps) {
     const session = await getAuthSession();
     const database = getDb();
 
-    reviewRecord = session
-      ? await getReviewEnvelopeDataForUser(session.user.id, id, database)
+    const access = session
+      ? await resolveEnvelopeViewerAccess(session.user.id, id, database)
       : null;
+    reviewRecord =
+      session && access?.viewerIsOwner
+        ? await getReviewEnvelopeDataForUser(session.user.id, id, database)
+        : null;
   } catch {
     initialState = "error";
   }

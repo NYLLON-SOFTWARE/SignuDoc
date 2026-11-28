@@ -35,6 +35,8 @@ import {
   ENVELOPE_DEADLINE_DAY_OPTIONS,
   ENVELOPE_REMINDER_DAY_OPTIONS,
 } from "@/lib/types/domain";
+import { FileEnvelopeButton } from "./file-envelope-button";
+import type { FolderOption } from "./folder-select";
 import { getSignerPalette } from "./signer-palette";
 
 /** A finished envelope an administrator has scheduled to be deleted. */
@@ -48,7 +50,9 @@ export type EnvelopeDeletionNotice = {
 type EnvelopeDetailShellProps = {
   /** An administrator may delete a finished envelope. */
   canDeleteFinished?: boolean;
+  destinationFolders?: readonly FolderOption[];
   envelopeId: string;
+  folder?: FolderOption;
   initialState?: "error" | "not-found";
   /**
    * Who sent it, when an administrator or a teammate is looking at another
@@ -57,7 +61,6 @@ type EnvelopeDetailShellProps = {
    * its sender.
    */
   ownerLabel?: string;
-  /** The dashboard view to go back to from someone else's envelope. */
   ownerListView?: "all" | "team";
   record?: EnvelopeDetailData;
   scheduledDeletion?: EnvelopeDeletionNotice;
@@ -152,7 +155,9 @@ const timelineToneClasses: Record<TimelineTone, string> = {
 
 export function EnvelopeDetailShell({
   canDeleteFinished = false,
+  destinationFolders = [],
   envelopeId,
+  folder,
   initialState,
   ownerLabel,
   ownerListView = "all",
@@ -561,14 +566,20 @@ export function EnvelopeDetailShell({
         <Link
           className="inline-flex items-center text-sm font-semibold text-(--secondary) transition hover:text-(--accent-ink)"
           href={
-            isOwnEnvelope ? "/dashboard" : `/dashboard?view=${ownerListView}`
+            folder
+              ? `/dashboard?folder=${encodeURIComponent(folder.id)}`
+              : isOwnEnvelope
+                ? "/dashboard"
+                : `/dashboard?view=${ownerListView}`
           }
         >
-          {isOwnEnvelope
-            ? "← Documents"
-            : ownerListView === "team"
-              ? "← Team envelopes"
-              : "← All envelopes"}
+          ←{" "}
+          {folder?.name ??
+            (isOwnEnvelope
+              ? "Documents"
+              : ownerListView === "team"
+                ? "Team envelopes"
+                : "All envelopes")}
         </Link>
 
         <div className="mt-5 flex flex-col gap-6 lg:flex-row lg:items-center lg:justify-between">
@@ -632,6 +643,13 @@ export function EnvelopeDetailShell({
           </div>
 
           <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap lg:justify-end">
+            {destinationFolders.length > 0 ? (
+              <FileEnvelopeButton
+                envelopeId={envelopeId}
+                folderId={folder?.id}
+                folders={destinationFolders}
+              />
+            ) : null}
             {documentUrl ? (
               <ShellButton href={documentUrl} inNewTab variant="secondary">
                 <FileTextIcon
@@ -852,7 +870,7 @@ export function EnvelopeDetailShell({
               View templates
             </Link>
           </div>
-        ) : isOwnEnvelope && activeRecord.signers.length > 0 ? (
+        ) : isOwnEnvelope && !folder && activeRecord.signers.length > 0 ? (
           <div
             className={`well flex flex-col gap-3 px-5 py-3.5 sm:flex-row sm:items-center sm:justify-between ${
               deadlineText || deadline ? "mt-3" : "mt-5"

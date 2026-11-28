@@ -11,6 +11,7 @@ import { issueSigningLink } from "./services/signing-links.ts";
 import { recordSystemAuditEvent } from "./services/system-audit.ts";
 import type { EnvSource } from "./utils/env.ts";
 import { parseEmbedOrigin } from "./embed-origin.ts";
+import { requireWritableFolder, TeamError } from "./teams.ts";
 
 export { httpEmbedOriginsAllowed, parseEmbedOrigin } from "./embed-origin.ts";
 
@@ -274,14 +275,18 @@ export async function issueEmbedLink(
       );
     }
 
+    await tx.query('SELECT id FROM public."user" WHERE id = $1 FOR SHARE', [
+      input.userId,
+    ]);
     const envelope = await queryOne<{
       delivery: string;
       expiresAt: number | null;
+      folderId: string | null;
       status: string;
     }>(
       tx,
       `
-        SELECT delivery, status, expires_at AS "expiresAt"
+        SELECT delivery, status, expires_at AS "expiresAt", folder_id AS "folderId"
         FROM envelopes WHERE id = $1 AND user_id = $2
         FOR NO KEY UPDATE
       `,
@@ -290,6 +295,16 @@ export async function issueEmbedLink(
 
     if (!envelope) {
       throw new EmbeddingError("Envelope not found.", 404);
+    }
+    if (envelope.folderId !== null) {
+      try {
+        await requireWritableFolder(input.userId, envelope.folderId, tx);
+      } catch (error) {
+        if (error instanceof TeamError && error.statusCode === 404) {
+          throw new EmbeddingError("Envelope not found.", 404);
+        }
+        throw error;
+      }
     }
 
     if (envelope.delivery !== "embedded") {

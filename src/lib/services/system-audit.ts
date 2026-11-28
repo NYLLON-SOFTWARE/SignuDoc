@@ -53,6 +53,7 @@ export const systemAuditEventTypes = [
   "envelope_file_downloaded",
   "envelope_deletion_scheduled",
   "envelope_deletion_cancelled",
+  "envelope_folder_changed",
   "team_created",
   "team_updated",
   "team_deleted",

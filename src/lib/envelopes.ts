@@ -126,7 +126,13 @@ import {
   getManualNudgeAvailableAt,
   isManualNudgeAvailable,
 } from "./services/reminders.ts";
-import { formatEnvelopeOwner, sharesTeamCondition } from "./envelope-access.ts";
+import {
+  canAccessEnvelopeFolderCondition,
+  formatEnvelopeOwner,
+  resolveEnvelopeViewerAccess,
+  sharesTeamCondition,
+} from "./envelope-access.ts";
+import { requireWritableFolder, TeamError } from "./teams.ts";
 import { PERMITTED_USE_VERSION } from "./permitted-uses.ts";
 import { hashAccessCode } from "./signer-checks.ts";
 import {
@@ -151,6 +157,7 @@ type CreateDraftEnvelopeOptions = {
 };
 
 type CreateDraftEnvelopeInput = {
+  folderId?: string;
   sourcePdf: {
     body: Uint8Array;
     contentType?: string | null;
@@ -696,6 +703,9 @@ export async function createDraftEnvelope(
     );
 
     await withTransaction(async (tx) => {
+      if (input.folderId !== undefined) {
+        await requireWritableFolder(userId, input.folderId, tx);
+      }
       await tx.query(
         `
           INSERT INTO envelopes (
@@ -715,9 +725,10 @@ export async function createDraftEnvelope(
             declined_at,
             voided_at,
             created_at,
-            updated_at
+            updated_at,
+            folder_id
           ) VALUES (
-            $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17
+            $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18
           )
         `,
         [
@@ -738,6 +749,7 @@ export async function createDraftEnvelope(
           envelope.voidedAt,
           envelope.createdAt,
           envelope.updatedAt,
+          input.folderId ?? null,
         ],
       );
 
@@ -852,6 +864,10 @@ export async function copyEnvelopeToDraft(
 
   try {
     await withTransaction(async (tx) => {
+      // Account closure locks the account before its envelopes.
+      await tx.query('SELECT id FROM public."user" WHERE id = $1 FOR SHARE', [
+        userId,
+      ]);
       // Hold the source until this copy is stored. Without that lock a
       // retention sweep can delete the envelope after this read and before
       // its pages, recipients, and fields are read, and those empty lists
@@ -877,6 +893,15 @@ export async function copyEnvelopeToDraft(
         );
       }
 
+      const placement = await queryOne<{ folderId: string | null }>(
+        tx,
+        'SELECT folder_id AS "folderId" FROM envelopes WHERE id = $1',
+        [sourceEnvelopeId],
+      );
+      const folderId = placement?.folderId ?? null;
+      if (folderId !== null) {
+        await requireWritableFolder(userId, folderId, tx);
+      }
       const pages = await listEnvelopePagesForEnvelopeId(sourceEnvelopeId, tx);
       const signers = await listSignersForEnvelopeId(sourceEnvelopeId, tx);
       const copyRecipients = await listCopyRecipientsForEnvelopeId(
@@ -941,9 +966,10 @@ export async function copyEnvelopeToDraft(
             declined_at,
             voided_at,
             created_at,
-            updated_at
+            updated_at,
+            folder_id
           ) VALUES (
-            $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17
+            $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18
           )
         `,
         [
@@ -964,6 +990,7 @@ export async function copyEnvelopeToDraft(
           copied.voidedAt,
           copied.createdAt,
           copied.updatedAt,
+          folderId,
         ],
       );
 
@@ -2021,17 +2048,25 @@ export async function listEnvelopesForUser(
   return listEnvelopes(userId, "mine", filters, database);
 }
 
-/**
- * One's own envelopes and the sent ones of everyone on a team with them,
- * each with its sender. Teammates' drafts are left out: a draft is its
- * sender's own until it is sent.
- */
 export async function listTeamEnvelopesForUser(
   userId: string,
   filters: Partial<EnvelopeListFilters> = {},
   database: DbExecutor = getDb(),
 ): Promise<DashboardEnvelopePage> {
   return listEnvelopes(userId, "team", filters, database);
+}
+
+/**
+ * Agreements in one accessible folder before search or pagination.
+ * Other senders' drafts stay private.
+ */
+export async function listFolderEnvelopesForUser(
+  userId: string,
+  folderId: string,
+  filters: Partial<EnvelopeListFilters> = {},
+  database: DbExecutor = getDb(),
+): Promise<DashboardEnvelopePage> {
+  return listEnvelopes(userId, { folderId }, filters, database);
 }
 
 /**
@@ -2047,19 +2082,7 @@ export async function listAllEnvelopesForAdmin(
   return listEnvelopes(adminUserId, "all", filters, database);
 }
 
-/** Whose envelopes a list shows: the viewer's, their teams', or all. */
-type EnvelopeListScope = "all" | "mine" | "team";
-
-function envelopeListScopeClause(scope: EnvelopeListScope): string {
-  switch (scope) {
-    case "mine":
-      return "user_id = $1";
-    case "team":
-      return `(user_id = $1 OR (status <> 'draft' AND ${sharesTeamCondition("$1")}))`;
-    case "all":
-      return "(status <> 'draft' OR user_id = $1)";
-  }
-}
+type EnvelopeListScope = "all" | "mine" | "team" | { folderId: string };
 
 async function listEnvelopes(
   viewerUserId: string,
@@ -2071,7 +2094,28 @@ async function listEnvelopes(
   // Lists of other people's envelopes name and search each sender.
   const showsSenders = scope !== "mine";
   const values: unknown[] = [viewerUserId];
-  const clauses = [envelopeListScopeClause(scope)];
+  const visibleStatus = "(status <> 'draft' OR user_id = $1)";
+  let clauses: string[];
+  if (typeof scope === "object") {
+    values.push(scope.folderId);
+    clauses = [
+      "folder_id = $2",
+      visibleStatus,
+      canAccessEnvelopeFolderCondition("$1"),
+    ];
+  } else if (scope === "mine") {
+    clauses = ["user_id = $1", canAccessEnvelopeFolderCondition("$1")];
+  } else if (scope === "team") {
+    clauses = [
+      "folder_id IS NULL",
+      `(user_id = $1 OR (status <> 'draft' AND ${sharesTeamCondition("$1")}))`,
+    ];
+  } else {
+    clauses = [
+      visibleStatus,
+      `EXISTS (SELECT 1 FROM public."user" WHERE id = $1 AND role = 'admin')`,
+    ];
+  }
   let nextParamIndex = values.length + 1;
 
   if (parsedFilters.status) {
@@ -2763,6 +2807,7 @@ async function lockDraftEnvelope(
   envelopeId: string,
   tx: DbExecutor,
 ): Promise<void> {
+  await lockOwnedEnvelopeFolder(userId, envelopeId, tx);
   const locked = await tx.query(
     `
       SELECT id FROM envelopes
@@ -2777,6 +2822,33 @@ async function lockDraftEnvelope(
       "Only draft envelopes can be updated.",
       409,
     );
+  }
+}
+
+async function lockOwnedEnvelopeFolder(
+  userId: string,
+  envelopeId: string,
+  tx: DbExecutor,
+): Promise<void> {
+  // Keep account, agreement, and folder locks in the same order as filing.
+  await tx.query('SELECT id FROM public."user" WHERE id = $1 FOR SHARE', [
+    userId,
+  ]);
+  const row = await queryOne<{ folderId: string | null }>(
+    tx,
+    `SELECT folder_id AS "folderId" FROM envelopes
+     WHERE id = $1 AND user_id = $2 FOR NO KEY UPDATE`,
+    [envelopeId, userId],
+  );
+  if (row?.folderId) {
+    try {
+      await requireWritableFolder(userId, row.folderId, tx);
+    } catch (error) {
+      if (error instanceof TeamError && error.statusCode === 404) {
+        throw new EnvelopeMutationError("Envelope not found.", 404);
+      }
+      throw error;
+    }
   }
 }
 
@@ -3040,6 +3112,7 @@ export async function sendDraftEnvelope(
 
   try {
     await withTransaction(async (tx) => {
+      await lockOwnedEnvelopeFolder(userId, envelopeId, tx);
       const updatedEnvelope = await tx.query(
         `
           UPDATE envelopes
@@ -3493,6 +3566,7 @@ export async function changeEnvelopeDeadline(
   const expiresAt = deadlineFromDays(nowUnixTimestamp, input.expiresInDays);
 
   await withTransaction(async (tx) => {
+    await lockOwnedEnvelopeFolder(userId, envelopeId, tx);
     const current = await queryOne<{
       expiresAt: number | null;
       status: EnvelopeRecord["status"];
@@ -3613,6 +3687,7 @@ export async function correctSentEnvelopeSigner(
   const emailAddresses = emailService ? null : await resolveEmailAddresses();
 
   return withTransaction(async (tx) => {
+    await lockOwnedEnvelopeFolder(userId, envelopeId, tx);
     const envelope = await queryOne<{
       delivery: string;
       expiresAt: number | null;
@@ -3945,14 +4020,19 @@ export async function changeEnvelopeReminders(
       UPDATE envelopes
       SET reminder_interval_days = $1, updated_at = $2
       WHERE id = $3 AND user_id = $4 AND status = 'sent'
+        AND ${canAccessEnvelopeFolderCondition("$4")}
     `,
     [reminderIntervalDays, nowUnixTimestamp, envelopeId, userId],
   );
 
   if (updated.rowCount !== 1) {
-    const envelope = await getEnvelopeByIdForUser(userId, envelopeId, database);
+    const access = await resolveEnvelopeViewerAccess(
+      userId,
+      envelopeId,
+      database,
+    );
 
-    throw envelope
+    throw access?.viewerIsOwner
       ? new EnvelopeMutationError(
           "Reminders can only be changed while an envelope is out for signature.",
           409,
@@ -4111,6 +4191,7 @@ async function voidSentEnvelopeOnce(
   const seal = await loadInstallSealer();
 
   await withTransaction(async (tx) => {
+    await lockOwnedEnvelopeFolder(userId, envelopeId, tx);
     // Taken before the certificates are made. They have fixed keys, so a
     // second void, a decline or the last signature at the same time waits
     // here, then stops below: it never writes over, or deletes, the files
